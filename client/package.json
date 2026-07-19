@@ -1,0 +1,7 @@
+{
+  "name": "@hotel-booking-dispatch/client",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Frontend PWA — React + Vite + Tailwind (implemented from Phase 4)",
+  "scripts": {}
+}

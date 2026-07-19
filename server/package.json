@@ -1,0 +1,7 @@
+{
+  "name": "@hotel-booking-dispatch/server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Backend API — Express + Prisma + SQLite (implemented from Phase 1)",
+  "scripts": {}
+}
