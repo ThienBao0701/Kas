@@ -3,5 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "description": "Frontend PWA — React + Vite + Tailwind (implemented from Phase 4)",
-  "scripts": {}
+  "scripts": {
+    "dev": "node -e \"console.log('[client] not implemented until Phase 4')\"",
+    "build": "node -e \"console.log('[client] not implemented until Phase 4')\"",
+    "test": "node -e \"console.log('[client] no tests until Phase 4')\"",
+    "lint": "node -e \"console.log('[client] no sources to lint until Phase 4')\"",
+    "typecheck": "node -e \"console.log('[client] no sources to typecheck until Phase 4')\""
+  }
 }

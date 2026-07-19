@@ -19,6 +19,7 @@ client/dev-dist/
 
 # Test & coverage
 coverage/
+server/.tmp/
 playwright-report/
 test-results/
 

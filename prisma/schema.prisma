@@ -1,0 +1,210 @@
+// hotel-booking-dispatch — database schema
+//
+// Money rule: every monetary field is an Int holding whole VND (đồng).
+// VND has no minor unit in practice, so integer arithmetic is exact and
+// floating point is never used for money anywhere in this system.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  RECEPTIONIST
+}
+
+enum BookingStatus {
+  DRAFT
+  NEW
+  COMPLETED
+  ARCHIVED
+}
+
+enum PaymentStatus {
+  PAY_BEFORE
+  PAY_AFTER
+}
+
+/// Application user: one administrator plus receptionists bound to a branch.
+model User {
+  id                 Int      @id @default(autoincrement())
+  username           String   @unique
+  passwordHash       String
+  fullName           String
+  role               UserRole
+  /// Required for RECEPTIONIST, always null for ADMIN (admin sees all branches).
+  branchId           Int?
+  active             Boolean  @default(true)
+  mustChangePassword Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  branch            Branch?                @relation(fields: [branchId], references: [id])
+  bookingsSent      Booking[]              @relation("BookingSentBy")
+  bookingsCompleted Booking[]              @relation("BookingCompletedBy")
+  statusChanges     BookingStatusHistory[]
+  notifications     Notification[]
+
+  @@index([branchId])
+  @@index([role])
+}
+
+/// One of the 8 hotel branches bookings are dispatched to.
+model Branch {
+  id        Int      @id @default(autoincrement())
+  code      String   @unique
+  /// Name as it appears in Booking.com text, used for fuzzy matching.
+  hotelName String
+  address   String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users    User[]
+  bookings Booking[]
+}
+
+/// A Booking.com reservation extracted by the admin and dispatched to a branch.
+model Booking {
+  id String @id @default(cuid())
+
+  /// Booking.com confirmation code. Not unique: a duplicate raises a warning
+  /// for the admin rather than a hard database rejection.
+  bookingCode String
+  hotelName   String?
+  branchId    Int?
+
+  customerName String
+  phone        String?
+
+  /// Date-only values stored at UTC midnight. Times are free-form strings
+  /// ("14:00", "sau 15:00") because Booking.com text is not consistent.
+  checkInDate   DateTime
+  checkInTime   String?
+  checkOutDate  DateTime
+  checkOutTime  String?
+
+  /// Whole VND. Null when the total could not be extracted.
+  totalAmount   Int?
+  currency      String        @default("VND")
+  paymentStatus PaymentStatus
+
+  specialRequest String?
+  /// Original pasted Booking.com text, kept permanently for auditing.
+  rawText        String
+
+  status       BookingStatus @default(DRAFT)
+  /// True when check-in is today in Asia/Ho_Chi_Minh at dispatch time.
+  isLastMinute Boolean       @default(false)
+
+  /// Dispatch timestamp. History is grouped by this and it is never
+  /// overwritten by completedAt.
+  sentAt            DateTime?
+  sentByUserId      Int?
+  completedAt       DateTime?
+  completedByUserId Int?
+  completionNote    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  branch        Branch?                @relation(fields: [branchId], references: [id])
+  sentBy        User?                  @relation("BookingSentBy", fields: [sentByUserId], references: [id])
+  completedBy   User?                  @relation("BookingCompletedBy", fields: [completedByUserId], references: [id])
+  rooms         BookingRoom[]
+  statusHistory BookingStatusHistory[]
+  notifications Notification[]
+
+  @@index([bookingCode])
+  @@index([branchId, status])
+  @@index([status])
+  @@index([sentAt])
+  @@index([checkInDate])
+  @@index([isLastMinute])
+  @@index([customerName])
+  @@index([phone])
+}
+
+/// One room within a booking. Rooms are never merged; each keeps its own prices.
+model BookingRoom {
+  id        String   @id @default(cuid())
+  bookingId String
+  /// 1-based position as shown in the UI ("Phòng 1", "Phòng 2").
+  roomIndex Int
+  roomType  String?
+  /// Whole VND, null when not stated in the source text.
+  roomSubtotal Int?
+  taxAmount    Int?
+  feeAmount    Int?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  booking Booking             @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  nights  BookingNightPrice[]
+
+  @@unique([bookingId, roomIndex])
+  @@index([bookingId])
+}
+
+/// The price of one individual stay night of one individual room.
+/// One row per expected night: check-in inclusive to check-out exclusive.
+model BookingNightPrice {
+  id            String   @id @default(cuid())
+  bookingRoomId String
+  /// Date-only at UTC midnight. Never the check-out date.
+  stayDate      DateTime
+  /// Whole VND. Null means "Chưa xác định" — never guessed, averaged or
+  /// derived by dividing a total.
+  amount        Int?
+  currency      String   @default("VND")
+  /// True when the admin typed or corrected this amount by hand.
+  manuallyCorrected Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  bookingRoom BookingRoom @relation(fields: [bookingRoomId], references: [id], onDelete: Cascade)
+
+  @@unique([bookingRoomId, stayDate])
+  @@index([bookingRoomId])
+  @@index([stayDate])
+}
+
+/// Immutable audit trail of every booking status transition.
+model BookingStatusHistory {
+  id              String         @id @default(cuid())
+  bookingId       String
+  oldStatus       BookingStatus?
+  newStatus       BookingStatus
+  changedByUserId Int?
+  changedAt       DateTime       @default(now())
+  note            String?
+
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  changedBy User?   @relation(fields: [changedByUserId], references: [id])
+
+  @@index([bookingId])
+  @@index([changedAt])
+}
+
+/// In-app notification delivered to a user (new booking / completion).
+model Notification {
+  id        String   @id @default(cuid())
+  userId    Int
+  bookingId String?
+  title     String
+  body      String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+  readAt    DateTime?
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  booking Booking? @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read])
+  @@index([createdAt])
+}
