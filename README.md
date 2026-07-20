@@ -17,8 +17,31 @@ npm install
 copy .env.example .env    # then edit .env (SESSION_SECRET, INITIAL_ADMIN_*)
 npm run db:migrate
 npm run db:seed
-npm run dev
+npm run dev               # starts the backend (:3001) and the frontend (:5173) together
 ```
+
+Then open the frontend at **http://localhost:5173** and log in with the initial
+Admin from `.env`. The backend API runs on **http://localhost:3001**; in
+development the Vite dev server proxies `/api` to it, so the browser stays
+same-origin and the session cookie flows automatically.
+
+To run the two servers separately:
+
+```bash
+npm run dev -w server     # backend only, http://localhost:3001
+npm run dev -w client     # frontend only, http://localhost:5173 (proxies /api → :3001)
+```
+
+**Sessions & credentials:** authentication is a server-side session addressed by
+an HTTP-only cookie — the frontend stores **no** token in LocalStorage or
+SessionStorage, and every request is sent with `credentials: "include"`.
+Refreshing the browser restores the session from the cookie via
+`GET /api/auth/me`. A user with a temporary password is forced to change it
+before reaching the app.
+
+> The frontend is currently the **Phase 3A foundation**: authentication,
+> app shell, role-based navigation and professional empty states. The booking
+> screens arrive in later phases.
 
 ## Production
 
