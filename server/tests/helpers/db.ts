@@ -1,10 +1,14 @@
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../../src/db/prisma';
 
 /**
- * One client for the whole suite. vitest.config.ts sets DATABASE_URL to the
- * throwaway test database before any test file is imported.
+ * The suite shares the application's own Prisma client rather than opening a
+ * second one. SQLite allows a single writer, so two clients writing at once
+ * (the app under test plus the test's own assertions) would intermittently hit
+ * SQLITE_BUSY. One shared connection serializes every query and keeps the
+ * session-writing auth tests deterministic. vitest.config.ts points
+ * DATABASE_URL at the throwaway test database before any import runs.
  */
-export const testPrisma = new PrismaClient();
+export const testPrisma = prisma;
 
 /** Removes booking data between tests; branches are left in place by default. */
 export async function resetBookingData(): Promise<void> {

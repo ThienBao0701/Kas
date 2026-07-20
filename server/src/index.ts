@@ -2,10 +2,24 @@ import type { Server } from 'node:http';
 import { createApp } from './app';
 import { env } from './config/env';
 import { prisma } from './db/prisma';
+import { ensureInitialAdmin } from './auth/bootstrapAdmin';
 
 async function start(): Promise<void> {
   // Fail fast: a server that cannot reach its database should not accept traffic.
   await prisma.$connect();
+
+  // Create the initial administrator once, if configured. Never overwrites an
+  // existing account; in production a missing configuration throws here.
+  const bootstrap = await ensureInitialAdmin();
+  if (bootstrap.created) {
+    // eslint-disable-next-line no-console
+    console.log('Đã tạo tài khoản quản trị viên ban đầu (bắt buộc đổi mật khẩu ở lần đăng nhập đầu).');
+  } else if (bootstrap.reason === 'missing-config') {
+    // eslint-disable-next-line no-console
+    console.warn(
+      'Bỏ qua tạo tài khoản quản trị viên: chưa cấu hình INITIAL_ADMIN_USERNAME/PASSWORD/FULL_NAME.',
+    );
+  }
 
   const app = createApp();
 

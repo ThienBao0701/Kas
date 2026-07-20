@@ -1,8 +1,21 @@
 import { Router } from 'express';
 import { healthRouter } from './health';
+import { createAuthRouter } from './auth';
+import { createBranchesRouter } from './branches';
+import { createAdminUsersRouter } from './adminUsers';
 
-export const apiRouter: Router = Router();
+/**
+ * Builds a fresh API router. A factory (rather than a shared singleton) so each
+ * app instance — notably each test file — gets its own login rate limiter state.
+ */
+export function createApiRouter(): Router {
+  const router = Router();
 
-apiRouter.use(healthRouter);
+  router.use(healthRouter);
+  router.use(createAuthRouter());
+  router.use(createBranchesRouter());
+  router.use(createAdminUsersRouter());
 
-// Auth, users, bookings and notifications are mounted here in later phases.
+  // Bookings and notifications are mounted here in later phases.
+  return router;
+}

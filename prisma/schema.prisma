@@ -41,6 +41,8 @@ model User {
   branchId           Int?
   active             Boolean  @default(true)
   mustChangePassword Boolean  @default(false)
+  /// Set on every successful login; null until the account logs in for the first time.
+  lastLoginAt        DateTime?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
@@ -49,9 +51,35 @@ model User {
   bookingsCompleted Booking[]              @relation("BookingCompletedBy")
   statusChanges     BookingStatusHistory[]
   notifications     Notification[]
+  sessions          Session[]
 
   @@index([branchId])
   @@index([role])
+}
+
+/// Server-side login session backing express-session.
+///
+/// A native SQLite session store (connect-sqlite3 / better-sqlite3) is blocked
+/// by this project's install-script allow-list, so sessions live in the same
+/// Prisma/SQLite database — the simplest reliable persistent store here.
+/// The browser only ever holds the opaque `id` (the session cookie); all
+/// session data stays server-side in `data`. `userId` is denormalised out of
+/// `data` so a user's sessions can be invalidated on disable / password reset.
+model Session {
+  id        String   @id
+  /// express-session serialised session payload (JSON).
+  data      String
+  /// Owner of the session once authenticated; null for anonymous sessions.
+  userId    Int?
+  /// Absolute expiry; rows past this are pruned and treated as absent.
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 /// One of the 8 hotel branches bookings are dispatched to.

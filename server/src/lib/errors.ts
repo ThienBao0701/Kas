@@ -13,7 +13,14 @@ export type ApiErrorCode =
   | 'CONFLICT'
   | 'RATE_LIMITED'
   | 'INTERNAL_ERROR'
-  | 'SERVICE_UNAVAILABLE';
+  | 'SERVICE_UNAVAILABLE'
+  // Authentication / authorization codes (Phase 2). Semantic codes the client
+  // keys off; each still maps onto one HTTP status below.
+  | 'AUTH_REQUIRED'
+  | 'INVALID_CREDENTIALS'
+  | 'ACCOUNT_DISABLED'
+  | 'PASSWORD_CHANGE_REQUIRED'
+  | 'BRANCH_ACCESS_DENIED';
 
 const STATUS_BY_CODE: Record<ApiErrorCode, number> = {
   BAD_REQUEST: 400,
@@ -25,6 +32,11 @@ const STATUS_BY_CODE: Record<ApiErrorCode, number> = {
   RATE_LIMITED: 429,
   INTERNAL_ERROR: 500,
   SERVICE_UNAVAILABLE: 503,
+  AUTH_REQUIRED: 401,
+  INVALID_CREDENTIALS: 401,
+  ACCOUNT_DISABLED: 403,
+  PASSWORD_CHANGE_REQUIRED: 403,
+  BRANCH_ACCESS_DENIED: 403,
 };
 
 export class ApiError extends Error {
@@ -66,6 +78,29 @@ export class ApiError extends Error {
 
   static internal(message = 'Đã xảy ra lỗi hệ thống.'): ApiError {
     return new ApiError('INTERNAL_ERROR', message);
+  }
+
+  static authRequired(message = 'Bạn cần đăng nhập.'): ApiError {
+    return new ApiError('AUTH_REQUIRED', message);
+  }
+
+  /** Deliberately generic: never reveals whether username or password was wrong. */
+  static invalidCredentials(message = 'Tên đăng nhập hoặc mật khẩu không đúng.'): ApiError {
+    return new ApiError('INVALID_CREDENTIALS', message);
+  }
+
+  static accountDisabled(message = 'Tài khoản đã bị vô hiệu hoá.'): ApiError {
+    return new ApiError('ACCOUNT_DISABLED', message);
+  }
+
+  static passwordChangeRequired(
+    message = 'Bạn phải đổi mật khẩu trước khi tiếp tục.',
+  ): ApiError {
+    return new ApiError('PASSWORD_CHANGE_REQUIRED', message);
+  }
+
+  static branchAccessDenied(message = 'Bạn không có quyền truy cập chi nhánh này.'): ApiError {
+    return new ApiError('BRANCH_ACCESS_DENIED', message);
   }
 }
 

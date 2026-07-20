@@ -13,10 +13,15 @@ export default defineConfig({
     // SQLite is a single file with writer locking; serial runs keep the
     // constraint tests deterministic.
     fileParallelism: false,
+    // Generous margin: this can run on a CPU-contended VM where a bcrypt-backed
+    // login is occasionally slow. Well above real durations, still catches hangs.
+    testTimeout: 20000,
     env: {
       NODE_ENV: 'test',
       DATABASE_URL: `file:${testDbPath.split(path.sep).join('/')}`,
       SESSION_SECRET: 'test-session-secret-value',
+      // Cheapest valid bcrypt cost so hashing does not dominate the suite.
+      BCRYPT_COST: '4',
     },
     include: ['tests/**/*.test.ts'],
   },

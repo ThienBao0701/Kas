@@ -1,0 +1,64 @@
+import type { Prisma, Branch } from '@prisma/client';
+
+/** A user loaded together with its branch relation. */
+export type UserWithBranch = Prisma.UserGetPayload<{ include: { branch: true } }>;
+
+export interface PublicBranch {
+  id: number;
+  code: string;
+  hotelName: string;
+  address: string;
+}
+
+export interface PublicUser {
+  id: number;
+  username: string;
+  fullName: string;
+  role: UserWithBranch['role'];
+  branch: PublicBranch | null;
+  active: boolean;
+  mustChangePassword: boolean;
+}
+
+/** Managed accounts add audit timestamps for the Admin listing. */
+export interface ManagedUser extends PublicUser {
+  createdAt: Date;
+  updatedAt: Date;
+  lastLoginAt: Date | null;
+}
+
+export function serializeBranch(branch: Branch | null): PublicBranch | null {
+  if (!branch) return null;
+  return {
+    id: branch.id,
+    code: branch.code,
+    hotelName: branch.hotelName,
+    address: branch.address,
+  };
+}
+
+/**
+ * The single source of truth for what a user object looks like on the wire.
+ * `passwordHash` is never referenced here, so it cannot leak through any
+ * endpoint that serializes a user this way.
+ */
+export function serializeUser(user: UserWithBranch): PublicUser {
+  return {
+    id: user.id,
+    username: user.username,
+    fullName: user.fullName,
+    role: user.role,
+    branch: serializeBranch(user.branch),
+    active: user.active,
+    mustChangePassword: user.mustChangePassword,
+  };
+}
+
+export function serializeManagedUser(user: UserWithBranch): ManagedUser {
+  return {
+    ...serializeUser(user),
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+    lastLoginAt: user.lastLoginAt,
+  };
+}
