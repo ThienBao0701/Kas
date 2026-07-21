@@ -32,7 +32,7 @@ export function SettingsPage() {
   return (
     <div>
       <PageHeader
-        title="Cài đặt — Tài khoản lễ tân"
+        title="Quản lý tài khoản"
         description="Tạo và quản lý tài khoản lễ tân cho từng chi nhánh."
         actions={
           <Button onClick={() => setCreateOpen(true)}>

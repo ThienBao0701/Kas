@@ -35,7 +35,12 @@ export function DashboardPage() {
   const totalToday = dispatchedToday.data?.pagination.total ?? 0;
 
   const waitingByBranch = new Map<number, number>();
-  for (const b of waitingRows) if (b.branch) waitingByBranch.set(b.branch.id, (waitingByBranch.get(b.branch.id) ?? 0) + 1);
+  const lastMinuteByBranch = new Map<number, number>();
+  for (const b of waitingRows) {
+    if (!b.branch) continue;
+    waitingByBranch.set(b.branch.id, (waitingByBranch.get(b.branch.id) ?? 0) + 1);
+    if (b.isLastMinute) lastMinuteByBranch.set(b.branch.id, (lastMinuteByBranch.get(b.branch.id) ?? 0) + 1);
+  }
   const completedByBranch = new Map<number, number>();
   for (const b of confirmedRows) if (b.branch) completedByBranch.set(b.branch.id, (completedByBranch.get(b.branch.id) ?? 0) + 1);
 
@@ -44,8 +49,14 @@ export function DashboardPage() {
       branch: b,
       waiting: waitingByBranch.get(b.id) ?? 0,
       completed: completedByBranch.get(b.id) ?? 0,
+      lastMinute: lastMinuteByBranch.get(b.id) ?? 0,
     }))
-    .sort((a, b) => b.waiting - a.waiting || a.branch.address.localeCompare(b.branch.address));
+    .sort(
+      (a, b) =>
+        b.lastMinute - a.lastMinute ||
+        b.waiting - a.waiting ||
+        a.branch.address.localeCompare(b.branch.address),
+    );
 
   return (
     <div>
@@ -53,32 +64,55 @@ export function DashboardPage() {
 
       <QueryState isLoading={waiting.isLoading} isError={waiting.isError} error={waiting.error}>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <StatCard label="Chờ xác nhận" value={waitingTotal} icon={Clock} tone="amber" />
-          <StatCard label="Đã xác nhận hôm nay" value={confirmedTotal} icon={CheckCircle2} tone="green" />
-          <StatCard label="Last minute" value={lastMinuteCount} icon={Flame} tone="red" />
-          <StatCard label="Gửi hôm nay" value={totalToday} icon={CalendarClock} />
+          <Link to="/app/waiting" className="focus-visible:outline-none">
+            <StatCard label="Chờ chi nhánh tạo" value={waitingTotal} icon={Clock} tone="amber" />
+          </Link>
+          <Link to="/app/completed" className="focus-visible:outline-none">
+            <StatCard label="Đã xác nhận hôm nay" value={confirmedTotal} icon={CheckCircle2} tone="green" />
+          </Link>
+          <StatCard label="LAST MINUTE" value={lastMinuteCount} icon={Flame} tone="red" />
+          <StatCard label="Tổng đơn gửi hôm nay" value={totalToday} icon={CalendarClock} />
         </div>
 
         <div className="mt-6">
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Theo chi nhánh</h2>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {summary.map(({ branch, waiting: w, completed }) => (
-              <Link key={branch.id} to={`/app/waiting`} className="block focus-visible:outline-none">
-                <Card className="p-4 transition-shadow hover:shadow-md">
+          {summary.length === 0 ? (
+            <p className="text-sm text-slate-400">Chưa có chi nhánh nào.</p>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {summary.map(({ branch, waiting: w, completed, lastMinute }) => (
+                <Card
+                  key={branch.id}
+                  className={`p-4 ${lastMinute > 0 ? 'border-red-200' : ''}`}
+                >
                   <p className="text-sm font-semibold text-slate-900">{branch.address}</p>
                   <p className="truncate text-xs text-slate-500">{branch.hotelName}</p>
-                  <div className="mt-3 flex gap-4 text-sm">
-                    <span className="text-amber-700">
-                      <strong>{w}</strong> chờ xác nhận
-                    </span>
-                    <span className="text-green-700">
+                  <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm">
+                    <Link
+                      to={`/app/waiting?branchId=${branch.id}`}
+                      className="text-amber-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                    >
+                      <strong>{w}</strong> chờ tạo
+                    </Link>
+                    <Link
+                      to={`/app/completed?branchId=${branch.id}`}
+                      className="text-green-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600"
+                    >
                       <strong>{completed}</strong> đã xác nhận
-                    </span>
+                    </Link>
+                    {lastMinute > 0 ? (
+                      <Link
+                        to={`/app/waiting?branchId=${branch.id}`}
+                        className="font-semibold text-red-600 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                      >
+                        <strong>{lastMinute}</strong> LAST MINUTE
+                      </Link>
+                    ) : null}
                   </div>
                 </Card>
-              </Link>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       </QueryState>
     </div>

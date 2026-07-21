@@ -18,10 +18,27 @@ export function StatusBadge({ status }: { status: BookingStatus }) {
   );
 }
 
-/** The 🔥 LAST MINUTE indicator for check-in-today bookings. */
-export function LastMinuteBadge() {
+/**
+ * The 🔥 LAST MINUTE indicator for check-in-today bookings.
+ * `withSubtitle` adds the "Nhận phòng hôm nay" line used on the detail/list header.
+ */
+export function LastMinuteBadge({ withSubtitle = false }: { withSubtitle?: boolean }) {
+  if (withSubtitle) {
+    return (
+      <span className="inline-flex flex-col rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 text-red-700">
+        <span className="inline-flex items-center gap-1 text-xs font-bold uppercase tracking-wide">
+          <Flame className="h-3.5 w-3.5" aria-hidden="true" />
+          Last minute
+        </span>
+        <span className="text-[0.7rem] font-medium text-red-600">Nhận phòng hôm nay</span>
+      </span>
+    );
+  }
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-bold uppercase tracking-wide text-red-700">
+    <span
+      className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-bold uppercase tracking-wide text-red-700"
+      title="Nhận phòng hôm nay"
+    >
       <Flame className="h-3.5 w-3.5" aria-hidden="true" />
       Last minute
     </span>

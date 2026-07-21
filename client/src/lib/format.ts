@@ -55,13 +55,29 @@ export function paymentLabel(status: string | null | undefined): string {
 }
 
 const STATUS_LABELS: Record<string, string> = {
-  DRAFT: 'Nháp',
+  DRAFT: 'Bản nháp',
   READY: 'Sẵn sàng',
-  NEW: 'Chờ xác nhận',
+  NEW: 'Chờ chi nhánh tạo',
   COMPLETED: 'Đã xác nhận tạo',
-  ARCHIVED: 'Lưu trữ',
+  ARCHIVED: 'Đã lưu trữ',
 };
 
 export function statusLabel(status: string | null | undefined): string {
   return status ? (STATUS_LABELS[status] ?? status) : '—';
+}
+
+/** Short relative time in Vietnamese, e.g. "vừa xong", "5 phút trước". */
+export function relativeTime(iso: string | null | undefined, now: Date = new Date()): string {
+  if (!iso) return '—';
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return '—';
+  const diffSec = Math.round((now.getTime() - then) / 1000);
+  if (diffSec < 45) return 'vừa xong';
+  const diffMin = Math.round(diffSec / 60);
+  if (diffMin < 60) return `${diffMin} phút trước`;
+  const diffHour = Math.round(diffMin / 60);
+  if (diffHour < 24) return `${diffHour} giờ trước`;
+  const diffDay = Math.round(diffHour / 24);
+  if (diffDay < 30) return `${diffDay} ngày trước`;
+  return formatDate(iso);
 }
