@@ -1,19 +1,23 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { LoginPage } from '../auth/LoginPage';
 import { ChangePasswordPage } from '../auth/ChangePasswordPage';
-import {
-  PublicOnly,
-  RequireAuth,
-  RequirePasswordChange,
-  RequireRole,
-} from '../auth/ProtectedRoute';
+import { PublicOnly, RequireAuth, RequirePasswordChange, RequireRole } from '../auth/ProtectedRoute';
+import { useAuth } from '../auth/AuthProvider';
 import { AppShell } from '../layout/AppShell';
+import { DashboardPage } from '../pages/DashboardPage';
+import { DispatchPage } from '../pages/DispatchPage';
 import { NewBookingsPage } from '../pages/NewBookingsPage';
 import { CompletedBookingsPage } from '../pages/CompletedBookingsPage';
 import { HistoryPage } from '../pages/HistoryPage';
-import { ExtractPage } from '../pages/ExtractPage';
-import { UsersPage } from '../pages/UsersPage';
+import { BookingDetailPage } from '../pages/BookingDetailPage';
+import { SettingsPage } from '../pages/SettingsPage';
 import { NotFoundPage } from '../pages/NotFoundPage';
+
+/** Sends each role to its natural landing page. */
+function RoleLanding() {
+  const { user } = useAuth();
+  return <Navigate to={user?.role === 'ADMIN' ? '/app/dashboard' : '/app/new'} replace />;
+}
 
 export function AppRoutes() {
   return (
@@ -37,30 +41,19 @@ export function AppRoutes() {
 
       <Route element={<RequireAuth />}>
         <Route path="/app" element={<AppShell />}>
-          <Route index element={<Navigate to="/app/new" replace />} />
+          <Route index element={<RoleLanding />} />
+          <Route path="dashboard" element={<RequireRole role="ADMIN"><DashboardPage /></RequireRole>} />
+          <Route path="dispatch" element={<RequireRole role="ADMIN"><DispatchPage /></RequireRole>} />
+          <Route path="waiting" element={<RequireRole role="ADMIN"><NewBookingsPage /></RequireRole>} />
           <Route path="new" element={<NewBookingsPage />} />
           <Route path="completed" element={<CompletedBookingsPage />} />
           <Route path="history" element={<HistoryPage />} />
-          <Route
-            path="extract"
-            element={
-              <RequireRole role="ADMIN">
-                <ExtractPage />
-              </RequireRole>
-            }
-          />
-          <Route
-            path="users"
-            element={
-              <RequireRole role="ADMIN">
-                <UsersPage />
-              </RequireRole>
-            }
-          />
+          <Route path="booking/:id" element={<BookingDetailPage />} />
+          <Route path="settings" element={<RequireRole role="ADMIN"><SettingsPage /></RequireRole>} />
         </Route>
       </Route>
 
-      <Route path="/" element={<Navigate to="/app/new" replace />} />
+      <Route path="/" element={<Navigate to="/app" replace />} />
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
   );

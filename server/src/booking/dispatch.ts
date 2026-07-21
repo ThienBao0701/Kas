@@ -1,0 +1,270 @@
+import type { Prisma } from '@prisma/client';
+import { prisma } from '../db/prisma';
+import { ApiError } from '../lib/errors';
+import { getClock, isLastMinute, type Clock } from '../lib/clock';
+import { loadBookingDetail } from './bookingRepo';
+import { validateBooking, type ValidationResult } from './validation';
+import type { BookingDetail } from './bookingView';
+
+/**
+ * The booking dispatch state machine: DRAFT/READY -> NEW (send) -> COMPLETED.
+ * Each transition is atomic, guards its precondition with a conditional update
+ * (so two concurrent callers cannot both transition), writes an immutable
+ * status-history row, and creates the right persistent notifications.
+ */
+
+type Actor = { id: number; role: 'ADMIN' | 'RECEPTIONIST'; branchId: number | null; fullName: string };
+
+function isoDate(date: Date | null): string {
+  return date ? date.toISOString().slice(0, 10) : '—';
+}
+
+/** Blocking validation errors -> a 422 that carries the full {valid,errors,warnings}. */
+function assertNoBlockingErrors(result: ValidationResult): void {
+  if (!result.valid) {
+    throw ApiError.bookingNotReady('Đơn chưa hợp lệ để xử lý.', {
+      valid: false,
+      errors: result.errors,
+      warnings: result.warnings,
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// READY
+// ---------------------------------------------------------------------------
+export async function markBookingReady(
+  bookingId: string,
+  admin: Actor,
+  note: string | undefined,
+): Promise<BookingDetail> {
+  const booking = await loadBookingDetail(bookingId);
+  if (booking.status !== 'DRAFT') {
+    throw ApiError.conflict('Chỉ có thể chuyển sang “sẵn sàng” từ trạng thái nháp.', {
+      status: booking.status,
+    });
+  }
+
+  const result = validateBooking(booking, 'ready');
+  assertNoBlockingErrors(result);
+
+  await prisma.$transaction(async (tx) => {
+    const updated = await tx.booking.updateMany({
+      where: { id: bookingId, status: 'DRAFT' },
+      data: { status: 'READY' },
+    });
+    if (updated.count === 0) {
+      throw ApiError.conflict('Trạng thái đơn đã thay đổi, vui lòng tải lại.');
+    }
+    await tx.bookingStatusHistory.create({
+      data: {
+        bookingId,
+        oldStatus: 'DRAFT',
+        newStatus: 'READY',
+        changedByUserId: admin.id,
+        note: note ?? null,
+      },
+    });
+  });
+
+  return loadBookingDetail(bookingId);
+}
+
+// ---------------------------------------------------------------------------
+// SEND
+// ---------------------------------------------------------------------------
+export interface SendInput {
+  branchId: number;
+  acknowledgedWarningCodes: string[];
+}
+
+export async function sendBooking(
+  bookingId: string,
+  input: SendInput,
+  admin: Actor,
+  clock: Clock = getClock(),
+): Promise<BookingDetail> {
+  const booking = await loadBookingDetail(bookingId);
+
+  // A booking already dispatched (or beyond) can never be re-sent.
+  if (['NEW', 'COMPLETED', 'ARCHIVED'].includes(booking.status)) {
+    throw ApiError.bookingAlreadySent('Đơn đã được gửi trước đó.', { status: booking.status });
+  }
+  if (booking.status !== 'DRAFT' && booking.status !== 'READY') {
+    throw ApiError.conflict('Chỉ có thể gửi đơn ở trạng thái nháp hoặc sẵn sàng.', {
+      status: booking.status,
+    });
+  }
+
+  const branch = await prisma.branch.findUnique({ where: { id: input.branchId } });
+  if (!branch || !branch.active) {
+    throw ApiError.validation('Chi nhánh không hợp lệ hoặc đã ngừng hoạt động.');
+  }
+
+  // Validate against the branch the admin is actually sending to.
+  const result = validateBooking({ ...booking, branchId: input.branchId }, 'send');
+  assertNoBlockingErrors(result);
+
+  const acknowledged = new Set(input.acknowledgedWarningCodes);
+  const unacknowledged = result.warnings.filter((w) => !acknowledged.has(w.code));
+  if (unacknowledged.length > 0) {
+    throw ApiError.warningsNotAcknowledged('Vui lòng xác nhận các cảnh báo trước khi gửi.', {
+      valid: true,
+      errors: [],
+      warnings: unacknowledged,
+    });
+  }
+
+  // Duplicate operational booking: same code + branch + check-in already live.
+  const duplicate = await prisma.booking.findFirst({
+    where: {
+      id: { not: bookingId },
+      bookingCode: booking.bookingCode,
+      branchId: input.branchId,
+      checkInDate: booking.checkInDate,
+      status: { in: ['NEW', 'COMPLETED', 'ARCHIVED'] },
+    },
+    select: { id: true, status: true },
+  });
+  if (duplicate) {
+    throw ApiError.duplicateBooking('Đã tồn tại một đơn vận hành trùng khớp.', {
+      existingBookingId: duplicate.id,
+      existingStatus: duplicate.status,
+    });
+  }
+
+  const lastMinute = isLastMinute(booking.checkInDate, clock.now());
+  const oldStatus = booking.status;
+
+  await prisma.$transaction(async (tx) => {
+    // Conditional update: only a still-unsent booking transitions, so a racing
+    // second send cannot double-dispatch.
+    const updated = await tx.booking.updateMany({
+      where: { id: bookingId, status: { in: ['DRAFT', 'READY'] } },
+      data: {
+        branchId: input.branchId,
+        status: 'NEW',
+        sentAt: clock.now(),
+        sentByUserId: admin.id,
+        isLastMinute: lastMinute,
+      },
+    });
+    if (updated.count === 0) {
+      throw ApiError.bookingAlreadySent('Đơn đã được gửi trước đó.');
+    }
+
+    await tx.bookingStatusHistory.create({
+      data: {
+        bookingId,
+        oldStatus,
+        newStatus: 'NEW',
+        changedByUserId: admin.id,
+        note: `Gửi tới chi nhánh ${branch.hotelName}`,
+      },
+    });
+
+    await createSendNotifications(tx, bookingId, input.branchId, booking, lastMinute);
+  });
+
+  return loadBookingDetail(bookingId);
+}
+
+async function createSendNotifications(
+  tx: Prisma.TransactionClient,
+  bookingId: string,
+  branchId: number,
+  booking: BookingDetail,
+  lastMinute: boolean,
+): Promise<void> {
+  const receptionists = await tx.user.findMany({
+    where: { role: 'RECEPTIONIST', branchId, active: true },
+    select: { id: true },
+  });
+  if (receptionists.length === 0) return;
+
+  const customer = booking.customerName.length > 0 ? booking.customerName : 'Khách';
+  const title = lastMinute ? 'ĐƠN LAST MINUTE' : 'Có đơn mới';
+  const body = lastMinute
+    ? `${customer} nhận phòng hôm nay. Vui lòng ưu tiên xử lý.`
+    : `${customer} – nhận phòng ${isoDate(booking.checkInDate)}`;
+
+  await tx.notification.createMany({
+    data: receptionists.map((r) => ({ userId: r.id, bookingId, title, body })),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// COMPLETE
+// ---------------------------------------------------------------------------
+export async function completeBooking(
+  bookingId: string,
+  completionNote: string | undefined,
+  actor: Actor,
+  clock: Clock = getClock(),
+): Promise<BookingDetail> {
+  const booking = await loadBookingDetail(bookingId);
+
+  // Branch isolation: a receptionist may only complete their own branch's work.
+  if (actor.role === 'RECEPTIONIST' && booking.branchId !== actor.branchId) {
+    throw ApiError.branchAccessDenied();
+  }
+  if (booking.status === 'COMPLETED') {
+    throw ApiError.bookingAlreadyCompleted();
+  }
+  if (booking.status !== 'NEW') {
+    throw ApiError.conflict('Chỉ có thể hoàn thành đơn đang ở trạng thái mới.', {
+      status: booking.status,
+    });
+  }
+
+  await prisma.$transaction(async (tx) => {
+    // Conditional update guarantees exactly one receptionist wins a race.
+    const updated = await tx.booking.updateMany({
+      where: { id: bookingId, status: 'NEW' },
+      data: {
+        status: 'COMPLETED',
+        completedAt: clock.now(),
+        completedByUserId: actor.id,
+        completionNote: completionNote ?? null,
+      },
+    });
+    if (updated.count === 0) {
+      throw ApiError.bookingAlreadyCompleted();
+    }
+
+    await tx.bookingStatusHistory.create({
+      data: {
+        bookingId,
+        oldStatus: 'NEW',
+        newStatus: 'COMPLETED',
+        changedByUserId: actor.id,
+        note: completionNote ?? null,
+      },
+    });
+
+    await createCompletionNotifications(tx, bookingId, booking, actor);
+  });
+
+  return loadBookingDetail(bookingId);
+}
+
+async function createCompletionNotifications(
+  tx: Prisma.TransactionClient,
+  bookingId: string,
+  booking: BookingDetail,
+  actor: Actor,
+): Promise<void> {
+  const admins = await tx.user.findMany({
+    where: { role: 'ADMIN', active: true },
+    select: { id: true },
+  });
+  if (admins.length === 0) return;
+
+  const code = booking.bookingCode.length > 0 ? booking.bookingCode : '(không mã)';
+  const branchName = booking.branch?.hotelName ?? 'chi nhánh';
+  const body = `${code} tại ${branchName} đã được ${actor.fullName} hoàn thành.`;
+
+  await tx.notification.createMany({
+    data: admins.map((a) => ({ userId: a.id, bookingId, title: 'Đơn đã hoàn thành', body })),
+  });
+}

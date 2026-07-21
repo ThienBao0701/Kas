@@ -1,13 +1,14 @@
 import { NavLink } from 'react-router-dom';
 import { Building2 } from 'lucide-react';
 import { useAuth } from '../auth/AuthProvider';
-import { ADMIN_NAV, PRIMARY_NAV, type NavItem } from './navigation';
+import { navForRole, type NavItem } from './navigation';
 
 function SidebarLink({ item, onNavigate }: { item: NavItem; onNavigate?: () => void }) {
   const Icon = item.icon;
   return (
     <NavLink
       to={item.to}
+      end={item.to === '/app/dashboard'}
       onClick={onNavigate}
       className={({ isActive }) =>
         `flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-colors ${
@@ -25,7 +26,7 @@ function SidebarLink({ item, onNavigate }: { item: NavItem; onNavigate?: () => v
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const { user } = useAuth();
-  const isAdmin = user?.role === 'ADMIN';
+  const nav = navForRole(user?.role);
 
   return (
     <aside className="flex h-full w-64 flex-col border-r border-slate-200 bg-white">
@@ -34,29 +35,24 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           <Building2 className="h-5 w-5" aria-hidden="true" />
         </div>
         <div className="leading-tight">
-          <p className="text-sm font-semibold text-slate-900">Hotel Booking</p>
-          <p className="text-xs text-slate-500">Dispatch</p>
+          <p className="text-sm font-semibold text-slate-900">Kas</p>
+          <p className="text-xs text-slate-500">Điều phối đặt phòng</p>
         </div>
       </div>
 
       <nav className="flex-1 space-y-1 px-3 py-2" aria-label="Điều hướng chính">
-        {PRIMARY_NAV.map((item) => (
+        {nav.map((item) => (
           <SidebarLink key={item.to} item={item} onNavigate={onNavigate} />
         ))}
-
-        {isAdmin ? (
-          <div className="pt-4">
-            <p className="px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
-              Quản trị
-            </p>
-            <div className="space-y-1">
-              {ADMIN_NAV.map((item) => (
-                <SidebarLink key={item.to} item={item} onNavigate={onNavigate} />
-              ))}
-            </div>
-          </div>
-        ) : null}
       </nav>
+
+      {user?.branch ? (
+        <div className="border-t border-slate-200 px-5 py-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Chi nhánh</p>
+          <p className="mt-1 text-sm font-medium text-slate-700">{user.branch.hotelName}</p>
+          <p className="text-xs text-slate-500">{user.branch.address}</p>
+        </div>
+      ) : null}
     </aside>
   );
 }

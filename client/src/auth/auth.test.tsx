@@ -43,7 +43,7 @@ describe('authentication flow', () => {
       expect(screen.getByRole('heading', { name: 'Hotel Booking Dispatch' })).toBeInTheDocument(),
     );
     expect(screen.getByLabelText('Tên đăng nhập')).toBeInTheDocument();
-    expect(screen.queryByText('Chưa có đơn mới được gửi đến.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Mở menu tài khoản' })).not.toBeInTheDocument();
   });
 
   it('logs in with valid credentials and lands on the operational shell', async () => {
@@ -60,7 +60,7 @@ describe('authentication flow', () => {
     await user.type(screen.getByLabelText('Mật khẩu'), 'Admin12345');
     await user.click(screen.getByRole('button', { name: 'Đăng nhập' }));
 
-    expect(await screen.findByText('Chưa có đơn mới được gửi đến.')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Mở menu tài khoản' })).toBeInTheDocument();
   });
 
   it('shows a generic message for invalid credentials', async () => {
@@ -111,7 +111,7 @@ describe('authentication flow', () => {
     renderApp('/app/new');
 
     // No login step — the server session alone restores the authenticated shell.
-    expect(await screen.findByText('Chưa có đơn mới được gửi đến.')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Mở menu tài khoản' })).toBeInTheDocument();
   });
 
   it('logs out, clearing the authenticated UI and returning to /login', async () => {
@@ -123,14 +123,14 @@ describe('authentication flow', () => {
     const user = userEvent.setup();
     renderApp('/app/new');
 
-    await screen.findByText('Chưa có đơn mới được gửi đến.');
+    await screen.findByRole('button', { name: 'Mở menu tài khoản' });
     await user.click(screen.getByRole('button', { name: 'Mở menu tài khoản' }));
     await user.click(screen.getByRole('menuitem', { name: /Đăng xuất/ }));
 
     await waitFor(() =>
       expect(screen.getByRole('heading', { name: 'Hotel Booking Dispatch' })).toBeInTheDocument(),
     );
-    expect(screen.queryByText('Chưa có đơn mới được gửi đến.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Mở menu tài khoản' })).not.toBeInTheDocument();
   });
 
   it('sends a user who must change their password to /change-password', async () => {
@@ -144,6 +144,6 @@ describe('authentication flow', () => {
     renderApp('/app/new');
 
     expect(await screen.findByRole('heading', { name: 'Đổi mật khẩu' })).toBeInTheDocument();
-    expect(screen.queryByText('Chưa có đơn mới được gửi đến.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Mở menu tài khoản' })).not.toBeInTheDocument();
   });
 });

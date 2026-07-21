@@ -122,6 +122,76 @@ npm run dev
 # -> then POST /api/auth/change-password to clear the forced change
 ```
 
+## Booking dispatch workflow (backend)
+
+Kas is **not** a hotel PMS and never creates hotel reservations. It only routes a
+Booking.com reservation to one branch and tracks whether the branch confirmed it.
+
+### Status flow
+
+```
+DRAFT ──(ready, optional)──▶ READY ──┐
+  │                                   ├──(send)──▶ NEW ──(complete)──▶ COMPLETED ──▶ ARCHIVED
+  └───────────────(send)──────────────┘
+```
+
+- **DRAFT** — extracted and saved; the Admin may edit it; not visible to receptionists.
+- **READY** — optional review gate: the Admin validated the data. Editing a READY
+  booking sends it back to **DRAFT** for revalidation.
+- **NEW** — dispatched to exactly one branch; visible in that branch's *Đơn mới*
+  list; awaiting confirmation.
+- **COMPLETED** — the receptionist confirmed the reservation was created in the
+  external hotel system (*Xác nhận đã tạo*). Kept permanently.
+- **ARCHIVED** — older history, retained (never hard-deleted).
+
+Every transition writes one immutable `BookingStatusHistory` row.
+
+### Send-to-branch flow
+
+`POST /api/admin/bookings/:id/send` (Admin) assigns one branch, re-runs full
+validation, and — if there are no blocking errors and every non-blocking warning
+is acknowledged (`acknowledgedWarningCodes`) — atomically: sets `branchId`,
+`status = NEW`, `sentAt`, `sentByUserId`, computes `isLastMinute`, writes status
+history, and creates an unread notification for every **active** receptionist of
+that branch. `sentAt` is permanent and is never overwritten by `completedAt`
+(*gửi đơn ngày nào thì phân loại ngày đó*). Re-sending a dispatched booking is a
+`409 CONFLICT` with no duplicate side effects.
+
+### Branch isolation
+
+A receptionist only ever sees dispatched bookings for their own branch. A
+client-supplied `branchId` on `GET /api/bookings/new|completed|history` is ignored
+for receptionists (the server derives the branch from the session), and viewing or
+completing another branch's booking returns `403 BRANCH_ACCESS_DENIED`. `rawText`
+is returned to the Admin only, not to receptionists.
+
+### Last-minute definition
+
+A booking is **last minute** when its check-in date equals *today in
+Asia/Ho_Chi_Minh* at dispatch time. The backend is authoritative (never the
+browser timezone), `isLastMinute` is persisted at send time and not recomputed on
+read, and the receptionist inbox sorts last-minute bookings first.
+
+### Duplicate detection
+
+Sending is refused with `409 DUPLICATE_BOOKING` when another `NEW`/`COMPLETED`/
+`ARCHIVED` booking already exists with the same `bookingCode` + `branchId` +
+`checkInDate` (the response carries the existing booking id and status).
+
+### Persistent notifications (no realtime yet)
+
+Notifications are stored rows exposed by polling-ready APIs
+(`GET /api/notifications`, `/api/notifications/unread-count`,
+`POST /api/notifications/:id/read`, `/api/notifications/read-all`); each is scoped
+to its owner. **Server-Sent Events / live push are intentionally deferred to a
+later phase.**
+
+### History API
+
+`GET /api/bookings/history` supports search (booking code / customer / phone) and
+filters (branch, status, payment, last-minute, sent/check-in/completed date
+ranges) with pagination; receptionists are always constrained to their own branch.
+
 ## Documentation
 
 - Setup, local-network deployment and Windows PWA installation instructions: see `docs/` (completed in the final phase).

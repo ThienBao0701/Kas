@@ -1,6 +1,7 @@
 import { useLocation } from 'react-router-dom';
 import { Menu } from 'lucide-react';
 import { AccountMenu } from './AccountMenu';
+import { NotificationBell } from './NotificationBell';
 import { titleForPath } from './navigation';
 
 export function Topbar({ onOpenMenu }: { onOpenMenu: () => void }) {
@@ -20,7 +21,10 @@ export function Topbar({ onOpenMenu }: { onOpenMenu: () => void }) {
         </button>
         <h1 className="text-base font-semibold text-slate-800">{title}</h1>
       </div>
-      <AccountMenu />
+      <div className="flex items-center gap-1">
+        <NotificationBell />
+        <AccountMenu />
+      </div>
     </header>
   );
 }

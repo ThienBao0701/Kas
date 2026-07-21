@@ -20,7 +20,13 @@ export type ApiErrorCode =
   | 'INVALID_CREDENTIALS'
   | 'ACCOUNT_DISABLED'
   | 'PASSWORD_CHANGE_REQUIRED'
-  | 'BRANCH_ACCESS_DENIED';
+  | 'BRANCH_ACCESS_DENIED'
+  // Booking dispatch workflow codes (Phase 4B).
+  | 'BOOKING_NOT_READY'
+  | 'BOOKING_ALREADY_SENT'
+  | 'BOOKING_ALREADY_COMPLETED'
+  | 'WARNINGS_NOT_ACKNOWLEDGED'
+  | 'DUPLICATE_BOOKING';
 
 const STATUS_BY_CODE: Record<ApiErrorCode, number> = {
   BAD_REQUEST: 400,
@@ -37,6 +43,11 @@ const STATUS_BY_CODE: Record<ApiErrorCode, number> = {
   ACCOUNT_DISABLED: 403,
   PASSWORD_CHANGE_REQUIRED: 403,
   BRANCH_ACCESS_DENIED: 403,
+  BOOKING_NOT_READY: 422,
+  BOOKING_ALREADY_SENT: 409,
+  BOOKING_ALREADY_COMPLETED: 409,
+  WARNINGS_NOT_ACKNOWLEDGED: 422,
+  DUPLICATE_BOOKING: 409,
 };
 
 export class ApiError extends Error {
@@ -101,6 +112,26 @@ export class ApiError extends Error {
 
   static branchAccessDenied(message = 'Bạn không có quyền truy cập chi nhánh này.'): ApiError {
     return new ApiError('BRANCH_ACCESS_DENIED', message);
+  }
+
+  static bookingNotReady(message: string, details?: unknown): ApiError {
+    return new ApiError('BOOKING_NOT_READY', message, details);
+  }
+
+  static bookingAlreadySent(message = 'Đơn đã được gửi trước đó.', details?: unknown): ApiError {
+    return new ApiError('BOOKING_ALREADY_SENT', message, details);
+  }
+
+  static bookingAlreadyCompleted(message = 'Đơn đã được hoàn thành trước đó.', details?: unknown): ApiError {
+    return new ApiError('BOOKING_ALREADY_COMPLETED', message, details);
+  }
+
+  static warningsNotAcknowledged(message: string, details?: unknown): ApiError {
+    return new ApiError('WARNINGS_NOT_ACKNOWLEDGED', message, details);
+  }
+
+  static duplicateBooking(message: string, details?: unknown): ApiError {
+    return new ApiError('DUPLICATE_BOOKING', message, details);
   }
 }
 
