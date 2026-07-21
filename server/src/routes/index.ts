@@ -3,6 +3,7 @@ import { healthRouter } from './health';
 import { createAuthRouter } from './auth';
 import { createBranchesRouter } from './branches';
 import { createAdminUsersRouter } from './adminUsers';
+import { createBookingsRouter } from './bookings';
 
 /**
  * Builds a fresh API router. A factory (rather than a shared singleton) so each
@@ -15,7 +16,8 @@ export function createApiRouter(): Router {
   router.use(createAuthRouter());
   router.use(createBranchesRouter());
   router.use(createAdminUsersRouter());
+  router.use(createBookingsRouter());
 
-  // Bookings and notifications are mounted here in later phases.
+  // Dispatch and notifications are mounted here in later phases.
   return router;
 }

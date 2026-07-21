@@ -20,6 +20,7 @@ enum UserRole {
 
 enum BookingStatus {
   DRAFT
+  READY
   NEW
   COMPLETED
   ARCHIVED
@@ -28,6 +29,13 @@ enum BookingStatus {
 enum PaymentStatus {
   PAY_BEFORE
   PAY_AFTER
+}
+
+/// Severity of an extraction warning surfaced to the admin during preview.
+enum WarningSeverity {
+  INFO
+  WARNING
+  ERROR
 }
 
 /// Application user: one administrator plus receptionists bound to a branch.
@@ -49,6 +57,7 @@ model User {
   branch            Branch?                @relation(fields: [branchId], references: [id])
   bookingsSent      Booking[]              @relation("BookingSentBy")
   bookingsCompleted Booking[]              @relation("BookingCompletedBy")
+  bookingsCreated   Booking[]              @relation("BookingCreatedBy")
   statusChanges     BookingStatusHistory[]
   notifications     Notification[]
   sessions          Session[]
@@ -112,9 +121,11 @@ model Booking {
 
   /// Date-only values stored at UTC midnight. Times are free-form strings
   /// ("14:00", "sau 15:00") because Booking.com text is not consistent.
-  checkInDate   DateTime
+  /// Nullable so a partial extraction can still be stored as a DRAFT while a
+  /// "missing dates" warning flags it for the admin to complete.
+  checkInDate   DateTime?
   checkInTime   String?
-  checkOutDate  DateTime
+  checkOutDate  DateTime?
   checkOutTime  String?
 
   /// Whole VND. Null when the total could not be extracted.
@@ -138,15 +149,22 @@ model Booking {
   completedByUserId Int?
   completionNote    String?
 
+  /// Which extraction-engine version produced this draft.
+  parserVersion  String?
+  /// The admin who ran the extraction that created this booking.
+  createdByUserId Int?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  branch        Branch?                @relation(fields: [branchId], references: [id])
-  sentBy        User?                  @relation("BookingSentBy", fields: [sentByUserId], references: [id])
-  completedBy   User?                  @relation("BookingCompletedBy", fields: [completedByUserId], references: [id])
+  branch        Branch?                 @relation(fields: [branchId], references: [id])
+  sentBy        User?                   @relation("BookingSentBy", fields: [sentByUserId], references: [id])
+  completedBy   User?                   @relation("BookingCompletedBy", fields: [completedByUserId], references: [id])
+  createdBy     User?                   @relation("BookingCreatedBy", fields: [createdByUserId], references: [id])
   rooms         BookingRoom[]
   statusHistory BookingStatusHistory[]
   notifications Notification[]
+  warnings      BookingExtractWarning[]
 
   @@index([bookingCode])
   @@index([branchId, status])
@@ -192,6 +210,10 @@ model BookingNightPrice {
   currency      String   @default("VND")
   /// True when the admin typed or corrected this amount by hand.
   manuallyCorrected Boolean  @default(false)
+  /// True when the amount is a system estimate rather than a value Booking.com
+  /// stated. The extraction engine never estimates money, so it always writes
+  /// false; reserved for a future explicit "estimate" action.
+  isEstimated       Boolean  @default(false)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -200,6 +222,24 @@ model BookingNightPrice {
   @@unique([bookingRoomId, stayDate])
   @@index([bookingRoomId])
   @@index([stayDate])
+}
+
+/// A single validation finding produced while extracting a booking from raw
+/// Booking.com text (e.g. unknown hotel, missing dates, missing nightly price).
+model BookingExtractWarning {
+  id        String          @id @default(cuid())
+  bookingId String
+  /// Stable machine code, e.g. "UNKNOWN_HOTEL", "MISSING_NIGHTLY_PRICE".
+  code      String
+  /// Human-readable Vietnamese message shown to the admin.
+  message   String
+  severity  WarningSeverity @default(WARNING)
+  createdAt DateTime        @default(now())
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+  @@index([code])
 }
 
 /// Immutable audit trail of every booking status transition.

@@ -1,0 +1,26 @@
+Booking.com
+Booking details
+Modern Luxury Eliana Hotel
+13 Bùi Thị Xuân, District 1, Ho Chi Minh City
+Confirmation number
+5590182734
+PIN code
+6610
+Check-in
+Mon, 3 Aug 2026
+From 14:00
+Check-out
+Wed, 5 Aug 2026
+Until 12:00
+Guest name
+John A. Smith
+Phone
++84 909 556 677
+Superior Double Room
+Price details
+Mon, 3 Aug 2026
+900.000 VND
+Tue, 4 Aug 2026
+900.000 VND
+Total
+1.800.000 VND
