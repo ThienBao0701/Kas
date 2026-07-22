@@ -61,6 +61,43 @@ const COMPLETED_BOOKING = {
   completionNote: 'Đã tạo trên hệ thống',
 };
 
+function mockDetail(booking: unknown) {
+  return installApiMock({
+    'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),
+    'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
+    'GET /api/bookings/b1': () => ({ status: 200, body: { booking } }),
+  });
+}
+
+describe('BookingDetailPage — simplified copy surface', () => {
+  it('exposes only a nightly-price copy on room rows (no room-block copies)', async () => {
+    mockDetail(NEW_BOOKING);
+    renderApp('/app/booking/b1');
+
+    expect((await screen.findAllByLabelText(/Sao chép giá đêm/)).length).toBe(2);
+    expect(screen.queryByLabelText(/hạng phòng/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/toàn bộ phòng/i)).not.toBeInTheDocument();
+  });
+
+  it('shows the phone placeholder and no warning when phone is missing', async () => {
+    mockDetail({ ...NEW_BOOKING, phone: null });
+    renderApp('/app/booking/b1');
+
+    expect(await screen.findByText('(Hiển thị số điện thoại)')).toBeInTheDocument();
+    // A missing phone must never raise a warning banner.
+    expect(screen.queryByText(/Cảnh báo/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('blocks note generation when the booking code is missing', async () => {
+    mockDetail({ ...NEW_BOOKING, bookingCode: null });
+    renderApp('/app/booking/b1');
+
+    expect(await screen.findByText('Chưa có mã Booking để tạo ghi chú.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sao chép ghi chú' })).not.toBeInTheDocument();
+  });
+});
+
 describe('BookingDetailPage — receptionist confirmation', () => {
   it('shows copyable fields and confirms creation via the complete API', async () => {
     let completed = false;
@@ -80,10 +117,16 @@ describe('BookingDetailPage — receptionist confirmation', () => {
     const user = userEvent.setup();
     renderApp('/app/booking/b1');
 
-    // Core copyable fields with per-field copy controls (new terminology).
-    expect(await screen.findByText('489234523')).toBeInTheDocument();
+    // Only the four main fields have a copy button; supporting fields do not.
+    expect(await screen.findByRole('heading', { name: 'Nguyễn Văn A' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Sao chép Tên khách')).toBeInTheDocument();
+    expect(screen.getByLabelText('Sao chép Số điện thoại')).toBeInTheDocument();
     expect(screen.getByLabelText('Sao chép Mã Booking')).toBeInTheDocument();
-    expect(screen.getByLabelText('Sao chép toàn bộ')).toBeInTheDocument();
+    expect(screen.getByLabelText('Sao chép Tổng tiền')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Sao chép Chi nhánh')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Sao chép Check-in')).not.toBeInTheDocument();
+    // The generated PMS note card offers a single "Sao chép ghi chú".
+    expect(screen.getByRole('button', { name: 'Sao chép ghi chú' })).toBeInTheDocument();
 
     // Confirmation card wording.
     expect(

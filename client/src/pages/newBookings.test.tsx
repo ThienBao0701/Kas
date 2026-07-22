@@ -107,6 +107,64 @@ describe('NewBookingsPage — receptionist master-detail inbox', () => {
     expect(screen.getByText(/Dữ liệu tự động cập nhật mỗi 20 giây/)).toBeInTheDocument();
   });
 
+  it('renders all bookings vertically in the left list', async () => {
+    const rows = Array.from({ length: 10 }, (_, i) =>
+      listRow({ id: `bk${i}`, bookingCode: `CODE${i}` }),
+    );
+    installApiMock({
+      'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),
+      'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
+      'GET /api/bookings/new?pageSize=100': () => ({
+        status: 200,
+        body: { bookings: rows, pagination: { page: 1, pageSize: 100, total: 10, totalPages: 1 } },
+      }),
+      'GET /api/bookings/bk0': () => ({ status: 200, body: { booking: detail('bk0', { bookingCode: 'CODE0' }) } }),
+    });
+
+    renderApp('/app/new');
+
+    const list = await screen.findByRole('list', { name: 'Danh sách đơn mới' });
+    expect(within(list).getAllByRole('listitem')).toHaveLength(10);
+  });
+
+  it('advances to the next booking after the selected one is confirmed', async () => {
+    let completed = false;
+    installApiMock({
+      'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),
+      'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
+      'GET /api/bookings/new?pageSize=100': () => ({
+        status: 200,
+        body: {
+          bookings: completed
+            ? [listRow({ id: 'b', bookingCode: 'BBB' })]
+            : [listRow({ id: 'a', bookingCode: 'AAA' }), listRow({ id: 'b', bookingCode: 'BBB' })],
+          pagination: { page: 1, pageSize: 100, total: completed ? 1 : 2, totalPages: 1 },
+        },
+      }),
+      'GET /api/bookings/a': () => ({ status: 200, body: { booking: detail('a', { bookingCode: 'AAA' }) } }),
+      'GET /api/bookings/b': () => ({ status: 200, body: { booking: detail('b', { bookingCode: 'BBB' }) } }),
+      'POST /api/bookings/a/complete': () => {
+        completed = true;
+        return { status: 200, body: { booking: detail('a', { status: 'COMPLETED' }) } };
+      },
+    });
+
+    const user = userEvent.setup();
+    renderApp('/app/new');
+
+    // Booking 'a' is auto-selected; confirm it.
+    await user.click(await screen.findByRole('button', { name: 'Xác nhận đã tạo' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Xác nhận đã tạo' }));
+
+    // 'a' is gone from the list and 'b' has become the selection.
+    const list = await screen.findByRole('list', { name: 'Danh sách đơn mới' });
+    await screen.findByText('Đã xác nhận đã tạo. Đơn đã được chuyển khỏi danh sách Đơn mới.');
+    expect(within(list).queryByText('AAA')).not.toBeInTheDocument();
+    const selected = within(list).getByText('BBB').closest('button')!;
+    expect(selected.getAttribute('aria-current')).toBe('true');
+  });
+
   it('keeps the selected booking after a manual refresh', async () => {
     installApiMock({
       'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),

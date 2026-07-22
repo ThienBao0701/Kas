@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Inbox, RefreshCw } from 'lucide-react';
@@ -14,6 +14,7 @@ import { LastMinuteBadge, StatusBadge } from '../components/Badges';
 import { Pagination } from '../components/Pagination';
 import { PageHeader, InlineSpinner, QueryState } from '../components/PageState';
 import { BookingDetailView } from '../components/BookingDetailView';
+import { Toast } from '../components/Toast';
 import { formatDate, formatDateTime, paymentLabel } from '../lib/format';
 
 const POLL_MS = 20_000;
@@ -29,6 +30,10 @@ export function NewBookingsPage() {
 
 function ReceptionistInbox() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  // Remembers where the selected booking sits, so when it disappears (confirmed
+  // here or by another user) we can advance to the booking that took its place.
+  const lastIndexRef = useRef(0);
 
   const list = useQuery({
     queryKey: ['bookings', 'new', { branchId: undefined }],
@@ -39,10 +44,24 @@ function ReceptionistInbox() {
 
   const bookings = useMemo(() => list.data?.bookings ?? [], [list.data]);
 
-  // Auto-select the first booking once, and keep the selection across polls.
+  // Keep a valid selection across polling refreshes:
+  // - first load auto-selects the first booking;
+  // - a still-present selection is preserved (and its position remembered);
+  // - a vanished selection advances to the next available booking;
+  // - an emptied list clears the selection so the empty state can show.
   useEffect(() => {
-    const first = bookings[0];
-    if (!selectedId && first) setSelectedId(first.id);
+    if (bookings.length === 0) {
+      if (selectedId !== null) setSelectedId(null);
+      return;
+    }
+    const idx = bookings.findIndex((b) => b.id === selectedId);
+    if (idx >= 0) {
+      lastIndexRef.current = idx;
+      return;
+    }
+    const nextIdx = Math.min(lastIndexRef.current, bookings.length - 1);
+    lastIndexRef.current = nextIdx;
+    setSelectedId(bookings[nextIdx]!.id);
   }, [bookings, selectedId]);
 
   const lastRefresh = list.dataUpdatedAt
@@ -108,8 +127,8 @@ function ReceptionistInbox() {
           message="Chưa có đơn mới được gửi đến. Màn hình sẽ tự cập nhật khi có đơn."
         />
       ) : (
-        <div className="grid gap-4 lg:grid-cols-[380px_1fr] lg:items-start">
-          {/* Left: compact list */}
+        <div className="grid gap-4 lg:grid-cols-[38%_1fr] lg:items-start">
+          {/* Left: compact list (~38% width), independently scrollable */}
           <Card className="overflow-hidden lg:sticky lg:top-4">
             <ul className="max-h-[calc(100vh-14rem)] divide-y divide-slate-100 overflow-y-auto" aria-label="Danh sách đơn mới">
               {bookings.map((b) => (
@@ -117,17 +136,29 @@ function ReceptionistInbox() {
                   <BookingListRow
                     booking={b}
                     selected={b.id === selectedId}
-                    onSelect={() => setSelectedId(b.id)}
+                    onSelect={() => {
+                      setSelectedId(b.id);
+                      lastIndexRef.current = bookings.findIndex((x) => x.id === b.id);
+                    }}
                   />
                 </li>
               ))}
             </ul>
           </Card>
 
-          {/* Right: full detail */}
-          <div>{selectedId ? <SelectedBookingPanel id={selectedId} /> : null}</div>
+          {/* Right: full detail (~62% width) */}
+          <div>
+            {selectedId ? (
+              <SelectedBookingPanel
+                id={selectedId}
+                onCompleted={() => setToast('Đã xác nhận đã tạo. Đơn đã được chuyển khỏi danh sách Đơn mới.')}
+              />
+            ) : null}
+          </div>
         </div>
       )}
+
+      <Toast message={toast} onDone={() => setToast(null)} />
     </div>
   );
 }
@@ -166,7 +197,7 @@ function BookingListRow({
   );
 }
 
-function SelectedBookingPanel({ id }: { id: string }) {
+function SelectedBookingPanel({ id, onCompleted }: { id: string; onCompleted: () => void }) {
   const { user } = useAuth();
   const query = useQuery({
     queryKey: ['booking', id],
@@ -177,7 +208,14 @@ function SelectedBookingPanel({ id }: { id: string }) {
   if (query.isLoading) return <InlineSpinner />;
   if (query.isError) return <ErrorAlert>{toUserMessage(query.error)}</ErrorAlert>;
   if (!query.data) return null;
-  return <BookingDetailView booking={query.data.booking} isAdmin={user?.role === 'ADMIN'} />;
+  return (
+    <BookingDetailView
+      booking={query.data.booking}
+      isAdmin={user?.role === 'ADMIN'}
+      onCompleted={onCompleted}
+      suppressInternalToast
+    />
+  );
 }
 
 /* -------------------------------------------------------------------------- */

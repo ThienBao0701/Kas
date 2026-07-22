@@ -33,6 +33,24 @@ export function hcmToday(now: Date = new Date()): string {
   return new Date(now.getTime() + HCM_OFFSET_MS).toISOString().slice(0, 10);
 }
 
+/** Today's date in Asia/Ho_Chi_Minh as "DD/MM" (no year) — for the PMS note. */
+export function hcmDayMonth(now: Date = new Date()): string {
+  const iso = hcmToday(now);
+  const [, m, d] = iso.split('-');
+  return `${d}/${m}`;
+}
+
+/**
+ * The canonical plain-text amount format used for every *copyable* amount in the
+ * app (nightly price, total, generated note): Vietnamese thousands separators,
+ * whole đồng, no currency symbol — e.g. 609120 -> "609.120". Unknown -> the
+ * agreed "Chưa xác định" placeholder so a missing amount is never blank.
+ */
+export function formatAmountCopy(amount: number | null | undefined): string {
+  if (amount === null || amount === undefined) return 'Chưa xác định';
+  return vndFormatter.format(Math.round(amount));
+}
+
 /** True when an ISO date equals today in Asia/Ho_Chi_Minh. */
 export function isTodayHcm(iso: string | null | undefined): boolean {
   return !!iso && iso.slice(0, 10) === hcmToday();
