@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { ADMIN_USER, RECEPTIONIST_USER, installApiMock, jsonResponse, renderApp } from '../test/utils';
+import { ADMIN_USER, RECEPTIONIST_USER, installApiMock, renderApp } from '../test/utils';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -43,22 +43,56 @@ const NEW_BOOKING = {
   ],
   warnings: [],
   statusHistory: [],
+  proofs: [],
+  sourcePlatform: 'BOOKING_COM',
+  verificationStatus: 'NOT_SUBMITTED',
   createdBy: null,
   sentBy: { id: 1, fullName: 'Quản trị viên' },
   completedBy: null,
+  reviewedBy: null,
   createdAt: '2026-07-15T02:00:00.000Z',
   updatedAt: '2026-07-15T02:00:00.000Z',
   sentAt: '2026-07-15T02:00:00.000Z',
   completedAt: null,
   completionNote: null,
+  reviewedAt: null,
+};
+
+const PENDING_PROOF = {
+  id: 'p1',
+  attemptNumber: 1,
+  status: 'PENDING_REVIEW',
+  originalFileName: 'proof.png',
+  mimeType: 'image/png',
+  fileSize: 2048,
+  submissionNote: null,
+  submittedBy: { id: 2, fullName: 'Lễ tân Một' },
+  submittedAt: '2026-07-16T02:00:00.000Z',
+  reviewedBy: null,
+  reviewedAt: null,
+  reviewReasonCode: null,
+  reviewNote: null,
+  imageUrl: '/api/bookings/b1/proofs/p1/image',
+};
+
+const PENDING_BOOKING = {
+  ...NEW_BOOKING,
+  verificationStatus: 'PENDING_REVIEW',
+  completedBy: { id: 2, fullName: 'Lễ tân Một' },
+  completedAt: '2026-07-16T02:00:00.000Z',
+  proofs: [PENDING_PROOF],
 };
 
 const COMPLETED_BOOKING = {
   ...NEW_BOOKING,
   status: 'COMPLETED',
+  verificationStatus: 'APPROVED',
   completedBy: { id: 2, fullName: 'Lễ tân Một' },
   completedAt: '2026-07-16T02:00:00.000Z',
   completionNote: 'Đã tạo trên hệ thống',
+  reviewedBy: { id: 1, fullName: 'Quản trị viên' },
+  reviewedAt: '2026-07-16T03:00:00.000Z',
+  proofs: [{ ...PENDING_PROOF, status: 'APPROVED', reviewedBy: { id: 1, fullName: 'Quản trị viên' }, reviewedAt: '2026-07-16T03:00:00.000Z' }],
 };
 
 function mockDetail(booking: unknown) {
@@ -98,19 +132,19 @@ describe('BookingDetailPage — simplified copy surface', () => {
   });
 });
 
-describe('BookingDetailPage — receptionist confirmation', () => {
-  it('shows copyable fields and confirms creation via the complete API', async () => {
-    let completed = false;
+describe('BookingDetailPage — receptionist proof upload', () => {
+  it('shows copyable fields and submits a creation proof via the proofs API', async () => {
+    let submitted = false;
     const fetchMock = installApiMock({
       'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),
       'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
       'GET /api/bookings/b1': () => ({
         status: 200,
-        body: { booking: completed ? COMPLETED_BOOKING : NEW_BOOKING },
+        body: { booking: submitted ? PENDING_BOOKING : NEW_BOOKING },
       }),
-      'POST /api/bookings/b1/complete': () => {
-        completed = true;
-        return { status: 200, body: { booking: COMPLETED_BOOKING } };
+      'POST /api/bookings/b1/proofs': () => {
+        submitted = true;
+        return { status: 201, body: { booking: PENDING_BOOKING } };
       },
     });
 
@@ -120,107 +154,110 @@ describe('BookingDetailPage — receptionist confirmation', () => {
     // Only the four main fields have a copy button; supporting fields do not.
     expect(await screen.findByRole('heading', { name: 'Nguyễn Văn A' })).toBeInTheDocument();
     expect(screen.getByLabelText('Sao chép Tên khách')).toBeInTheDocument();
-    expect(screen.getByLabelText('Sao chép Số điện thoại')).toBeInTheDocument();
     expect(screen.getByLabelText('Sao chép Mã Booking')).toBeInTheDocument();
-    expect(screen.getByLabelText('Sao chép Tổng tiền')).toBeInTheDocument();
-    expect(screen.queryByLabelText('Sao chép Chi nhánh')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Sao chép Check-in')).not.toBeInTheDocument();
-    // The generated PMS note card offers a single "Sao chép ghi chú".
     expect(screen.getByRole('button', { name: 'Sao chép ghi chú' })).toBeInTheDocument();
 
-    // Confirmation card wording.
+    // Upload card wording, and the submit button is disabled until a file is chosen.
     expect(
-      screen.getByText('Sau khi đã tạo booking trên hệ thống khách sạn, hãy xác nhận tại đây.'),
+      screen.getByText('Xác nhận đã tạo — gửi ảnh cho Admin kiểm tra'),
     ).toBeInTheDocument();
+    const submitBtn = screen.getByRole('button', { name: 'Gửi Admin kiểm tra' });
+    expect(submitBtn).toBeDisabled();
 
-    // Open the dialog and confirm.
-    await user.click(screen.getByRole('button', { name: 'Xác nhận đã tạo' }));
-    const dialog = await screen.findByRole('dialog');
-    expect(
-      within(dialog).getByText('Bạn xác nhận booking này đã được tạo thành công trên hệ thống khách sạn?'),
-    ).toBeInTheDocument();
-    // The dialog echoes the identifying fields.
-    expect(within(dialog).getByText('Nguyễn Văn A')).toBeInTheDocument();
-    expect(within(dialog).getByText('489234523')).toBeInTheDocument();
-    await user.click(within(dialog).getByRole('button', { name: 'Xác nhận đã tạo' }));
+    // Pick a PNG file via the hidden file input.
+    const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'proof.png', { type: 'image/png' });
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(input, file);
+    expect(submitBtn).toBeEnabled();
 
-    // Success feedback + confirmed state, and the complete endpoint was called.
-    expect(await screen.findByText('Đã xác nhận booking đã tạo trên hệ thống khách sạn.')).toBeInTheDocument();
-    expect((await screen.findAllByText('Đã xác nhận tạo')).length).toBeGreaterThan(0);
+    await user.click(submitBtn);
+
+    // Success feedback + the proofs endpoint was called with a multipart POST.
+    expect(await screen.findByText('Đã gửi ảnh cho Admin kiểm tra.')).toBeInTheDocument();
     const called = fetchMock.mock.calls.some(
-      ([url, init]) => String(url) === '/api/bookings/b1/complete' && (init as RequestInit).method === 'POST',
+      ([url, init]) => String(url) === '/api/bookings/b1/proofs' && (init as RequestInit).method === 'POST',
     );
     expect(called).toBe(true);
   });
 
-  it('disables the confirm button while the request is processing', async () => {
-    let resolveComplete: () => void = () => {};
-    const fetchMock = vi.fn(async (url: string | URL, init: RequestInit = {}) => {
-      const method = (init.method ?? 'GET').toUpperCase();
-      const key = `${method} ${String(url)}`;
-      if (key === 'GET /api/auth/me') return jsonResponse(200, { user: RECEPTIONIST_USER });
-      if (key === 'GET /api/notifications/unread-count') return jsonResponse(200, { count: 0 });
-      if (key === 'GET /api/bookings/b1') return jsonResponse(200, { booking: NEW_BOOKING });
-      if (key === 'POST /api/bookings/b1/complete') {
-        return new Promise<Response>((resolve) => {
-          resolveComplete = () => resolve(jsonResponse(200, { booking: COMPLETED_BOOKING }));
-        });
-      }
-      return jsonResponse(404, { error: { code: 'NOT_FOUND', message: key } });
-    });
-    vi.stubGlobal('fetch', fetchMock);
-
-    const user = userEvent.setup();
-    renderApp('/app/booking/b1');
-
-    await user.click(await screen.findByRole('button', { name: 'Xác nhận đã tạo' }));
-    const dialog = await screen.findByRole('dialog');
-    const confirmBtn = within(dialog).getByRole('button', { name: 'Xác nhận đã tạo' });
-    await user.click(confirmBtn);
-
-    // While the deferred request is in flight the button is disabled.
-    expect(confirmBtn).toBeDisabled();
-    resolveComplete();
-  });
-
-  it('handles an already-confirmed response with a clear message', async () => {
+  it('shows the rejection reason and a resubmit prompt for a rejected booking', async () => {
+    const rejected = {
+      ...NEW_BOOKING,
+      verificationStatus: 'REJECTED',
+      proofs: [
+        {
+          ...PENDING_PROOF,
+          status: 'REJECTED',
+          reviewReasonCode: 'WRONG_DATES',
+          reviewNote: 'Ngày nhận phòng sai',
+          reviewedBy: { id: 1, fullName: 'Quản trị viên' },
+          reviewedAt: '2026-07-16T03:00:00.000Z',
+        },
+      ],
+    };
     installApiMock({
       'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),
       'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
-      'GET /api/bookings/b1': () => ({ status: 200, body: { booking: NEW_BOOKING } }),
-      'POST /api/bookings/b1/complete': () => ({
-        status: 409,
-        body: { error: { code: 'BOOKING_ALREADY_COMPLETED', message: 'Đơn đã được hoàn thành trước đó.' } },
-      }),
+      'GET /api/bookings/b1': () => ({ status: 200, body: { booking: rejected } }),
+    });
+
+    renderApp('/app/booking/b1');
+
+    expect(await screen.findByText('Admin yêu cầu tạo lại')).toBeInTheDocument();
+    // The reason shows in the banner and again in the attempt history.
+    expect(screen.getAllByText(/Sai ngày check-in\/check-out/).length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: 'Gửi Admin kiểm tra' })).toBeInTheDocument();
+  });
+});
+
+describe('BookingDetailPage — admin review', () => {
+  it('shows the LEFT/RIGHT comparison and approves a pending proof', async () => {
+    let approved = false;
+    const fetchMock = installApiMock({
+      'GET /api/auth/me': () => ({ status: 200, body: { user: ADMIN_USER } }),
+      'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
+      'GET /api/bookings/b1': () => ({ status: 200, body: { booking: approved ? COMPLETED_BOOKING : PENDING_BOOKING } }),
+      'POST /api/bookings/b1/proofs/p1/approve': () => {
+        approved = true;
+        return { status: 200, body: { booking: COMPLETED_BOOKING } };
+      },
     });
 
     const user = userEvent.setup();
     renderApp('/app/booking/b1');
 
-    await user.click(await screen.findByRole('button', { name: 'Xác nhận đã tạo' }));
-    const dialog = await screen.findByRole('dialog');
-    await user.click(within(dialog).getByRole('button', { name: 'Xác nhận đã tạo' }));
+    // The review comparison shows both the source facts and the proof image.
+    expect(await screen.findByText('Thông tin đơn gốc')).toBeInTheDocument();
+    expect(screen.getByText('Ảnh lễ tân gửi')).toBeInTheDocument();
 
-    expect(
-      await screen.findByText('Đơn này đã được xác nhận trước đó. Trạng thái đã được cập nhật.'),
-    ).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /Đúng — xác nhận/ }));
+
+    expect(await screen.findByText('Đã xác nhận đúng. Đơn đã hoàn thành.')).toBeInTheDocument();
+    const called = fetchMock.mock.calls.some(
+      ([url, init]) => String(url) === '/api/bookings/b1/proofs/p1/approve' && (init as RequestInit).method === 'POST',
+    );
+    expect(called).toBe(true);
   });
-});
 
-describe('BookingDetailPage — admin view', () => {
-  it('shows who confirmed the booking and when', async () => {
-    installApiMock({
+  it('rejects a pending proof with a reason code', async () => {
+    const fetchMock = installApiMock({
       'GET /api/auth/me': () => ({ status: 200, body: { user: ADMIN_USER } }),
       'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
-      'GET /api/bookings/new?page=1&pageSize=20': () => ({ status: 200, body: { bookings: [], pagination: { page: 1, pageSize: 20, total: 0, totalPages: 1 } } }),
-      'GET /api/bookings/b1': () => ({ status: 200, body: { booking: COMPLETED_BOOKING } }),
+      'GET /api/bookings/b1': () => ({ status: 200, body: { booking: PENDING_BOOKING } }),
+      'POST /api/bookings/b1/proofs/p1/reject': () => ({ status: 200, body: { booking: { ...NEW_BOOKING, verificationStatus: 'REJECTED' } } }),
     });
 
+    const user = userEvent.setup();
     renderApp('/app/booking/b1');
 
-    // Confirmed-by name is visible, and the admin meta labels completedAt.
-    expect((await screen.findAllByText(/Lễ tân Một/)).length).toBeGreaterThan(0);
-    expect(screen.getByText(/completedAt/)).toBeInTheDocument();
-    expect(screen.getByText(/Ghi chú: Đã tạo trên hệ thống/)).toBeInTheDocument();
+    await user.click(await screen.findByRole('button', { name: /Sai — yêu cầu tạo lại/ }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Gửi yêu cầu tạo lại' }));
+
+    expect(await screen.findByText('Đã gửi yêu cầu tạo lại cho chi nhánh.')).toBeInTheDocument();
+    const called = fetchMock.mock.calls.some(
+      ([url, init]) => String(url) === '/api/bookings/b1/proofs/p1/reject' && (init as RequestInit).method === 'POST',
+    );
+    expect(called).toBe(true);
   });
 });

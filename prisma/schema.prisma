@@ -31,6 +31,42 @@ enum PaymentStatus {
   PAY_AFTER
 }
 
+/// Where a reservation originated. Existing rows default to BOOKING_COM.
+enum BookingSource {
+  BOOKING_COM
+  AGODA
+}
+
+/// Proof-of-creation lifecycle for a dispatched booking. A receptionist creates
+/// the reservation in the external hotel system, uploads a screenshot, and the
+/// Admin approves or rejects it.
+enum VerificationStatus {
+  NOT_SUBMITTED
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+}
+
+/// A single screenshot proof attempt.
+enum ProofStatus {
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+}
+
+/// Why an Admin rejected a proof attempt (a stable code; UI shows Vietnamese).
+enum ProofReviewReason {
+  WRONG_CUSTOMER_NAME
+  WRONG_BOOKING_CODE
+  WRONG_DATES
+  WRONG_ROOM_COUNT
+  WRONG_ROOM_TYPE
+  WRONG_PRICE
+  MISSING_ROOM
+  UNCLEAR_IMAGE
+  OTHER
+}
+
 /// Severity of an extraction warning surfaced to the admin during preview.
 enum WarningSeverity {
   INFO
@@ -57,7 +93,10 @@ model User {
   branch            Branch?                @relation(fields: [branchId], references: [id])
   bookingsSent      Booking[]              @relation("BookingSentBy")
   bookingsCompleted Booking[]              @relation("BookingCompletedBy")
+  bookingsReviewed  Booking[]              @relation("BookingReviewedBy")
   bookingsCreated   Booking[]              @relation("BookingCreatedBy")
+  proofsSubmitted   BookingCreationProof[] @relation("ProofSubmittedBy")
+  proofsReviewed    BookingCreationProof[] @relation("ProofReviewedBy")
   statusChanges     BookingStatusHistory[]
   notifications     Notification[]
   sessions          Session[]
@@ -119,6 +158,10 @@ model Booking {
   customerName String
   phone        String?
 
+  /// Which platform the reservation came from. Defaults to BOOKING_COM so every
+  /// pre-existing row is safe without a data backfill surprise.
+  sourcePlatform BookingSource @default(BOOKING_COM)
+
   /// Date-only values stored at UTC midnight. Times are free-form strings
   /// ("14:00", "sau 15:00") because Booking.com text is not consistent.
   /// Nullable so a partial extraction can still be stored as a DRAFT while a
@@ -145,9 +188,17 @@ model Booking {
   /// overwritten by completedAt.
   sentAt            DateTime?
   sentByUserId      Int?
+  /// The receptionist's claim that they created the reservation externally
+  /// (set when the first proof is submitted). Never overwritten by review.
   completedAt       DateTime?
   completedByUserId Int?
   completionNote    String?
+
+  /// Proof-of-creation review state. NOT_SUBMITTED until a receptionist submits.
+  verificationStatus VerificationStatus @default(NOT_SUBMITTED)
+  /// The Admin who approved/rejected the current proof, and when.
+  reviewedByUserId   Int?
+  reviewedAt         DateTime?
 
   /// Which extraction-engine version produced this draft.
   parserVersion  String?
@@ -160,20 +211,60 @@ model Booking {
   branch        Branch?                 @relation(fields: [branchId], references: [id])
   sentBy        User?                   @relation("BookingSentBy", fields: [sentByUserId], references: [id])
   completedBy   User?                   @relation("BookingCompletedBy", fields: [completedByUserId], references: [id])
+  reviewedBy    User?                   @relation("BookingReviewedBy", fields: [reviewedByUserId], references: [id])
   createdBy     User?                   @relation("BookingCreatedBy", fields: [createdByUserId], references: [id])
   rooms         BookingRoom[]
   statusHistory BookingStatusHistory[]
   notifications Notification[]
   warnings      BookingExtractWarning[]
+  proofs        BookingCreationProof[]
 
   @@index([bookingCode])
   @@index([branchId, status])
   @@index([status])
+  @@index([branchId, verificationStatus])
+  @@index([verificationStatus])
+  @@index([sourcePlatform])
   @@index([sentAt])
   @@index([checkInDate])
   @@index([isLastMinute])
   @@index([customerName])
   @@index([phone])
+}
+
+/// One immutable screenshot proof attempt that a receptionist created the
+/// reservation in the external hotel system. Attempts are never overwritten or
+/// hard-deleted; a resubmission creates a new attempt with the next number.
+model BookingCreationProof {
+  id             String             @id @default(cuid())
+  bookingId      String
+  /// 1-based attempt sequence for this booking (unique per booking).
+  attemptNumber  Int
+  /// Server-generated file name on disk (never the client's original name).
+  storedFileName String
+  /// The client's original name, kept only for display/audit — never trusted.
+  originalFileName String
+  mimeType       String
+  fileSize       Int
+  submissionNote String?
+  submittedByUserId Int?
+  submittedAt    DateTime           @default(now())
+
+  status         ProofStatus        @default(PENDING_REVIEW)
+  reviewedByUserId Int?
+  reviewedAt     DateTime?
+  reviewReasonCode ProofReviewReason?
+  reviewNote     String?
+
+  createdAt      DateTime           @default(now())
+
+  booking     Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  submittedBy User?   @relation("ProofSubmittedBy", fields: [submittedByUserId], references: [id])
+  reviewedBy  User?   @relation("ProofReviewedBy", fields: [reviewedByUserId], references: [id])
+
+  @@unique([bookingId, attemptNumber])
+  @@index([bookingId])
+  @@index([status])
 }
 
 /// One room within a booking. Rooms are never merged; each keeps its own prices.

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { FilePlus2, Send, Sparkles } from 'lucide-react';
-import { bookingsApi, branchesApi, type BookingDetail, type BookingEdit, type WarningView } from '../api/bookings';
+import { bookingsApi, branchesApi, SOURCE_LABEL, type BookingDetail, type BookingEdit, type BookingSource, type WarningView } from '../api/bookings';
 import { ApiError, toUserMessage } from '../api/errors';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
@@ -94,6 +94,7 @@ const inputClass =
 
 export function DispatchPage() {
   const navigate = useNavigate();
+  const [source, setSource] = useState<BookingSource>('BOOKING_COM');
   const [rawText, setRawText] = useState('');
   const [draftId, setDraftId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState | null>(null);
@@ -107,7 +108,7 @@ export function DispatchPage() {
   const branches = useQuery({ queryKey: ['branches'], queryFn: () => branchesApi.list(), staleTime: 5 * 60_000 });
 
   const extractMut = useMutation({
-    mutationFn: (text: string) => bookingsApi.extract(text),
+    mutationFn: (text: string) => bookingsApi.extract(text, source),
     onSuccess: (res) => {
       setDraftId(res.booking.id);
       setBranchId(res.branchConfident && res.suggestedBranch ? res.suggestedBranch.id : undefined);
@@ -187,21 +188,43 @@ export function DispatchPage() {
 
   // --- Stage 1: paste + extract ---
   if (!draftId) {
+    const sources: BookingSource[] = ['BOOKING_COM', 'AGODA'];
     return (
       <div>
-        <PageHeader title="Nhập đơn Booking.com" description="Dán nội dung đặt phòng từ Booking.com để trích xuất thông tin." />
+        <PageHeader title="Nhập đơn" description="Chọn nguồn, dán nội dung đặt phòng để trích xuất thông tin." />
         <Card className="p-5">
+          {/* Source tabs */}
+          <div className="mb-4 inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1" role="tablist" aria-label="Nguồn đặt phòng">
+            {sources.map((s) => (
+              <button
+                key={s}
+                type="button"
+                role="tab"
+                aria-selected={source === s}
+                onClick={() => {
+                  setSource(s);
+                  extractMut.reset();
+                }}
+                className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+                  source === s ? 'bg-white text-brand-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                {SOURCE_LABEL[s]}
+              </button>
+            ))}
+          </div>
+
           {extractMut.isError ? (
             <div className="mb-3">
               <ErrorAlert>{toUserMessage(extractMut.error)}</ErrorAlert>
             </div>
           ) : null}
-          <label className="mb-1 block text-sm font-medium text-slate-600">Nội dung Booking.com</label>
+          <label className="mb-1 block text-sm font-medium text-slate-600">Nội dung {SOURCE_LABEL[source]}</label>
           <textarea
             value={rawText}
             onChange={(e) => setRawText(e.target.value)}
             rows={14}
-            placeholder="Dán toàn bộ nội dung (Ctrl+A, Ctrl+C) từ trang chi tiết đặt phòng Booking.com…"
+            placeholder={`Dán toàn bộ nội dung (Ctrl+A, Ctrl+C) từ trang chi tiết đặt phòng ${SOURCE_LABEL[source]}…`}
             className={`${inputClass} font-mono`}
           />
           <div className="mt-4">

@@ -12,7 +12,12 @@ export const BOOKING_DETAIL_INCLUDE = {
   statusHistory: { include: { changedBy: true }, orderBy: { changedAt: 'asc' } },
   sentBy: true,
   completedBy: true,
+  reviewedBy: true,
   createdBy: true,
+  proofs: {
+    include: { submittedBy: true, reviewedBy: true },
+    orderBy: { attemptNumber: 'asc' },
+  },
 } satisfies Prisma.BookingInclude;
 
 export type BookingDetail = Prisma.BookingGetPayload<{ include: typeof BOOKING_DETAIL_INCLUDE }>;
@@ -21,8 +26,11 @@ export const BOOKING_LIST_INCLUDE = {
   branch: true,
   sentBy: true,
   completedBy: true,
+  reviewedBy: true,
   rooms: { include: { nights: true } },
   warnings: true,
+  // Only the most recent proof attempt, for the list's status/reason display.
+  proofs: { orderBy: { attemptNumber: 'desc' }, take: 1 },
 } satisfies Prisma.BookingInclude;
 
 export type BookingListItem = Prisma.BookingGetPayload<{ include: typeof BOOKING_LIST_INCLUDE }>;
@@ -86,11 +94,46 @@ function statusHistoryView(history: BookingDetail['statusHistory']) {
   }));
 }
 
+/** The authenticated image endpoint for a proof — never a filesystem path. */
+export function proofImageUrl(bookingId: string, proofId: string): string {
+  return `/api/bookings/${bookingId}/proofs/${proofId}/image`;
+}
+
+type ProofRow = BookingDetail['proofs'][number];
+
+/** A single proof attempt on the wire (never exposes the stored path). */
+export function proofView(bookingId: string, proof: ProofRow) {
+  return {
+    id: proof.id,
+    attemptNumber: proof.attemptNumber,
+    status: proof.status,
+    originalFileName: proof.originalFileName,
+    mimeType: proof.mimeType,
+    fileSize: proof.fileSize,
+    submissionNote: proof.submissionNote,
+    submittedBy: actor(proof.submittedBy),
+    submittedAt: proof.submittedAt.toISOString(),
+    reviewedBy: actor(proof.reviewedBy),
+    reviewedAt: iso(proof.reviewedAt),
+    reviewReasonCode: proof.reviewReasonCode,
+    reviewNote: proof.reviewNote,
+    imageUrl: proofImageUrl(bookingId, proof.id),
+  };
+}
+
+function proofsView(bookingId: string, proofs: BookingDetail['proofs']) {
+  return [...proofs]
+    .sort((a, b) => a.attemptNumber - b.attemptNumber)
+    .map((p) => proofView(bookingId, p));
+}
+
 /** The full booking detail an Admin sees (includes rawText). */
 export function serializeAdminBookingDetail(booking: BookingDetail) {
   return {
     id: booking.id,
     status: booking.status,
+    sourcePlatform: booking.sourcePlatform,
+    verificationStatus: booking.verificationStatus,
     hotelName: booking.hotelName,
     branch: branchView(booking.branch),
     branchId: booking.branchId,
@@ -111,14 +154,17 @@ export function serializeAdminBookingDetail(booking: BookingDetail) {
     rooms: roomsView(booking.rooms),
     warnings: warningsView(booking.warnings),
     statusHistory: statusHistoryView(booking.statusHistory),
+    proofs: proofsView(booking.id, booking.proofs),
     createdBy: actor(booking.createdBy),
     sentBy: actor(booking.sentBy),
     completedBy: actor(booking.completedBy),
+    reviewedBy: actor(booking.reviewedBy),
     createdAt: booking.createdAt.toISOString(),
     updatedAt: booking.updatedAt.toISOString(),
     sentAt: iso(booking.sentAt),
     completedAt: iso(booking.completedAt),
     completionNote: booking.completionNote,
+    reviewedAt: iso(booking.reviewedAt),
   };
 }
 
@@ -140,14 +186,21 @@ function missingNightlyCount(rooms: BookingListItem['rooms']): number {
   return count;
 }
 
-/** Compact row for the receptionist "Đơn mới" inbox. */
+function latestProof(booking: BookingListItem) {
+  return booking.proofs[0] ?? null;
+}
+
+/** Compact row for the receptionist "Đơn mới" inbox and review lists. */
 export function serializeNewListItem(booking: BookingListItem) {
+  const proof = latestProof(booking);
   return {
     id: booking.id,
     bookingCode: booking.bookingCode.length > 0 ? booking.bookingCode : null,
     customerName: booking.customerName.length > 0 ? booking.customerName : null,
     phone: booking.phone,
     branch: branchView(booking.branch),
+    sourcePlatform: booking.sourcePlatform,
+    verificationStatus: booking.verificationStatus,
     checkInDate: isoDate(booking.checkInDate),
     checkOutDate: isoDate(booking.checkOutDate),
     numberOfRooms: booking.rooms.length,
@@ -160,16 +213,22 @@ export function serializeNewListItem(booking: BookingListItem) {
     status: booking.status,
     missingNightlyPriceCount: missingNightlyCount(booking.rooms),
     warningCount: booking.warnings.length,
+    latestAttemptNumber: proof?.attemptNumber ?? 0,
+    latestRejectionReason: proof?.status === 'REJECTED' ? proof.reviewReasonCode : null,
+    submittedAt: iso(proof?.submittedAt ?? null),
+    reviewedAt: iso(booking.reviewedAt),
   };
 }
 
-/** Compact row for the "Đã hoàn thành" list. */
+/** Compact row for the "Đã xác nhận đúng" list. */
 export function serializeCompletedListItem(booking: BookingListItem) {
   return {
     id: booking.id,
     customerName: booking.customerName.length > 0 ? booking.customerName : null,
     bookingCode: booking.bookingCode.length > 0 ? booking.bookingCode : null,
     branch: branchView(booking.branch),
+    sourcePlatform: booking.sourcePlatform,
+    verificationStatus: booking.verificationStatus,
     checkInDate: isoDate(booking.checkInDate),
     totalAmount: booking.totalAmount,
     currency: booking.currency,
@@ -177,6 +236,8 @@ export function serializeCompletedListItem(booking: BookingListItem) {
     completedAt: iso(booking.completedAt),
     completedBy: actor(booking.completedBy),
     completionNote: booking.completionNote,
+    reviewedBy: actor(booking.reviewedBy),
+    reviewedAt: iso(booking.reviewedAt),
   };
 }
 
@@ -188,7 +249,9 @@ export function serializeHistoryListItem(booking: BookingListItem) {
     customerName: booking.customerName.length > 0 ? booking.customerName : null,
     phone: booking.phone,
     branch: branchView(booking.branch),
+    sourcePlatform: booking.sourcePlatform,
     status: booking.status,
+    verificationStatus: booking.verificationStatus,
     paymentStatus: booking.paymentStatus,
     checkInDate: isoDate(booking.checkInDate),
     checkOutDate: isoDate(booking.checkOutDate),
@@ -199,6 +262,8 @@ export function serializeHistoryListItem(booking: BookingListItem) {
     sentBy: actor(booking.sentBy),
     completedAt: iso(booking.completedAt),
     completedBy: actor(booking.completedBy),
+    reviewedBy: actor(booking.reviewedBy),
+    reviewedAt: iso(booking.reviewedAt),
     createdAt: booking.createdAt.toISOString(),
   };
 }

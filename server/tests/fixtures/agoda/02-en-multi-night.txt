@@ -1,0 +1,26 @@
+Agoda
+Booking confirmation
+INDOCHINA Premium
+170-172-174 Nguyễn Thái Bình, District 1, Ho Chi Minh City
+Agoda Booking ID
+761203948
+Check-in
+Mon, 13 July 2026
+From 14:00
+Check-out
+Thu, 16 July 2026
+Until 12:00
+Lead guest
+Tran Thi Bich
+Deluxe King Room
+Price details
+Mon, 13 July 2026
+VND 1,050,000
+Tue, 14 July 2026
+VND 1,050,000
+Wed, 15 July 2026
+VND 1,150,000
+Total charge
+VND 3,250,000
+Payment method
+This booking has been prepaid to Agoda.

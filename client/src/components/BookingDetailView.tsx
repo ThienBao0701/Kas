@@ -1,16 +1,13 @@
 import { useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { CalendarCheck2, CheckCircle2, ClipboardList, StickyNote } from 'lucide-react';
-import { bookingsApi, type BookingDetail, type RoomView } from '../api/bookings';
-import { ApiError, toUserMessage } from '../api/errors';
+import { useQueryClient } from '@tanstack/react-query';
+import { CalendarCheck2, ClipboardList, StickyNote } from 'lucide-react';
+import { type BookingDetail, type RoomView } from '../api/bookings';
 import { buildPmsNote } from '../lib/pmsNote';
 import { formatAmountCopy, formatDate, formatDateTime, formatMoney, paymentLabel } from '../lib/format';
 import { Card } from './Card';
-import { Button } from './Button';
-import { Modal } from './Modal';
-import { ErrorAlert } from './ErrorAlert';
 import { CopyButton, CopyField } from './CopyButton';
-import { LastMinuteBadge, StatusBadge } from './Badges';
+import { LastMinuteBadge, SourceBadge, StatusBadge, VerificationBadge } from './Badges';
+import { ProofSection } from './ProofSection';
 import { Toast } from './Toast';
 
 const MISSING_PHONE = '(Hiển thị số điện thoại)';
@@ -40,29 +37,11 @@ export function BookingDetailView({
 }: {
   booking: BookingDetail;
   isAdmin: boolean;
-  onCompleted?: () => void;
+  onCompleted?: (message?: string) => void;
   suppressInternalToast?: boolean;
 }) {
   const queryClient = useQueryClient();
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [note, setNote] = useState('');
   const [toast, setToast] = useState<string | null>(null);
-
-  const complete = useMutation({
-    mutationFn: () => bookingsApi.complete(b.id, note.trim() || undefined),
-    onSuccess: () => {
-      setConfirmOpen(false);
-      if (!suppressInternalToast) setToast('Đã xác nhận booking đã tạo trên hệ thống khách sạn.');
-      refetchAll();
-      onCompleted?.();
-    },
-    onError: (err) => {
-      if (err instanceof ApiError && err.code === 'BOOKING_ALREADY_COMPLETED') {
-        setConfirmOpen(false);
-        refetchAll();
-      }
-    },
-  });
 
   function refetchAll() {
     void queryClient.invalidateQueries({ queryKey: ['booking', b.id] });
@@ -70,8 +49,14 @@ export function BookingDetailView({
     void queryClient.invalidateQueries({ queryKey: ['notifications'] });
   }
 
-  const alreadyCompleted =
-    complete.error instanceof ApiError && complete.error.code === 'BOOKING_ALREADY_COMPLETED';
+  // After a proof action (submit / approve / reject) refresh data and surface a
+  // toast. The parent owns the toast in the master-detail inbox so it survives
+  // the panel switching to the next booking.
+  function handleProofChanged(message: string) {
+    refetchAll();
+    if (suppressInternalToast) onCompleted?.(message);
+    else setToast(message);
+  }
 
   return (
     <div className="space-y-5">
@@ -82,6 +67,8 @@ export function BookingDetailView({
             <div className="flex flex-wrap items-center gap-2">
               {b.isLastMinute ? <LastMinuteBadge withSubtitle /> : null}
               <StatusBadge status={b.status} />
+              <VerificationBadge status={b.verificationStatus} />
+              <SourceBadge source={b.sourcePlatform} />
             </div>
             <h1 className="mt-2 truncate text-xl font-semibold text-slate-900">
               {b.customerName ?? 'Khách chưa rõ'}
@@ -147,48 +134,8 @@ export function BookingDetailView({
         </Card>
       ) : null}
 
-      {/* Confirmation */}
-      {b.status === 'NEW' ? (
-        <Card className="border-brand-200 bg-brand-50/40 p-5">
-          <p className="text-sm font-medium text-slate-700">Xác nhận đã tạo</p>
-          <p className="mt-1 text-sm text-slate-600">
-            Sau khi đã tạo booking trên hệ thống khách sạn, hãy xác nhận tại đây.
-          </p>
-          {complete.isError && !alreadyCompleted ? (
-            <div className="mt-3">
-              <ErrorAlert>{toUserMessage(complete.error)}</ErrorAlert>
-            </div>
-          ) : null}
-          {alreadyCompleted ? (
-            <div className="mt-3">
-              <ErrorAlert>Đơn này đã được xác nhận trước đó. Trạng thái đã được cập nhật.</ErrorAlert>
-            </div>
-          ) : null}
-          <div className="mt-4">
-            <Button onClick={() => setConfirmOpen(true)}>
-              <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-              Xác nhận đã tạo
-            </Button>
-          </div>
-        </Card>
-      ) : b.status === 'COMPLETED' ? (
-        <Card className="border-green-200 bg-green-50/50 p-5">
-          <div className="flex items-center gap-2 text-green-700">
-            <CheckCircle2 className="h-5 w-5" aria-hidden="true" />
-            <span className="text-sm font-semibold">Đã xác nhận tạo</span>
-          </div>
-          <p className="mt-2 text-sm text-slate-600">
-            {b.completedBy ? `Bởi ${b.completedBy.fullName} · ` : ''}
-            {formatDateTime(b.completedAt)}
-          </p>
-          {b.completionNote ? <p className="mt-1 text-sm text-slate-500">Ghi chú: {b.completionNote}</p> : null}
-          {/*
-            Future milestone (Admin proof comparison): a modular "Ảnh lễ tân gửi"
-            section will render here beside the confirmation details. Left as a
-            structural slot only — no upload UI in this frontend-only phase.
-          */}
-        </Card>
-      ) : null}
+      {/* Proof-of-creation workflow (upload / review / verdict) */}
+      <ProofSection booking={b} isAdmin={isAdmin} onChanged={handleProofChanged} />
 
       {/* Admin-only meta */}
       {isAdmin ? (
@@ -208,50 +155,6 @@ export function BookingDetailView({
           ) : null}
         </Card>
       ) : null}
-
-      <Modal
-        open={confirmOpen}
-        title="Xác nhận đã tạo"
-        onClose={() => setConfirmOpen(false)}
-        footer={
-          <>
-            <Button variant="secondary" onClick={() => setConfirmOpen(false)}>
-              Hủy
-            </Button>
-            <Button onClick={() => complete.mutate()} loading={complete.isPending} disabled={complete.isPending}>
-              Xác nhận đã tạo
-            </Button>
-          </>
-        }
-      >
-        <p className="text-sm text-slate-600">
-          Bạn xác nhận booking này đã được tạo thành công trên hệ thống khách sạn?
-        </p>
-        <dl className="mt-4 space-y-1.5 rounded-xl bg-slate-50 px-3 py-3 text-sm">
-          <div className="flex justify-between gap-3">
-            <dt className="text-slate-500">Tên khách</dt>
-            <dd className="font-medium text-slate-900">{b.customerName ?? '—'}</dd>
-          </div>
-          <div className="flex justify-between gap-3">
-            <dt className="text-slate-500">Mã Booking</dt>
-            <dd className="font-mono font-medium text-slate-900">{b.bookingCode ?? '—'}</dd>
-          </div>
-          <div className="flex justify-between gap-3">
-            <dt className="text-slate-500">Chi nhánh</dt>
-            <dd className="text-right font-medium text-slate-900">{b.branch?.address ?? '—'}</dd>
-          </div>
-        </dl>
-        <label className="mt-4 block text-sm font-medium text-slate-600">
-          Ghi chú (không bắt buộc)
-          <textarea
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            rows={3}
-            className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
-            placeholder="Ví dụ: đã tạo trên hệ thống, mã nội bộ…"
-          />
-        </label>
-      </Modal>
 
       <Toast message={toast} onDone={() => setToast(null)} />
     </div>

@@ -7,6 +7,7 @@ import { AppShell } from '../layout/AppShell';
 import { DashboardPage } from '../pages/DashboardPage';
 import { DispatchPage } from '../pages/DispatchPage';
 import { NewBookingsPage } from '../pages/NewBookingsPage';
+import { PendingReviewPage, RejectedPage } from '../pages/VerificationBookingsPage';
 import { CompletedBookingsPage } from '../pages/CompletedBookingsPage';
 import { HistoryPage } from '../pages/HistoryPage';
 import { BookingDetailPage } from '../pages/BookingDetailPage';
@@ -46,6 +47,8 @@ export function AppRoutes() {
           <Route path="dispatch" element={<RequireRole role="ADMIN"><DispatchPage /></RequireRole>} />
           <Route path="waiting" element={<RequireRole role="ADMIN"><NewBookingsPage /></RequireRole>} />
           <Route path="new" element={<NewBookingsPage />} />
+          <Route path="pending-review" element={<PendingReviewPage />} />
+          <Route path="rejected" element={<RejectedPage />} />
           <Route path="completed" element={<CompletedBookingsPage />} />
           <Route path="history" element={<HistoryPage />} />
           <Route path="booking/:id" element={<BookingDetailPage />} />

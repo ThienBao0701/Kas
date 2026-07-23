@@ -10,8 +10,6 @@ let adminAgent: Awaited<ReturnType<typeof loginAgent>>['agent'];
 let ownAgent: Awaited<ReturnType<typeof loginAgent>>['agent'];
 let ownBranchId: number;
 let otherBranchId: number;
-let adminId: number;
-let ownReceptionistId: number;
 
 beforeEach(async () => {
   await resetAll();
@@ -20,9 +18,9 @@ beforeEach(async () => {
   ownBranchId = (await testPrisma.branch.findUniqueOrThrow({ where: { code: 'TRUONG_DINH_05' } })).id;
   otherBranchId = (await testPrisma.branch.findUniqueOrThrow({ where: { code: 'LY_TU_TRONG_260' } })).id;
 
-  adminId = (await createAdmin({ mustChangePassword: false })).id;
+  await createAdmin({ mustChangePassword: false });
   adminAgent = (await loginAgent(app, 'admin', ADMIN_PASSWORD)).agent;
-  ownReceptionistId = (await createReceptionist(ownBranchId, { username: 'letan_own', mustChangePassword: false })).id;
+  await createReceptionist(ownBranchId, { username: 'letan_own', mustChangePassword: false });
   ownAgent = (await loginAgent(app, 'letan_own', RECEPTIONIST_PASSWORD)).agent;
   await createReceptionist(otherBranchId, { username: 'letan_other', mustChangePassword: false });
 });
@@ -98,68 +96,6 @@ describe('GET /api/bookings/:id (operational detail)', () => {
     const b = await createDraftBooking({ status: 'DRAFT', branchId: ownBranchId });
     const res = await ownAgent.get(`/api/bookings/${b.id}`);
     expect(res.status).toBe(404);
-  });
-});
-
-describe('POST /api/bookings/:id/complete', () => {
-  it('lets the branch receptionist complete a NEW booking', async () => {
-    const b = await createDraftBooking({ status: 'NEW', branchId: ownBranchId });
-    const res = await ownAgent.post(`/api/bookings/${b.id}/complete`).send({ completionNote: 'Đã tạo trên PMS' });
-    expect(res.status).toBe(200);
-    expect(res.body.booking.status).toBe('COMPLETED');
-
-    const stored = await testPrisma.booking.findUniqueOrThrow({ where: { id: b.id } });
-    expect(stored.completedByUserId).toBe(ownReceptionistId);
-    expect(stored.completedAt).not.toBeNull();
-    expect(stored.completionNote).toBe('Đã tạo trên PMS');
-    // sentAt is preserved separately from completedAt.
-    expect(stored.sentAt).not.toBeNull();
-    expect(stored.sentAt!.getTime()).not.toBe(stored.completedAt!.getTime());
-
-    const history = await testPrisma.bookingStatusHistory.findMany({ where: { bookingId: b.id } });
-    expect(history.some((h) => h.oldStatus === 'NEW' && h.newStatus === 'COMPLETED')).toBe(true);
-
-    // The admin receives a completion notification.
-    const adminNotes = await testPrisma.notification.findMany({ where: { userId: adminId, bookingId: b.id } });
-    expect(adminNotes).toHaveLength(1);
-    expect(adminNotes[0]!.title).toBe('Đã xác nhận tạo');
-  });
-
-  it("forbids completing another branch's booking", async () => {
-    const b = await createDraftBooking({ status: 'NEW', branchId: otherBranchId });
-    const res = await ownAgent.post(`/api/bookings/${b.id}/complete`).send({});
-    expect(res.status).toBe(403);
-    expect(res.body.error.code).toBe('BRANCH_ACCESS_DENIED');
-  });
-
-  it('cannot complete twice', async () => {
-    const b = await createDraftBooking({ status: 'NEW', branchId: ownBranchId });
-    await ownAgent.post(`/api/bookings/${b.id}/complete`).send({});
-    const again = await ownAgent.post(`/api/bookings/${b.id}/complete`).send({});
-    expect(again.status).toBe(409);
-    expect(again.body.error.code).toBe('BOOKING_ALREADY_COMPLETED');
-  });
-
-  it('lets an admin complete, recording the admin as completedBy', async () => {
-    const b = await createDraftBooking({ status: 'NEW', branchId: ownBranchId });
-    const res = await adminAgent.post(`/api/bookings/${b.id}/complete`).send({});
-    expect(res.status).toBe(200);
-    const stored = await testPrisma.booking.findUniqueOrThrow({ where: { id: b.id } });
-    expect(stored.completedByUserId).toBe(adminId);
-  });
-
-  it('allows only one winner under concurrent completion', async () => {
-    const b = await createDraftBooking({ status: 'NEW', branchId: ownBranchId });
-    const results = await Promise.all([
-      ownAgent.post(`/api/bookings/${b.id}/complete`).send({}),
-      ownAgent.post(`/api/bookings/${b.id}/complete`).send({}),
-    ]);
-    const statuses = results.map((r) => r.status).sort();
-    expect(statuses).toEqual([200, 409]);
-    const history = await testPrisma.bookingStatusHistory.findMany({
-      where: { bookingId: b.id, newStatus: 'COMPLETED' },
-    });
-    expect(history).toHaveLength(1);
   });
 });
 

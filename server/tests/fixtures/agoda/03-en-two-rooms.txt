@@ -1,0 +1,25 @@
+Agoda
+Booking confirmed
+Boutique Zody Hotel Ben Than
+278 Lê Thánh Tôn, Bến Thành, District 1, Ho Chi Minh City
+Agoda Booking ID
+548812097
+Reference number
+AG-548812097
+Check-in
+Sat, 18 July 2026
+Check-out
+Sun, 19 July 2026
+Lead guest
+Pham Quoc Dat
+Rooms booked
+2
+Superior Twin Room
+Sat, 18 July 2026
+VND 780,000
+Superior Twin Room
+Sat, 18 July 2026
+VND 780,000
+Total charge
+VND 1,560,000
+You have already paid to Agoda.

@@ -48,6 +48,11 @@ const envSchema = z
     // bcrypt work factor. 10 is a sound default for production; the test suite
     // lowers it so the pure-JS implementation does not dominate run time.
     BCRYPT_COST: z.coerce.number().int().min(4).max(15).default(10),
+
+    // Where proof-of-creation screenshots are stored on the server filesystem.
+    // Only metadata + a safe relative path live in SQLite; never the image bytes.
+    // Relative values are resolved against the repository root.
+    PROOF_UPLOAD_DIR: z.string().min(1).default('server/uploads/booking-proofs'),
   })
   .superRefine((value, ctx) => {
     // In production a missing initial-admin variable must never silently create
@@ -93,3 +98,10 @@ export const env = loadEnv();
 export const isProduction = env.NODE_ENV === 'production';
 export const isTest = env.NODE_ENV === 'test';
 export const isDevelopment = env.NODE_ENV === 'development';
+
+// Absolute proof-upload directory. A relative PROOF_UPLOAD_DIR is resolved from
+// the repository root (this file lives at server/src/config, so up three levels).
+const repoRoot = path.resolve(__dirname, '../../..');
+export const PROOF_UPLOAD_DIR = path.isAbsolute(env.PROOF_UPLOAD_DIR)
+  ? env.PROOF_UPLOAD_DIR
+  : path.resolve(repoRoot, env.PROOF_UPLOAD_DIR);

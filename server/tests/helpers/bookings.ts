@@ -1,4 +1,4 @@
-import type { BookingStatus, PaymentStatus } from '@prisma/client';
+import type { BookingSource, BookingStatus, PaymentStatus, VerificationStatus } from '@prisma/client';
 import { testPrisma } from './db';
 
 function utc(iso: string): Date {
@@ -36,6 +36,10 @@ interface DraftOptions {
   completedAt?: string | null;
   completionNote?: string | null;
   isLastMinute?: boolean;
+  sourcePlatform?: BookingSource;
+  verificationStatus?: VerificationStatus;
+  reviewedByUserId?: number | null;
+  reviewedAt?: string | null;
 }
 
 const OPERATIONAL: BookingStatus[] = ['NEW', 'COMPLETED', 'ARCHIVED'];
@@ -92,6 +96,11 @@ export async function createDraftBooking(opts: DraftOptions = {}) {
       completedAt: completedAt ? new Date(completedAt) : null,
       completionNote: opts.completionNote ?? null,
       isLastMinute: opts.isLastMinute ?? false,
+      sourcePlatform: opts.sourcePlatform ?? 'BOOKING_COM',
+      verificationStatus:
+        opts.verificationStatus ?? (status === 'COMPLETED' ? 'APPROVED' : 'NOT_SUBMITTED'),
+      reviewedByUserId: opts.reviewedByUserId ?? null,
+      reviewedAt: opts.reviewedAt ? new Date(opts.reviewedAt) : null,
       rooms: { create: rooms },
       warnings: opts.warnings
         ? {

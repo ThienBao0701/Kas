@@ -30,6 +30,8 @@ const FIELD_LABELS: Record<string, readonly string[]> = {
   guestName: [
     'khach', 'ten khach', 'ten khach hang', 'ho ten khach', 'guest', 'guest name',
     'ho ten', 'ten nguoi dat', 'ten', 'name',
+    // Agoda
+    'lead guest', 'ten khach chinh', 'customer name',
   ],
   phone: ['dien thoai', 'so dien thoai', 'sdt', 'dt', 'phone', 'phone number', 'tel', 'mobile'],
   bookingCode: [
@@ -37,6 +39,8 @@ const FIELD_LABELS: Record<string, readonly string[]> = {
     'so xac nhan dat phong', 'ma xac nhan dat phong', 'so dat phong', 'so dat cho',
     'ma dat cho', 'ma booking', 'booking code', 'booking number', 'booking id',
     'confirmation', 'confirmation number', 'reservation', 'reservation number',
+    // Agoda
+    'agoda booking id', 'reference number', 'reference no', 'ma dat phong agoda', 'ma tham chieu',
   ],
   checkIn: ['nhan phong', 'ngay nhan phong', 'ngay nhan', 'ngay den', 'check in', 'checkin', 'arrival'],
   checkOut: ['tra phong', 'ngay tra phong', 'ngay tra', 'ngay di', 'check out', 'checkout', 'departure'],
@@ -44,15 +48,23 @@ const FIELD_LABELS: Record<string, readonly string[]> = {
     'tong cong', 'tong tien', 'tong tien phong', 'tong gia', 'tong gia phong', 'thanh tien',
     'tong thanh toan', 'tong so tien', 'gia cua ban', 'total', 'total price', 'total room price',
     'total room', 'total cost', 'grand total',
+    // Agoda
+    'total charge', 'total amount', 'total all rooms', 'tong tien tat ca phong',
   ],
-  payment: ['thanh toan', 'hinh thuc thanh toan', 'phuong thuc thanh toan', 'payment', 'payment status'],
-  hotel: ['khach san', 'ten khach san', 'hotel', 'property'],
+  payment: [
+    'thanh toan', 'hinh thuc thanh toan', 'phuong thuc thanh toan', 'payment', 'payment status',
+    // Agoda
+    'payment method', 'payment details',
+  ],
+  hotel: ['khach san', 'ten khach san', 'hotel', 'property', 'property name'],
   // Authoritative room count (Booking.com extranet). Two-line forms ("Tổng số
   // căn" then "1") are captured here; single-line "Số phòng: 2" is still read as
   // a room quantity by detectRoomQuantity (which runs first in Pass 1).
   roomCount: [
     'tong so can', 'so can', 'tong so phong', 'so luong phong', 'so luong can',
     'so phong', 'tong so don vi', 'number of rooms', 'total rooms', 'total units',
+    // Agoda
+    'rooms booked', 'no of rooms', 'so phong da dat',
   ],
 };
 

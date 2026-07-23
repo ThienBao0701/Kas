@@ -9,6 +9,15 @@ interface RequestOptions {
 }
 
 /**
+ * True for a multipart body (FormData). Such a body is passed to fetch as-is and
+ * the browser sets the multipart Content-Type (with boundary) itself — we must
+ * not stringify it or set a JSON header.
+ */
+function isFormData(body: unknown): body is FormData {
+  return typeof FormData !== 'undefined' && body instanceof FormData;
+}
+
+/**
  * The single fetch wrapper for the whole app.
  *
  * - Always sends the session cookie (`credentials: 'include'`).
@@ -19,13 +28,15 @@ interface RequestOptions {
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { method = 'GET', body, signal } = options;
 
+  const form = isFormData(body);
   let response: Response;
   try {
     response = await fetch(`${API_BASE}${path}`, {
       method,
       credentials: 'include',
-      headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
-      body: body !== undefined ? JSON.stringify(body) : undefined,
+      // JSON header only for JSON bodies; FormData sets its own multipart header.
+      headers: body !== undefined && !form ? { 'Content-Type': 'application/json' } : undefined,
+      body: body !== undefined ? (form ? (body as FormData) : JSON.stringify(body)) : undefined,
       signal,
     });
   } catch {
@@ -63,5 +74,6 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
 export const api = {
   get: <T>(path: string, signal?: AbortSignal) => apiRequest<T>(path, { method: 'GET', signal }),
   post: <T>(path: string, body?: unknown) => apiRequest<T>(path, { method: 'POST', body }),
+  postForm: <T>(path: string, form: FormData) => apiRequest<T>(path, { method: 'POST', body: form }),
   put: <T>(path: string, body?: unknown) => apiRequest<T>(path, { method: 'PUT', body }),
 };

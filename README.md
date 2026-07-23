@@ -79,6 +79,7 @@ in the SQLite database and survive server restarts.
 | `LOGIN_RATE_LIMIT_MAX` | Login attempts per IP per window before `429`. Default `10`. |
 | `LOGIN_RATE_LIMIT_WINDOW_MINUTES` | Login rate-limit window. Default `15`. |
 | `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD` / `INITIAL_ADMIN_FULL_NAME` | The first administrator, created once at startup. |
+| `PROOF_UPLOAD_DIR` | Filesystem directory for proof screenshots. Relative paths resolve from the repo root. Default `server/uploads/booking-proofs` (git-ignored). Only metadata + a safe path are stored in SQLite. |
 
 ### First login
 
@@ -124,14 +125,15 @@ npm run dev
 
 ## Booking dispatch workflow (backend)
 
-Kas is **not** a hotel PMS and never creates hotel reservations. It only routes a
-Booking.com reservation to one branch and tracks whether the branch confirmed it.
+Kas is **not** a hotel PMS and never creates hotel reservations. It routes a
+Booking.com **or Agoda** reservation to one branch and tracks whether the branch
+actually created it — verified by an uploaded screenshot the Admin checks.
 
 ### Status flow
 
 ```
 DRAFT ──(ready, optional)──▶ READY ──┐
-  │                                   ├──(send)──▶ NEW ──(complete)──▶ COMPLETED ──▶ ARCHIVED
+  │                                   ├──(send)──▶ NEW ──(admin approves proof)──▶ COMPLETED ──▶ ARCHIVED
   └───────────────(send)──────────────┘
 ```
 
@@ -139,12 +141,49 @@ DRAFT ──(ready, optional)──▶ READY ──┐
 - **READY** — optional review gate: the Admin validated the data. Editing a READY
   booking sends it back to **DRAFT** for revalidation.
 - **NEW** — dispatched to exactly one branch; visible in that branch's *Đơn mới*
-  list; awaiting confirmation.
-- **COMPLETED** — the receptionist confirmed the reservation was created in the
-  external hotel system (*Xác nhận đã tạo*). Kept permanently.
+  list; awaiting external creation + proof.
+- **COMPLETED** — the Admin reviewed the receptionist's proof screenshot and
+  confirmed the reservation was created correctly. Reached **only** by proof
+  approval (see below). Kept permanently.
 - **ARCHIVED** — older history, retained (never hard-deleted).
 
-Every transition writes one immutable `BookingStatusHistory` row.
+Every status transition writes one immutable `BookingStatusHistory` row.
+
+### Proof verification workflow
+
+A booking carries a second, independent `verificationStatus` lifecycle alongside
+`status`:
+
+```
+NOT_SUBMITTED ──(receptionist uploads proof)──▶ PENDING_REVIEW ──┬─(admin: Đúng)──▶ APPROVED  (status ⇒ COMPLETED)
+        ▲                                                         │
+        └──────────────────(receptionist resubmits)◀── REJECTED ◀┘ (admin: Sai + lý do)
+```
+
+- The receptionist creates the reservation in the external hotel system, then
+  uploads **≥1 screenshot** (PNG/JPEG/WebP, ≤10 MB) with an optional note and
+  presses **"Gửi Admin kiểm tra"** (`POST /api/bookings/:id/proofs`). The booking
+  moves to `PENDING_REVIEW` and every active Admin is notified.
+- The Admin opens a desktop **LEFT (original booking) / RIGHT (screenshot)**
+  comparison and either **approves** (`…/proofs/:proofId/approve` → booking
+  `COMPLETED` + `APPROVED`) or **rejects** with a reason code
+  (`…/proofs/:proofId/reject` → `REJECTED`, status stays `NEW`).
+- On rejection the receptionist sees the reason (*Sai tên khách, Sai mã Booking,
+  Sai ngày, Sai số lượng phòng, Sai hạng phòng, Sai giá, Thiếu phòng, Ảnh không
+  rõ, Khác*) and can **resubmit**, creating attempt #2, #3, …
+- Every attempt is an **immutable** `BookingCreationProof` row
+  (`@@unique([bookingId, attemptNumber])`) — proofs are never overwritten or
+  hard-deleted, preserving the full audit trail even if the receptionist is later
+  disabled.
+
+**Proof file storage.** Only metadata + a safe server-generated relative path live
+in SQLite — never the image bytes. Files are written under `PROOF_UPLOAD_DIR`
+(default `server/uploads/booking-proofs`, git-ignored) with a random server name;
+the client filename is never trusted. The real image type is verified by
+**magic-byte sniffing** (PNG/JPEG/WebP) — a spoofed content-type is rejected
+`415 UNSUPPORTED_MEDIA`, oversize is `413 FILE_TOO_LARGE`. Images are served only
+through an authenticated, branch-isolated route
+(`GET /api/bookings/:id/proofs/:proofId/image`), never as public static files.
 
 ### Send-to-branch flow
 
@@ -160,10 +199,12 @@ that branch. `sentAt` is permanent and is never overwritten by `completedAt`
 ### Branch isolation
 
 A receptionist only ever sees dispatched bookings for their own branch. A
-client-supplied `branchId` on `GET /api/bookings/new|completed|history` is ignored
-for receptionists (the server derives the branch from the session), and viewing or
-completing another branch's booking returns `403 BRANCH_ACCESS_DENIED`. `rawText`
-is returned to the Admin only, not to receptionists.
+client-supplied `branchId` on `GET /api/bookings/new|pending-review|rejected|completed|history`
+is ignored for receptionists (the server derives the branch from the session), and
+viewing, uploading a proof for, reviewing, or fetching a proof image of another
+branch's booking returns `403 BRANCH_ACCESS_DENIED`. Receptionists cannot approve
+or reject proofs (`requireAdmin`). `rawText` is returned to the Admin only, not to
+receptionists.
 
 ### Last-minute definition
 
@@ -195,34 +236,50 @@ ranges) with pagination; receptionists are always constrained to their own branc
 ## Operational app (frontend)
 
 Kas is an internal **booking dispatch centre** — it is **not** a hotel PMS and
-never creates hotel reservations. It extracts Booking.com information, dispatches
-it to one branch, helps receptionists copy it into their own hotel system, and
-records confirmation.
+never creates hotel reservations. It extracts Booking.com **and Agoda**
+information, dispatches it to one branch, helps receptionists copy it into their
+own hotel system, and records **proof-verified** confirmation.
+
+### Import sources — Booking.com + Agoda
+
+The **Nhập đơn** page has two tabs, **Booking.com** and **Agoda**. Each pastes raw
+confirmation text into the same extraction engine; the Agoda adapter
+(`parseAgodaBooking`) reuses the shared parser with a few Agoda-specific labels
+(*Agoda Booking ID, Lead guest, Total charge, Rooms booked*), the `VND 1,050,000`
+money format and Agoda prepaid phrases, and returns the **identical** normalized
+structure. Booking.com behaviour is unchanged. Each booking stores its
+`sourcePlatform` (`BOOKING_COM` | `AGODA`), shown as a chip throughout the UI.
 
 ### Vietnamese status labels (UI)
 
-| DB status | UI label |
-| --- | --- |
-| `DRAFT` | Bản nháp |
-| `NEW` | Chờ chi nhánh tạo |
-| `COMPLETED` | Đã xác nhận tạo |
-| `ARCHIVED` | Đã lưu trữ |
+| DB status | UI label | Verification | UI label |
+| --- | --- | --- | --- |
+| `DRAFT` | Bản nháp | `NOT_SUBMITTED` | Chưa gửi kiểm tra |
+| `NEW` | Chờ chi nhánh tạo | `PENDING_REVIEW` | Chờ kiểm tra |
+| `COMPLETED` | Đã xác nhận đúng | `APPROVED` | Đã xác nhận đúng |
+| `ARCHIVED` | Đã lưu trữ | `REJECTED` | Cần tạo lại |
 
-The receptionist action is **“Xác nhận đã tạo”** — meaning *“I have created this
-reservation in the hotel system.”* Kas never claims to create the booking itself.
+The receptionist action is **“Gửi Admin kiểm tra”** — meaning *“I have created this
+reservation in the hotel system; here is the screenshot.”* The Admin verdict is
+**“Đúng — xác nhận”** or **“Sai — yêu cầu tạo lại”**. Kas never claims to create
+the booking itself.
 
 ### Admin workflow
 
-Tổng quan (dashboard) → **Nhập đơn Booking.com** (paste → Trích xuất → sửa → chọn
-chi nhánh → Gửi) → **Chờ chi nhánh tạo** (monitor) → **Đã xác nhận tạo** →
-**Lịch sử**. Account management lives in the account menu (**Quản lý tài khoản**).
+Tổng quan (dashboard) → **Nhập đơn** (Booking.com/Agoda tabs: paste → Trích xuất →
+sửa → chọn chi nhánh → Gửi) → **Chờ chi nhánh tạo** (monitor) → **Chờ kiểm tra**
+(review LEFT/RIGHT proof comparison → Đúng/Sai) → **Cần tạo lại** → **Đã xác nhận
+đúng** → **Lịch sử**. Account management lives in the account menu (**Quản lý tài
+khoản**).
 
 ### Receptionist workflow
 
 **Đơn mới** (master-detail inbox, auto-refresh every 20s, last-minute first) →
 open a booking → copy fields / **Sao chép toàn bộ** → create it in the hotel
-system → **Xác nhận đã tạo** (confirmation dialog) → it moves to **Đã xác nhận
-tạo**. Receptionists only ever see their own branch.
+system → upload the screenshot(s) → **Gửi Admin kiểm tra** → **Chờ Admin kiểm
+tra**. If rejected it appears under **Cần tạo lại** with the reason; fix and
+resubmit. Approved bookings move to **Đã xác nhận đúng**. Receptionists only ever
+see their own branch.
 
 ### LAST MINUTE
 

@@ -39,8 +39,8 @@ export function CompletedBookingsPage() {
   return (
     <div>
       <PageHeader
-        title="Đã xác nhận tạo"
-        description="Các đơn lễ tân đã xác nhận tạo thành công trên hệ thống khách sạn."
+        title="Đã xác nhận đúng"
+        description="Các đơn Admin đã kiểm tra ảnh và xác nhận tạo đúng trên hệ thống khách sạn."
         actions={
           isAdmin ? (
             <select
@@ -80,8 +80,8 @@ export function CompletedBookingsPage() {
                     <th className="px-4 py-3">Khách</th>
                     <th className="px-4 py-3">Chi nhánh</th>
                     <th className="px-4 py-3">Nhận phòng</th>
-                    <th className="px-4 py-3">Người xác nhận</th>
-                    <th className="px-4 py-3">Thời gian xác nhận</th>
+                    <th className="px-4 py-3">Admin duyệt</th>
+                    <th className="px-4 py-3">Thời gian duyệt</th>
                     <th className="px-4 py-3">Ghi chú</th>
                   </tr>
                 </thead>
@@ -101,8 +101,8 @@ export function CompletedBookingsPage() {
                       <td className="px-4 py-3 text-slate-800">{b.customerName ?? '—'}</td>
                       <td className="px-4 py-3 text-slate-600">{b.branch?.address ?? '—'}</td>
                       <td className="px-4 py-3 text-slate-600">{formatDate(b.checkInDate)}</td>
-                      <td className="px-4 py-3 text-slate-600">{b.completedBy?.fullName ?? '—'}</td>
-                      <td className="px-4 py-3 text-slate-500">{formatDateTime(b.completedAt)}</td>
+                      <td className="px-4 py-3 text-slate-600">{b.reviewedBy?.fullName ?? '—'}</td>
+                      <td className="px-4 py-3 text-slate-500">{formatDateTime(b.reviewedAt ?? b.completedAt)}</td>
                       <td className="px-4 py-3 max-w-[16rem] truncate text-slate-500" title={b.completionNote ?? ''}>
                         {b.completionNote ?? '—'}
                       </td>

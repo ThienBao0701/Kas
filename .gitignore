@@ -35,3 +35,6 @@ Thumbs.db
 # Logs
 *.log
 npm-debug.log*
+
+# Proof-of-creation screenshot uploads (never committed).
+server/uploads/

@@ -6,6 +6,8 @@ function booking(overrides: Partial<BookingDetail> = {}): BookingDetail {
   return {
     id: 'b1',
     status: 'NEW',
+    sourcePlatform: 'BOOKING_COM',
+    verificationStatus: 'NOT_SUBMITTED',
     hotelName: 'Saigon Hotel & Ben Thanh',
     branch: { id: 1, code: 'TRUONG_DINH_05', hotelName: 'Saigon Hotel & Ben Thanh', address: '05 Trương Định' },
     branchId: 1,
@@ -38,14 +40,17 @@ function booking(overrides: Partial<BookingDetail> = {}): BookingDetail {
     ],
     warnings: [],
     statusHistory: [],
+    proofs: [],
     createdBy: null,
     sentBy: null,
     completedBy: null,
+    reviewedBy: null,
     createdAt: '2026-07-15T02:00:00.000Z',
     updatedAt: '2026-07-15T02:00:00.000Z',
     sentAt: '2026-07-15T02:00:00.000Z',
     completedAt: null,
     completionNote: null,
+    reviewedAt: null,
     ...overrides,
   };
 }

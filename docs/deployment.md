@@ -38,6 +38,17 @@ npm run dev        # backend :3001 + client dev :5173 (client proxy /api sang ba
 - **Không** sao chép file `.db` sang từng máy lễ tân — như vậy dữ liệu sẽ bị tách
   rời. Mọi máy phải cùng gọi API tới máy chủ.
 
+## Ảnh chứng minh (proof screenshots)
+
+- Ảnh lễ tân gửi để Admin kiểm tra được lưu trên **ổ đĩa của máy chủ**, không lưu
+  trong SQLite (SQLite chỉ giữ metadata + đường dẫn an toàn do máy chủ tự sinh).
+- Thư mục lưu ảnh do biến môi trường `PROOF_UPLOAD_DIR` quyết định (mặc định
+  `server/uploads/booking-proofs`, đã được `.gitignore`). Đường dẫn tương đối được
+  tính từ thư mục gốc của repo; có thể đặt đường dẫn tuyệt đối (ví dụ một ổ dữ
+  liệu riêng) nếu muốn.
+- Thư mục này phải **cùng nằm trên máy chủ** với file `.db` để dữ liệu và ảnh luôn
+  đồng bộ. Cấp quyền ghi cho tài khoản chạy Kas.
+
 ## Tường lửa Windows
 
 Nếu máy lễ tân không mở được Kas, cho phép cổng của máy chủ (ví dụ 3001) qua
@@ -49,6 +60,8 @@ Nếu máy lễ tân không mở được Kas, cho phép cổng của máy chủ
 - Sao lưu định kỳ file `data.db` của máy chủ (ví dụ hằng ngày sang ổ khác/USB).
 - Nên sao lưu khi không có thao tác ghi (ví dụ cuối ngày) để tránh chép giữa lúc
   đang ghi. Có thể sao lưu cả các file `data.db-wal` / `data.db-shm` nếu tồn tại.
+- Sao lưu **kèm** thư mục `PROOF_UPLOAD_DIR` cùng lúc với `data.db` — nếu thiếu
+  ảnh, phần kiểm tra chứng minh sẽ mất bằng chứng dù metadata vẫn còn.
 
 ## Không dùng Docker
 

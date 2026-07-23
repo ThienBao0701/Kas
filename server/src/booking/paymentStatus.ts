@@ -27,6 +27,13 @@ const PREPAYMENT_POLICY_NEEDLES: readonly string[] = [
   'prepayment required',
   'charged the total price in advance',
   'will be charged the total price in advance',
+  // Agoda prepaid signals.
+  'you have already paid',
+  'this booking has been prepaid',
+  'prepaid to agoda',
+  'fully prepaid',
+  'da thanh toan cho agoda',
+  'da tra truoc cho agoda',
 ].map((p) => normalizeForPhrase(p));
 
 /**

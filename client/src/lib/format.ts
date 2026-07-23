@@ -94,6 +94,26 @@ export function statusLabel(status: string | null | undefined): string {
   return status ? (STATUS_LABELS[status] ?? status) : '—';
 }
 
+const VERIFICATION_LABELS: Record<string, string> = {
+  NOT_SUBMITTED: 'Chưa gửi kiểm tra',
+  PENDING_REVIEW: 'Chờ kiểm tra',
+  APPROVED: 'Đã xác nhận đúng',
+  REJECTED: 'Cần tạo lại',
+};
+
+export function verificationLabel(status: string | null | undefined): string {
+  return status ? (VERIFICATION_LABELS[status] ?? status) : '—';
+}
+
+/** Human file size, e.g. 1536 -> "1,5 KB". */
+export function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(kb < 10 ? 1 : 0).replace('.', ',')} KB`;
+  const mb = kb / 1024;
+  return `${mb.toFixed(mb < 10 ? 1 : 0).replace('.', ',')} MB`;
+}
+
 /** The exact PAY BEFORE / PAY AFTER token used in the "Sao chép toàn bộ" text. */
 export function payStatusCopy(status: string | null | undefined): string {
   if (status === 'PAY_BEFORE') return 'PAY BEFORE';

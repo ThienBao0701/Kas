@@ -1,6 +1,7 @@
 import { Flame } from 'lucide-react';
-import type { BookingStatus } from '../api/bookings';
-import { statusLabel } from '../lib/format';
+import type { BookingSource, BookingStatus, VerificationStatus } from '../api/bookings';
+import { SOURCE_LABEL } from '../api/bookings';
+import { statusLabel, verificationLabel } from '../lib/format';
 
 const STATUS_STYLES: Record<BookingStatus, string> = {
   DRAFT: 'bg-slate-100 text-slate-600',
@@ -14,6 +15,35 @@ export function StatusBadge({ status }: { status: BookingStatus }) {
   return (
     <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_STYLES[status]}`}>
       {statusLabel(status)}
+    </span>
+  );
+}
+
+const VERIFICATION_STYLES: Record<VerificationStatus, string> = {
+  NOT_SUBMITTED: 'bg-slate-100 text-slate-600',
+  PENDING_REVIEW: 'bg-amber-100 text-amber-800',
+  APPROVED: 'bg-green-100 text-green-700',
+  REJECTED: 'bg-red-100 text-red-700',
+};
+
+export function VerificationBadge({ status }: { status: VerificationStatus }) {
+  return (
+    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${VERIFICATION_STYLES[status]}`}>
+      {verificationLabel(status)}
+    </span>
+  );
+}
+
+const SOURCE_STYLES: Record<BookingSource, string> = {
+  BOOKING_COM: 'bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200',
+  AGODA: 'bg-fuchsia-50 text-fuchsia-700 ring-1 ring-inset ring-fuchsia-200',
+};
+
+/** A small chip naming the source platform a booking was imported from. */
+export function SourceBadge({ source }: { source: BookingSource }) {
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${SOURCE_STYLES[source]}`}>
+      {SOURCE_LABEL[source]}
     </span>
   );
 }

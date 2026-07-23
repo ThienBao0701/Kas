@@ -25,8 +25,14 @@ function listRow(overrides: Record<string, unknown> = {}) {
     sentAt: '2026-07-30T02:00:00.000Z',
     sentBy: { id: 1, fullName: 'Admin' },
     status: 'NEW',
+    sourcePlatform: 'BOOKING_COM',
+    verificationStatus: 'NOT_SUBMITTED',
     missingNightlyPriceCount: 0,
     warningCount: 0,
+    latestAttemptNumber: 0,
+    latestRejectionReason: null,
+    submittedAt: null,
+    reviewedAt: null,
     ...overrides,
   };
 }
@@ -35,6 +41,8 @@ function detail(id: string, overrides: Record<string, unknown> = {}) {
   return {
     id,
     status: 'NEW',
+    sourcePlatform: 'BOOKING_COM',
+    verificationStatus: 'NOT_SUBMITTED',
     hotelName: 'Saigon Hotel & Ben Thanh',
     branch: { id: 1, code: 'TRUONG_DINH_05', hotelName: 'Saigon Hotel & Ben Thanh', address: '05 Trương Định' },
     branchId: 1,
@@ -64,16 +72,27 @@ function detail(id: string, overrides: Record<string, unknown> = {}) {
     ],
     warnings: [],
     statusHistory: [],
+    proofs: [],
     createdBy: null,
     sentBy: { id: 1, fullName: 'Admin' },
     completedBy: null,
+    reviewedBy: null,
     createdAt: '2026-07-30T02:00:00.000Z',
     updatedAt: '2026-07-30T02:00:00.000Z',
     sentAt: '2026-07-30T02:00:00.000Z',
     completedAt: null,
     completionNote: null,
+    reviewedAt: null,
     ...overrides,
   };
+}
+
+/** Chooses a PNG file in the inline upload card and submits it for review. */
+async function uploadAndSubmit(user: ReturnType<typeof userEvent.setup>) {
+  const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'proof.png', { type: 'image/png' });
+  const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+  await user.upload(input, file);
+  await user.click(screen.getByRole('button', { name: 'Gửi Admin kiểm tra' }));
 }
 
 describe('NewBookingsPage — receptionist master-detail inbox', () => {
@@ -127,39 +146,38 @@ describe('NewBookingsPage — receptionist master-detail inbox', () => {
     expect(within(list).getAllByRole('listitem')).toHaveLength(10);
   });
 
-  it('advances to the next booking after the selected one is confirmed', async () => {
-    let completed = false;
+  it('advances to the next booking after the selected one is sent for review', async () => {
+    let submitted = false;
     installApiMock({
       'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),
       'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
       'GET /api/bookings/new?pageSize=100': () => ({
         status: 200,
         body: {
-          bookings: completed
+          bookings: submitted
             ? [listRow({ id: 'b', bookingCode: 'BBB' })]
             : [listRow({ id: 'a', bookingCode: 'AAA' }), listRow({ id: 'b', bookingCode: 'BBB' })],
-          pagination: { page: 1, pageSize: 100, total: completed ? 1 : 2, totalPages: 1 },
+          pagination: { page: 1, pageSize: 100, total: submitted ? 1 : 2, totalPages: 1 },
         },
       }),
       'GET /api/bookings/a': () => ({ status: 200, body: { booking: detail('a', { bookingCode: 'AAA' }) } }),
       'GET /api/bookings/b': () => ({ status: 200, body: { booking: detail('b', { bookingCode: 'BBB' }) } }),
-      'POST /api/bookings/a/complete': () => {
-        completed = true;
-        return { status: 200, body: { booking: detail('a', { status: 'COMPLETED' }) } };
+      'POST /api/bookings/a/proofs': () => {
+        submitted = true;
+        return { status: 201, body: { booking: detail('a', { verificationStatus: 'PENDING_REVIEW' }) } };
       },
     });
 
     const user = userEvent.setup();
     renderApp('/app/new');
 
-    // Booking 'a' is auto-selected; confirm it.
-    await user.click(await screen.findByRole('button', { name: 'Xác nhận đã tạo' }));
-    const dialog = await screen.findByRole('dialog');
-    await user.click(within(dialog).getByRole('button', { name: 'Xác nhận đã tạo' }));
+    // Booking 'a' is auto-selected; upload a proof and send it for review.
+    await screen.findByRole('button', { name: 'Gửi Admin kiểm tra' });
+    await uploadAndSubmit(user);
 
     // 'a' is gone from the list and 'b' has become the selection.
     const list = await screen.findByRole('list', { name: 'Danh sách đơn mới' });
-    await screen.findByText('Đã xác nhận đã tạo. Đơn đã được chuyển khỏi danh sách Đơn mới.');
+    await screen.findByText('Đã gửi ảnh cho Admin kiểm tra.');
     expect(within(list).queryByText('AAA')).not.toBeInTheDocument();
     const selected = within(list).getByText('BBB').closest('button')!;
     expect(selected.getAttribute('aria-current')).toBe('true');
@@ -234,35 +252,34 @@ describe('NewBookingsPage — receptionist master-detail inbox', () => {
     expect(within(list).getByText('AAA')).toBeInTheDocument();
   });
 
-  it('removes a booking from Đơn mới after it is confirmed created', async () => {
-    let completed = false;
+  it('removes a booking from Đơn mới after its proof is sent for review', async () => {
+    let submitted = false;
     installApiMock({
       'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),
       'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
       'GET /api/bookings/new?pageSize=100': () => ({
         status: 200,
         body: {
-          bookings: completed ? [] : [listRow({ id: 'b1', bookingCode: 'B1CODE' })],
-          pagination: { page: 1, pageSize: 100, total: completed ? 0 : 1, totalPages: 1 },
+          bookings: submitted ? [] : [listRow({ id: 'b1', bookingCode: 'B1CODE' })],
+          pagination: { page: 1, pageSize: 100, total: submitted ? 0 : 1, totalPages: 1 },
         },
       }),
       'GET /api/bookings/b1': () => ({
         status: 200,
-        body: { booking: detail('b1', { bookingCode: 'B1CODE', status: completed ? 'COMPLETED' : 'NEW' }) },
+        body: { booking: detail('b1', { bookingCode: 'B1CODE', verificationStatus: submitted ? 'PENDING_REVIEW' : 'NOT_SUBMITTED' }) },
       }),
-      'POST /api/bookings/b1/complete': () => {
-        completed = true;
-        return { status: 200, body: { booking: detail('b1', { status: 'COMPLETED' }) } };
+      'POST /api/bookings/b1/proofs': () => {
+        submitted = true;
+        return { status: 201, body: { booking: detail('b1', { verificationStatus: 'PENDING_REVIEW' }) } };
       },
     });
 
     const user = userEvent.setup();
     renderApp('/app/new');
 
-    // Auto-selected booking b1 detail is shown; confirm it.
-    await user.click(await screen.findByRole('button', { name: 'Xác nhận đã tạo' }));
-    const dialog = await screen.findByRole('dialog');
-    await user.click(within(dialog).getByRole('button', { name: 'Xác nhận đã tạo' }));
+    // Auto-selected booking b1 detail is shown; upload a proof and send it.
+    await screen.findByRole('button', { name: 'Gửi Admin kiểm tra' });
+    await uploadAndSubmit(user);
 
     // After the list refetch, the empty state replaces the removed booking.
     expect(await screen.findByText('Chưa có đơn mới')).toBeInTheDocument();

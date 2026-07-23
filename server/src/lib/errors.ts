@@ -26,7 +26,14 @@ export type ApiErrorCode =
   | 'BOOKING_ALREADY_SENT'
   | 'BOOKING_ALREADY_COMPLETED'
   | 'WARNINGS_NOT_ACKNOWLEDGED'
-  | 'DUPLICATE_BOOKING';
+  | 'DUPLICATE_BOOKING'
+  // Proof-of-creation workflow codes (Milestone 5).
+  | 'PROOF_REQUIRED'
+  | 'UNSUPPORTED_MEDIA'
+  | 'FILE_TOO_LARGE'
+  | 'PROOF_NOT_PENDING'
+  | 'PROOF_ALREADY_REVIEWED'
+  | 'REVIEW_REASON_REQUIRED';
 
 const STATUS_BY_CODE: Record<ApiErrorCode, number> = {
   BAD_REQUEST: 400,
@@ -48,6 +55,12 @@ const STATUS_BY_CODE: Record<ApiErrorCode, number> = {
   BOOKING_ALREADY_COMPLETED: 409,
   WARNINGS_NOT_ACKNOWLEDGED: 422,
   DUPLICATE_BOOKING: 409,
+  PROOF_REQUIRED: 422,
+  UNSUPPORTED_MEDIA: 415,
+  FILE_TOO_LARGE: 413,
+  PROOF_NOT_PENDING: 409,
+  PROOF_ALREADY_REVIEWED: 409,
+  REVIEW_REASON_REQUIRED: 422,
 };
 
 export class ApiError extends Error {
@@ -132,6 +145,30 @@ export class ApiError extends Error {
 
   static duplicateBooking(message: string, details?: unknown): ApiError {
     return new ApiError('DUPLICATE_BOOKING', message, details);
+  }
+
+  static proofRequired(message = 'Cần tải lên ít nhất một ảnh chụp màn hình.'): ApiError {
+    return new ApiError('PROOF_REQUIRED', message);
+  }
+
+  static unsupportedMedia(message = 'Chỉ chấp nhận ảnh PNG, JPEG hoặc WebP.'): ApiError {
+    return new ApiError('UNSUPPORTED_MEDIA', message);
+  }
+
+  static fileTooLarge(message = 'Ảnh vượt quá dung lượng tối đa 10 MB.'): ApiError {
+    return new ApiError('FILE_TOO_LARGE', message);
+  }
+
+  static proofNotPending(message = 'Ảnh này không ở trạng thái chờ duyệt.', details?: unknown): ApiError {
+    return new ApiError('PROOF_NOT_PENDING', message, details);
+  }
+
+  static proofAlreadyReviewed(message = 'Ảnh này đã được duyệt trước đó.', details?: unknown): ApiError {
+    return new ApiError('PROOF_ALREADY_REVIEWED', message, details);
+  }
+
+  static reviewReasonRequired(message = 'Cần chọn lý do khi từ chối.'): ApiError {
+    return new ApiError('REVIEW_REASON_REQUIRED', message);
   }
 }
 

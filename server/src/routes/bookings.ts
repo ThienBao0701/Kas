@@ -1,11 +1,14 @@
 import { Router } from 'express';
+import type { NextFunction, Request, Response } from 'express';
 import { z } from 'zod';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma';
 import { ApiError } from '../lib/errors';
 import { getClock } from '../lib/clock';
 import { requireAuth, requireAdmin, requirePasswordChanged } from '../middleware/auth';
+import { proofUpload } from '../middleware/upload';
 import { parseBooking } from '../booking/parser';
+import { parseAgodaBooking } from '../booking/agoda';
 import { persistDraftBooking } from '../booking/store';
 import { serializeBookingPreview } from '../booking/serialize';
 import {
@@ -16,14 +19,35 @@ import {
   serializeOpsBookingDetail,
 } from '../booking/bookingView';
 import { loadBookingDetail } from '../booking/bookingRepo';
-import { completeBooking } from '../booking/dispatch';
+import { approveProof, rejectProof, submitProof, authorizeProofImage } from '../booking/proof';
+import { readProofFile } from '../booking/proofStorage';
 import type { UserWithBranch } from '../auth/serialize';
 
 const extractSchema = z.object({
-  rawText: z.string().min(1, 'Nội dung Booking.com không được để trống.').max(50000, 'Nội dung quá dài.'),
+  rawText: z.string().min(1, 'Nội dung không được để trống.').max(50000, 'Nội dung quá dài.'),
+  source: z.enum(['BOOKING_COM', 'AGODA']).default('BOOKING_COM'),
 });
 
-const completeSchema = z.object({ completionNote: z.string().trim().max(1000).optional() });
+const submitProofSchema = z.object({ note: z.string().trim().max(1000).optional() });
+const rejectSchema = z.object({
+  // Optional here so a missing reason surfaces the specific REVIEW_REASON_REQUIRED
+  // (422) from the service rather than a generic validation error; an invalid
+  // non-enum value still fails schema validation.
+  reasonCode: z
+    .enum([
+      'WRONG_CUSTOMER_NAME',
+      'WRONG_BOOKING_CODE',
+      'WRONG_DATES',
+      'WRONG_ROOM_COUNT',
+      'WRONG_ROOM_TYPE',
+      'WRONG_PRICE',
+      'MISSING_ROOM',
+      'UNCLEAR_IMAGE',
+      'OTHER',
+    ])
+    .optional(),
+  reviewNote: z.string().trim().max(1000).optional(),
+});
 
 const paginationSchema = {
   page: z.coerce.number().int().positive().default(1),
@@ -92,11 +116,13 @@ export function createBookingsRouter(): Router {
   // POST /api/bookings/extract — Admin-only: parse raw text into a stored DRAFT.
   router.post('/bookings/extract', requireAuth, requirePasswordChanged, requireAdmin, (req, res, next) => {
     (async () => {
-      const { rawText } = extractSchema.parse(req.body);
+      const { rawText, source } = extractSchema.parse(req.body);
       const branches = await prisma.branch.findMany({ where: { active: true }, orderBy: { id: 'asc' } });
 
-      const parsed = parseBooking(rawText, branches);
-      const bookingId = await persistDraftBooking(parsed, rawText, req.currentUser?.id ?? null);
+      // Both adapters return the identical normalized structure; only the source
+      // platform stamp and a few label/prepaid variants differ.
+      const parsed = source === 'AGODA' ? parseAgodaBooking(rawText, branches) : parseBooking(rawText, branches);
+      const bookingId = await persistDraftBooking(parsed, rawText, req.currentUser?.id ?? null, source);
 
       const stored = await prisma.booking.findUniqueOrThrow({
         where: { id: bookingId },
@@ -126,31 +152,48 @@ export function createBookingsRouter(): Router {
     })().catch(next);
   });
 
-  // GET /api/bookings/new — receptionist inbox of dispatched-but-uncompleted work.
-  router.get('/bookings/new', requireAuth, requirePasswordChanged, (req, res, next) => {
-    (async () => {
-      const user = req.currentUser!;
-      const query = newListQuery.parse(req.query);
-      const branchId = branchScope(user, query.branchId);
+  /**
+   * Shared handler for the three "still operationally NEW" verification lists,
+   * distinguished only by verificationStatus:
+   *   NOT_SUBMITTED  -> "Đơn mới" / "Chờ chi nhánh tạo"
+   *   PENDING_REVIEW -> "Chờ Admin kiểm tra" / "Chờ kiểm tra"
+   *   REJECTED       -> "Cần tạo lại"
+   * Branch isolation is enforced through branchScope, so a receptionist can never
+   * widen the list to another branch via the query string.
+   */
+  function newStageList(verificationStatus: 'NOT_SUBMITTED' | 'PENDING_REVIEW' | 'REJECTED') {
+    return (req: Request, res: Response, next: NextFunction) => {
+      (async () => {
+        const user = req.currentUser!;
+        const query = newListQuery.parse(req.query);
+        const branchId = branchScope(user, query.branchId);
 
-      const where: Prisma.BookingWhereInput = { status: 'NEW' };
-      if (branchId !== undefined) where.branchId = branchId;
+        const where: Prisma.BookingWhereInput = { status: 'NEW', verificationStatus };
+        if (branchId !== undefined) where.branchId = branchId;
 
-      const { skip, take } = paginate(query.page, query.pageSize);
-      const [total, rows] = await prisma.$transaction([
-        prisma.booking.count({ where }),
-        prisma.booking.findMany({
-          where,
-          include: BOOKING_LIST_INCLUDE,
-          orderBy: [{ isLastMinute: 'desc' }, { checkInDate: 'asc' }, { sentAt: 'asc' }],
-          skip,
-          take,
-        }),
-      ]);
+        const { skip, take } = paginate(query.page, query.pageSize);
+        const [total, rows] = await prisma.$transaction([
+          prisma.booking.count({ where }),
+          prisma.booking.findMany({
+            where,
+            include: BOOKING_LIST_INCLUDE,
+            orderBy: [{ isLastMinute: 'desc' }, { checkInDate: 'asc' }, { sentAt: 'asc' }],
+            skip,
+            take,
+          }),
+        ]);
 
-      res.json({ bookings: rows.map(serializeNewListItem), pagination: meta(query.page, query.pageSize, total) });
-    })().catch(next);
-  });
+        res.json({ bookings: rows.map(serializeNewListItem), pagination: meta(query.page, query.pageSize, total) });
+      })().catch(next);
+    };
+  }
+
+  // GET /api/bookings/new — dispatched work still awaiting external creation.
+  router.get('/bookings/new', requireAuth, requirePasswordChanged, newStageList('NOT_SUBMITTED'));
+  // GET /api/bookings/pending-review — proof submitted, awaiting admin verdict.
+  router.get('/bookings/pending-review', requireAuth, requirePasswordChanged, newStageList('PENDING_REVIEW'));
+  // GET /api/bookings/rejected — proof rejected, needs recreation ("Cần tạo lại").
+  router.get('/bookings/rejected', requireAuth, requirePasswordChanged, newStageList('REJECTED'));
 
   // GET /api/bookings/completed — the "Đã hoàn thành" list.
   router.get('/bookings/completed', requireAuth, requirePasswordChanged, (req, res, next) => {
@@ -242,15 +285,82 @@ export function createBookingsRouter(): Router {
     })().catch(next);
   });
 
-  // POST /api/bookings/:id/complete — receptionist (own branch) or admin.
-  router.post('/bookings/:id/complete', requireAuth, requirePasswordChanged, (req, res, next) => {
+  // POST /api/bookings/:id/proofs — receptionist (own branch) or admin uploads a
+  // proof screenshot claiming the reservation was created externally.
+  router.post(
+    '/bookings/:id/proofs',
+    requireAuth,
+    requirePasswordChanged,
+    proofUpload(),
+    (req, res, next) => {
+      (async () => {
+        const user = req.currentUser!;
+        const { note } = submitProofSchema.parse(req.body ?? {});
+        const file = req.file
+          ? { buffer: req.file.buffer, originalName: req.file.originalname, size: req.file.size }
+          : undefined;
+        const booking = await submitProof(req.params.id!, file, note, actor(user), getClock());
+        res.status(201).json({ booking: serializeOpsBookingDetail(booking, user.role === 'ADMIN') });
+      })().catch(next);
+    },
+  );
+
+  // GET /api/bookings/:id/proofs/:proofId/image — authenticated, branch-isolated
+  // image bytes. Never served as public static content.
+  router.get('/bookings/:id/proofs/:proofId/image', requireAuth, requirePasswordChanged, (req, res, next) => {
     (async () => {
       const user = req.currentUser!;
-      const { completionNote } = completeSchema.parse(req.body ?? {});
-      const booking = await completeBooking(req.params.id!, completionNote, actor(user), getClock());
-      res.json({ booking: serializeOpsBookingDetail(booking, user.role === 'ADMIN') });
+      const { storedFileName, mimeType } = await authorizeProofImage(
+        req.params.id!,
+        req.params.proofId!,
+        actor(user),
+      );
+      const bytes = await readProofFile(storedFileName);
+      res.setHeader('Content-Type', mimeType);
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.setHeader('Content-Disposition', 'inline');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.send(bytes);
     })().catch(next);
   });
+
+  // POST /api/bookings/:id/proofs/:proofId/approve — Admin marks the proof correct.
+  router.post(
+    '/bookings/:id/proofs/:proofId/approve',
+    requireAuth,
+    requirePasswordChanged,
+    requireAdmin,
+    (req, res, next) => {
+      (async () => {
+        const user = req.currentUser!;
+        const booking = await approveProof(req.params.id!, req.params.proofId!, actor(user), getClock());
+        res.json({ booking: serializeOpsBookingDetail(booking, true) });
+      })().catch(next);
+    },
+  );
+
+  // POST /api/bookings/:id/proofs/:proofId/reject — Admin rejects with a reason.
+  router.post(
+    '/bookings/:id/proofs/:proofId/reject',
+    requireAuth,
+    requirePasswordChanged,
+    requireAdmin,
+    (req, res, next) => {
+      (async () => {
+        const user = req.currentUser!;
+        const { reasonCode, reviewNote } = rejectSchema.parse(req.body ?? {});
+        const booking = await rejectProof(
+          req.params.id!,
+          req.params.proofId!,
+          reasonCode,
+          reviewNote,
+          actor(user),
+          getClock(),
+        );
+        res.json({ booking: serializeOpsBookingDetail(booking, true) });
+      })().catch(next);
+    },
+  );
 
   return router;
 }

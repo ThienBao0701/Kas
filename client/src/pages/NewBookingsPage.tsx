@@ -93,7 +93,7 @@ function ReceptionistInbox() {
     <div>
       <PageHeader
         title="Đơn mới"
-        description="Mở đơn, sao chép thông tin và tạo trên hệ thống khách sạn, rồi xác nhận đã tạo."
+        description="Mở đơn, sao chép thông tin, tạo trên hệ thống khách sạn, rồi tải ảnh chụp màn hình gửi Admin kiểm tra."
         actions={
           <button
             type="button"
@@ -151,7 +151,7 @@ function ReceptionistInbox() {
             {selectedId ? (
               <SelectedBookingPanel
                 id={selectedId}
-                onCompleted={() => setToast('Đã xác nhận đã tạo. Đơn đã được chuyển khỏi danh sách Đơn mới.')}
+                onChanged={(m) => setToast(m ?? 'Đã gửi ảnh cho Admin kiểm tra.')}
               />
             ) : null}
           </div>
@@ -197,7 +197,7 @@ function BookingListRow({
   );
 }
 
-function SelectedBookingPanel({ id, onCompleted }: { id: string; onCompleted: () => void }) {
+function SelectedBookingPanel({ id, onChanged }: { id: string; onChanged: (m?: string) => void }) {
   const { user } = useAuth();
   const query = useQuery({
     queryKey: ['booking', id],
@@ -212,7 +212,7 @@ function SelectedBookingPanel({ id, onCompleted }: { id: string; onCompleted: ()
     <BookingDetailView
       booking={query.data.booking}
       isAdmin={user?.role === 'ADMIN'}
-      onCompleted={onCompleted}
+      onCompleted={onChanged}
       suppressInternalToast
     />
   );

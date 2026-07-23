@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@prisma/client';
+import type { BookingSource, PrismaClient } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db/prisma';
 import { isoToUtcDate } from './dates';
 import type { ParsedBooking } from './types';
@@ -31,6 +31,7 @@ export async function persistDraftBooking(
   parsed: ParsedBooking,
   rawText: string,
   createdByUserId: number | null,
+  sourcePlatform: BookingSource = 'BOOKING_COM',
   client: PrismaClient = defaultPrisma,
 ): Promise<string> {
   const branchId = parsed.branchConfident ? (parsed.suggestedBranch?.id ?? null) : null;
@@ -46,6 +47,7 @@ export async function persistDraftBooking(
         bookingCode,
         hotelName: parsed.hotelName,
         branchId,
+        sourcePlatform,
         customerName: parsed.guestName ?? '',
         phone: parsed.phone,
         checkInDate: parsed.checkIn ? isoToUtcDate(parsed.checkIn) : null,

@@ -25,7 +25,7 @@ function mockShell(user: unknown, extra: Record<string, () => { status: number; 
 }
 
 describe('role-based shell and routing', () => {
-  it('shows the full admin menu (6 items)', async () => {
+  it('shows the full admin menu (8 items)', async () => {
     mockShell(ADMIN_USER);
     renderApp('/app/new');
 
@@ -33,23 +33,25 @@ describe('role-based shell and routing', () => {
     const labels = within(nav).getAllByRole('link').map((l) => l.textContent);
     expect(labels).toEqual([
       'Tổng quan',
-      'Nhập đơn Booking.com',
+      'Nhập đơn',
       'Chờ chi nhánh tạo',
-      'Đã xác nhận tạo',
+      'Chờ kiểm tra',
+      'Cần tạo lại',
+      'Đã xác nhận đúng',
       'Lịch sử',
       'Quản lý tài khoản',
     ]);
   });
 
-  it('shows only the three receptionist items', async () => {
+  it('shows only the five receptionist items', async () => {
     mockShell(RECEPTIONIST_USER);
     renderApp('/app/new');
 
     const nav = await screen.findByRole('navigation', { name: 'Điều hướng chính' });
     const labels = within(nav).getAllByRole('link').map((l) => l.textContent);
-    expect(labels).toEqual(['Đơn mới', 'Đã xác nhận tạo', 'Lịch sử']);
+    expect(labels).toEqual(['Đơn mới', 'Chờ Admin kiểm tra', 'Cần tạo lại', 'Đã xác nhận đúng', 'Lịch sử']);
     expect(within(nav).queryByRole('link', { name: 'Quản lý tài khoản' })).not.toBeInTheDocument();
-    expect(within(nav).queryByRole('link', { name: 'Nhập đơn Booking.com' })).not.toBeInTheDocument();
+    expect(within(nav).queryByRole('link', { name: 'Nhập đơn' })).not.toBeInTheDocument();
   });
 
   it('blocks a receptionist from an admin route directly', async () => {
