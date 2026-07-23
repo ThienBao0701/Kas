@@ -117,16 +117,91 @@ export function findDate(raw: string | undefined | null): string | null {
   return null;
 }
 
-// Vietnamese "tháng" / "thg" and English month names for a year-less rate row.
+// English month names for a year-less rate row.
 const RANGE_MONTH_NAMES: Record<string, number> = MONTH_NAMES;
 
+function monthFromEn(name: string | undefined): number | null {
+  return name ? (RANGE_MONTH_NAMES[name.slice(0, 3)] ?? null) : null;
+}
+
+function prevMonth(month: number): number {
+  return month === 1 ? 12 : month - 1;
+}
+
+interface RangeEndpoints {
+  day1: number;
+  month1: number | null;
+  day2: number;
+  month2: number | null;
+}
+
 /**
- * The stay date of a Booking.com nightly-rate-table row that shows a *date range
- * without a year*, e.g. "23 - 24 Tháng 7" or "23 - 24 Jul". The first day of the
- * range is the stay night; the second is that night's check-out and is ignored.
- * The year is not printed in these rows, so it is inferred from the reservation
- * (`yearHint`, typically the check-in year). Returns null for anything that is
- * not a bare "DD - DD <month>" range, so full dates and prose never match here.
+ * Parses the two endpoints (and any printed months) of a year-less nightly-rate
+ * range row. Supports every layout Booking.com emits for the row, in Vietnamese
+ * and English, with the month attached to either endpoint, both, or only the
+ * second — including a month-boundary row where the second endpoint rolls into a
+ * new month:
+ *
+ *   A  "26 - 27 Tháng 7"              (bare days, trailing VN month)
+ *   B  "31 - 01 Tháng 8"             (month boundary: start is the previous month)
+ *   C  "Tháng 7 31 - 01 Tháng 8"     (explicit month on both endpoints)
+ *   D  "31 Jul - 01 Aug"            (English, day-first, month on both)
+ *   E  "Jul 31 - Aug 01"            (English, month-first, month on both)
+ *      plus the English single-month variants "31 - 01 Aug" and "Jul 31 - 01".
+ *
+ * Returns null for anything that is not a range row.
+ */
+function parseRangeEndpoints(flat: string): RangeEndpoints | null {
+  // Vietnamese, explicit leading month (Format C), trailing month optional.
+  let m = flat.match(/^(?:thang|thg)\s*(\d{1,2})\s+(\d{1,2})\s*[-–]\s*(\d{1,2})(?:\s*(?:thang|thg)\s*(\d{1,2}))?\b/);
+  if (m) {
+    return { month1: Number(m[1]), day1: Number(m[2]), day2: Number(m[3]), month2: m[4] ? Number(m[4]) : null };
+  }
+  // Vietnamese, bare days with a trailing month (Formats A and B).
+  m = flat.match(/^(\d{1,2})\s*[-–]\s*(\d{1,2})\s*(?:thang|thg)\s*(\d{1,2})\b/);
+  if (m) {
+    return { month1: null, day1: Number(m[1]), day2: Number(m[2]), month2: Number(m[3]) };
+  }
+  // English, day-first, month on both endpoints (Format D).
+  m = flat.match(/^(\d{1,2})\s+([a-z]{3,9})\s*[-–]\s*(\d{1,2})\s+([a-z]{3,9})\b/);
+  if (m) {
+    const mo1 = monthFromEn(m[2]);
+    const mo2 = monthFromEn(m[4]);
+    if (mo1 && mo2) return { month1: mo1, day1: Number(m[1]), day2: Number(m[3]), month2: mo2 };
+  }
+  // English, month-first, month on both endpoints (Format E).
+  m = flat.match(/^([a-z]{3,9})\s+(\d{1,2})\s*[-–]\s*([a-z]{3,9})\s+(\d{1,2})\b/);
+  if (m) {
+    const mo1 = monthFromEn(m[1]);
+    const mo2 = monthFromEn(m[3]);
+    if (mo1 && mo2) return { month1: mo1, day1: Number(m[2]), day2: Number(m[4]), month2: mo2 };
+  }
+  // English, bare days with a trailing month ("31 - 01 Aug", "23 - 24 Jul").
+  m = flat.match(/^(\d{1,2})\s*[-–]\s*(\d{1,2})\s+([a-z]{3,9})\b/);
+  if (m) {
+    const mo2 = monthFromEn(m[3]);
+    if (mo2) return { month1: null, day1: Number(m[1]), day2: Number(m[2]), month2: mo2 };
+  }
+  // English, month-first, leading month only ("Jul 31 - 01").
+  m = flat.match(/^([a-z]{3,9})\s+(\d{1,2})\s*[-–]\s*(\d{1,2})\b/);
+  if (m) {
+    const mo1 = monthFromEn(m[1]);
+    if (mo1) return { month1: mo1, day1: Number(m[2]), day2: Number(m[3]), month2: null };
+  }
+  return null;
+}
+
+/**
+ * The stay date (the FIRST day of the range) of a Booking.com nightly-rate-table
+ * row that shows a date range *without a year*. The second day is that night's
+ * check-out and is ignored. The year is not printed, so it is inferred from the
+ * reservation (`yearHint`, the check-in year).
+ *
+ * Crucially this normalizes a month-boundary row without shifting later nights:
+ * when only the second endpoint carries a month and the first day is greater than
+ * the second (e.g. "31 - 01 Tháng 8"), the start belongs to the *previous* month
+ * (31 July, not 31 August). When both endpoints carry a month, each is honoured
+ * directly. Returns null for anything that is not a range row.
  */
 export function parseDateRangeStayDate(
   raw: string | undefined | null,
@@ -135,18 +210,21 @@ export function parseDateRangeStayDate(
   if (!raw || yearHint === null) return null;
   const flat = removeDiacritics(raw).trim().toLowerCase();
 
-  // "23 - 24 thang 7" / "23 - 24 thg 7"
-  const vi = flat.match(/^(\d{1,2})\s*[-–]\s*(\d{1,2})\s*(?:thang|thg)\s*(\d{1,2})\b/);
-  if (vi) {
-    return buildIso(yearHint, Number(vi[3]), Number(vi[1]));
+  const ends = parseRangeEndpoints(flat);
+  if (!ends) return null;
+
+  let month1 = ends.month1;
+  if (month1 === null) {
+    if (ends.month2 === null) return null; // no month printed anywhere
+    // Same month when the days ascend ("26 - 27"); a descending pair ("31 - 01")
+    // is a month rollover, so the start is the month before the printed one.
+    month1 = ends.day1 <= ends.day2 ? ends.month2 : prevMonth(ends.month2);
   }
-  // "23 - 24 jul" / "23 - 24 july"
-  const en = flat.match(/^(\d{1,2})\s*[-–]\s*(\d{1,2})\s+([a-z]{3,9})\b/);
-  if (en) {
-    const month = RANGE_MONTH_NAMES[(en[3] ?? '').slice(0, 3)];
-    if (month) return buildIso(yearHint, month, Number(en[1]));
-  }
-  return null;
+
+  // The start year is the reservation's check-in year. A December→January rollover
+  // (start month December) keeps that year; the check-out endpoint's own year is
+  // never needed because only the start day is the stay night.
+  return buildIso(yearHint, month1, ends.day1);
 }
 
 /** Parses a whole-string date, or null. */
