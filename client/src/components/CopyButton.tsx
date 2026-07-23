@@ -5,19 +5,25 @@ interface CopyButtonProps {
   value: string;
   /** Accessible label, e.g. "Sao chép tên khách". */
   label: string;
+  /** Visible button text; defaults to "Sao chép". */
+  text?: string;
+  /** When set, the control is disabled and explains why (accessible title). */
+  disabled?: boolean;
+  disabledReason?: string;
   className?: string;
 }
 
 /** A compact copy control that briefly confirms with "Đã sao chép". */
-export function CopyButton({ value, label, className = '' }: CopyButtonProps) {
+export function CopyButton({ value, label, text = 'Sao chép', disabled = false, disabledReason, className = '' }: CopyButtonProps) {
   const { copied, copy } = useCopy();
   return (
     <button
       type="button"
       onClick={() => copy(value)}
+      disabled={disabled}
       aria-label={label}
-      title={label}
-      className={`inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 ${className}`}
+      title={disabled ? disabledReason ?? label : label}
+      className={`inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent ${className}`}
     >
       {copied ? (
         <>
@@ -27,7 +33,7 @@ export function CopyButton({ value, label, className = '' }: CopyButtonProps) {
       ) : (
         <>
           <Copy className="h-3.5 w-3.5" aria-hidden="true" />
-          <span>Sao chép</span>
+          <span>{text}</span>
         </>
       )}
     </button>

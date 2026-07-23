@@ -1,9 +1,10 @@
 import {
   CheckCircle2,
-  FilePlus2,
+  ClipboardPaste,
   History,
   Inbox,
   LayoutDashboard,
+  Users,
   type LucideIcon,
 } from 'lucide-react';
 import type { UserRole } from '../auth/types';
@@ -14,16 +15,17 @@ export interface NavItem {
   icon: LucideIcon;
 }
 
-/** Admin operational menu (account/management lives in the account dropdown). */
+/** Admin operates the whole dispatch centre. */
 export const ADMIN_NAV: NavItem[] = [
   { to: '/app/dashboard', label: 'Tổng quan', icon: LayoutDashboard },
-  { to: '/app/dispatch', label: 'Nhập đơn Booking.com', icon: FilePlus2 },
+  { to: '/app/dispatch', label: 'Nhập đơn Booking.com', icon: ClipboardPaste },
   { to: '/app/waiting', label: 'Chờ chi nhánh tạo', icon: Inbox },
   { to: '/app/completed', label: 'Đã xác nhận tạo', icon: CheckCircle2 },
   { to: '/app/history', label: 'Lịch sử', icon: History },
+  { to: '/app/settings', label: 'Quản lý tài khoản', icon: Users },
 ];
 
-/** Receptionist receives, opens, copies and confirms — three items only. */
+/** Receptionist only receives, opens, copies and confirms. */
 export const RECEPTIONIST_NAV: NavItem[] = [
   { to: '/app/new', label: 'Đơn mới', icon: Inbox },
   { to: '/app/completed', label: 'Đã xác nhận tạo', icon: CheckCircle2 },
@@ -34,14 +36,10 @@ export function navForRole(role: UserRole | undefined): NavItem[] {
   return role === 'ADMIN' ? ADMIN_NAV : RECEPTIONIST_NAV;
 }
 
-const EXTRA_TITLES: { to: string; label: string }[] = [
-  { to: '/app/settings', label: 'Quản lý tài khoản' },
-  { to: '/app/booking/', label: 'Chi tiết đơn' },
-];
-
 /** Human title for the current route, used as the topbar heading. */
 export function titleForPath(pathname: string): string {
-  const all = [...ADMIN_NAV, ...RECEPTIONIST_NAV, ...EXTRA_TITLES];
+  if (pathname.startsWith('/app/booking/')) return 'Chi tiết đơn';
+  const all = [...ADMIN_NAV, ...RECEPTIONIST_NAV];
   const match = all
     .slice()
     .sort((a, b) => b.to.length - a.to.length)

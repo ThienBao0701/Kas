@@ -16,14 +16,16 @@ function mockShell(user: unknown, extra: Record<string, () => { status: number; 
   installApiMock({
     'GET /api/auth/me': () => ({ status: 200, body: { user } }),
     'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
+    // Admin waiting list (paged) and receptionist inbox (large page) both hit /bookings/new.
     'GET /api/bookings/new?page=1&pageSize=20': () => EMPTY_NEW,
+    'GET /api/bookings/new?pageSize=100': () => EMPTY_NEW,
     'GET /api/branches': () => ({ status: 200, body: { branches: [] } }),
     ...extra,
   });
 }
 
 describe('role-based shell and routing', () => {
-  it('shows the admin operational menu (5 items)', async () => {
+  it('shows the full admin menu (6 items)', async () => {
     mockShell(ADMIN_USER);
     renderApp('/app/new');
 
@@ -35,6 +37,7 @@ describe('role-based shell and routing', () => {
       'Chờ chi nhánh tạo',
       'Đã xác nhận tạo',
       'Lịch sử',
+      'Quản lý tài khoản',
     ]);
   });
 
@@ -45,6 +48,7 @@ describe('role-based shell and routing', () => {
     const nav = await screen.findByRole('navigation', { name: 'Điều hướng chính' });
     const labels = within(nav).getAllByRole('link').map((l) => l.textContent);
     expect(labels).toEqual(['Đơn mới', 'Đã xác nhận tạo', 'Lịch sử']);
+    expect(within(nav).queryByRole('link', { name: 'Quản lý tài khoản' })).not.toBeInTheDocument();
     expect(within(nav).queryByRole('link', { name: 'Nhập đơn Booking.com' })).not.toBeInTheDocument();
   });
 
@@ -66,7 +70,7 @@ describe('role-based shell and routing', () => {
     mockShell(RECEPTIONIST_USER);
     renderApp('/app/new');
 
-    expect(await screen.findByText('Chưa có đơn mới được gửi đến.')).toBeInTheDocument();
+    expect(await screen.findByText('Chưa có đơn mới')).toBeInTheDocument();
     // No fake bookings: nothing tabular is rendered when the list is empty.
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
     expect(screen.queryByRole('row')).not.toBeInTheDocument();

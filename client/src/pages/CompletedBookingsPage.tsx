@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { CheckCircle2 } from 'lucide-react';
 import { useAuth } from '../auth/AuthProvider';
@@ -9,14 +9,18 @@ import { EmptyState } from '../components/EmptyState';
 import { LastMinuteBadge } from '../components/Badges';
 import { Pagination } from '../components/Pagination';
 import { PageHeader, QueryState } from '../components/PageState';
-import { formatDate, formatDateTime, formatMoney } from '../lib/format';
+import { formatDate, formatDateTime } from '../lib/format';
 
 export function CompletedBookingsPage() {
   const { user } = useAuth();
   const isAdmin = user?.role === 'ADMIN';
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const initialBranch = searchParams.get('branchId');
   const [page, setPage] = useState(1);
-  const [branchId, setBranchId] = useState<number | undefined>(undefined);
+  const [branchId, setBranchId] = useState<number | undefined>(
+    isAdmin && initialBranch ? Number(initialBranch) : undefined,
+  );
 
   const branches = useQuery({
     queryKey: ['branches'],
@@ -72,13 +76,13 @@ export function CompletedBookingsPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    <th className="px-4 py-3">Mã đặt phòng</th>
+                    <th className="px-4 py-3">Mã Booking</th>
                     <th className="px-4 py-3">Khách</th>
                     <th className="px-4 py-3">Chi nhánh</th>
                     <th className="px-4 py-3">Nhận phòng</th>
-                    <th className="px-4 py-3">Tổng tiền</th>
                     <th className="px-4 py-3">Người xác nhận</th>
                     <th className="px-4 py-3">Thời gian xác nhận</th>
+                    <th className="px-4 py-3">Ghi chú</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -95,11 +99,13 @@ export function CompletedBookingsPage() {
                         </div>
                       </td>
                       <td className="px-4 py-3 text-slate-800">{b.customerName ?? '—'}</td>
-                      <td className="px-4 py-3 text-slate-600">{b.branch?.hotelName ?? '—'}</td>
+                      <td className="px-4 py-3 text-slate-600">{b.branch?.address ?? '—'}</td>
                       <td className="px-4 py-3 text-slate-600">{formatDate(b.checkInDate)}</td>
-                      <td className="px-4 py-3 text-slate-800">{formatMoney(b.totalAmount, b.currency)}</td>
                       <td className="px-4 py-3 text-slate-600">{b.completedBy?.fullName ?? '—'}</td>
                       <td className="px-4 py-3 text-slate-500">{formatDateTime(b.completedAt)}</td>
+                      <td className="px-4 py-3 max-w-[16rem] truncate text-slate-500" title={b.completionNote ?? ''}>
+                        {b.completionNote ?? '—'}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

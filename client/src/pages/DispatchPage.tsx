@@ -189,7 +189,7 @@ export function DispatchPage() {
   if (!draftId) {
     return (
       <div>
-        <PageHeader title="Tạo đơn mới" description="Dán nội dung đặt phòng từ Booking.com để trích xuất thông tin." />
+        <PageHeader title="Nhập đơn Booking.com" description="Dán nội dung đặt phòng từ Booking.com để trích xuất thông tin." />
         <Card className="p-5">
           {extractMut.isError ? (
             <div className="mb-3">
@@ -211,7 +211,7 @@ export function DispatchPage() {
               loading={extractMut.isPending}
             >
               <Sparkles className="h-4 w-4" aria-hidden="true" />
-              Trích xuất
+              Trích xuất thông tin
             </Button>
           </div>
         </Card>
@@ -221,7 +221,7 @@ export function DispatchPage() {
 
   // --- Stage 2: review / edit / send ---
   if (!form || detailQuery.isLoading) {
-    return <PageHeader title="Tạo đơn mới" description="Đang tải thông tin đã trích xuất…" />;
+    return <PageHeader title="Nhập đơn Booking.com" description="Đang tải thông tin đã trích xuất…" />;
   }
 
   const canSend = branchId !== undefined && form.customerName.trim() !== '' && form.bookingCode.trim() !== '';

@@ -18,6 +18,10 @@ interface Filters {
   isLastMinute: boolean;
   sentFrom: string;
   sentTo: string;
+  checkInFrom: string;
+  checkInTo: string;
+  completedFrom: string;
+  completedTo: string;
   branchId: string;
 }
 
@@ -28,6 +32,10 @@ const EMPTY: Filters = {
   isLastMinute: false,
   sentFrom: '',
   sentTo: '',
+  checkInFrom: '',
+  checkInTo: '',
+  completedFrom: '',
+  completedTo: '',
   branchId: '',
 };
 
@@ -59,6 +67,10 @@ export function HistoryPage() {
         isLastMinute: applied.isLastMinute ? 'true' : undefined,
         sentFrom: applied.sentFrom || undefined,
         sentTo: applied.sentTo || undefined,
+        checkInFrom: applied.checkInFrom || undefined,
+        checkInTo: applied.checkInTo || undefined,
+        completedFrom: applied.completedFrom || undefined,
+        completedTo: applied.completedTo || undefined,
         branchId: isAdmin && applied.branchId ? Number(applied.branchId) : undefined,
         page,
         pageSize: 20,
@@ -83,7 +95,7 @@ export function HistoryPage() {
       <PageHeader title="Lịch sử" description="Tra cứu toàn bộ đơn đã điều phối." />
 
       <Card className="mb-4 p-4">
-        <form onSubmit={submit} className="flex flex-wrap items-end gap-3">
+        <form onSubmit={submit} aria-label="Bộ lọc lịch sử" className="flex flex-wrap items-end gap-3">
           <div className="min-w-[16rem] flex-1">
             <label className="mb-1 block text-xs font-medium text-slate-500">Tìm kiếm</label>
             <div className="relative">
@@ -101,11 +113,11 @@ export function HistoryPage() {
             <label className="mb-1 block text-xs font-medium text-slate-500">Trạng thái</label>
             <select aria-label="Trạng thái" value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })} className={selectClass}>
               <option value="">Tất cả</option>
-              <option value="NEW">Chờ xác nhận</option>
-              <option value="COMPLETED">Đã xác nhận</option>
-              <option value="DRAFT">Nháp</option>
+              <option value="NEW">Chờ chi nhánh tạo</option>
+              <option value="COMPLETED">Đã xác nhận tạo</option>
+              <option value="DRAFT">Bản nháp</option>
               <option value="READY">Sẵn sàng</option>
-              <option value="ARCHIVED">Lưu trữ</option>
+              <option value="ARCHIVED">Đã lưu trữ</option>
             </select>
           </div>
 
@@ -139,6 +151,24 @@ export function HistoryPage() {
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-500">Gửi đến</label>
             <input type="date" value={draft.sentTo} onChange={(e) => setDraft({ ...draft, sentTo: e.target.value })} className={selectClass} />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-500">Nhận phòng từ</label>
+            <input type="date" value={draft.checkInFrom} onChange={(e) => setDraft({ ...draft, checkInFrom: e.target.value })} className={selectClass} />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-500">Nhận phòng đến</label>
+            <input type="date" value={draft.checkInTo} onChange={(e) => setDraft({ ...draft, checkInTo: e.target.value })} className={selectClass} />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-500">Xác nhận từ</label>
+            <input type="date" value={draft.completedFrom} onChange={(e) => setDraft({ ...draft, completedFrom: e.target.value })} className={selectClass} />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-500">Xác nhận đến</label>
+            <input type="date" value={draft.completedTo} onChange={(e) => setDraft({ ...draft, completedTo: e.target.value })} className={selectClass} />
           </div>
 
           <label className="flex items-center gap-2 pb-2 text-sm text-slate-600">
@@ -175,13 +205,13 @@ export function HistoryPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    <th className="px-4 py-3">Mã đặt phòng</th>
+                    <th className="px-4 py-3">Mã Booking</th>
                     <th className="px-4 py-3">Khách</th>
                     <th className="px-4 py-3">Chi nhánh</th>
                     <th className="px-4 py-3">Nhận phòng</th>
                     <th className="px-4 py-3">Trạng thái</th>
-                    <th className="px-4 py-3">Gửi</th>
-                    <th className="px-4 py-3">Xác nhận</th>
+                    <th className="px-4 py-3">Gửi (sentAt)</th>
+                    <th className="px-4 py-3">Xác nhận (completedAt)</th>
                   </tr>
                 </thead>
                 <tbody>

@@ -20,9 +20,9 @@ describe('Vietnamese operational labels', () => {
   });
 
   it('formats a short Vietnamese relative time', () => {
-    const now = Date.parse('2026-07-21T10:00:00.000Z');
+    const now = new Date('2026-07-21T10:00:00.000Z');
     expect(relativeTime('2026-07-21T09:55:00.000Z', now)).toBe('5 phút trước');
-    expect(relativeTime('2026-07-21T09:59:40.000Z', now)).toBe('Vừa xong');
+    expect(relativeTime('2026-07-21T09:59:40.000Z', now)).toBe('vừa xong');
     expect(relativeTime('2026-07-21T08:00:00.000Z', now)).toBe('2 giờ trước');
   });
 });

@@ -2,7 +2,6 @@ import { AlertTriangle } from 'lucide-react';
 import { useAuth } from '../auth/AuthProvider';
 import { LoadingScreen } from '../components/LoadingScreen';
 import { Button } from '../components/Button';
-import { ToastProvider } from '../components/Toast';
 import { AppRoutes } from './router';
 
 function ConnectionErrorScreen({ onRetry }: { onRetry: () => void }) {
@@ -42,9 +41,5 @@ export function App() {
     );
   }
 
-  return (
-    <ToastProvider>
-      <AppRoutes />
-    </ToastProvider>
-  );
+  return <AppRoutes />;
 }

@@ -36,25 +36,29 @@ export function formatDateTime(iso: string | null | undefined): string {
   return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-/** A short Vietnamese relative time, e.g. "Vừa xong", "5 phút trước". */
-export function relativeTime(iso: string | null | undefined, now: number = Date.now()): string {
-  if (!iso) return '';
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return '';
-  const minutes = Math.round((now - then) / 60_000);
-  if (minutes < 1) return 'Vừa xong';
-  if (minutes < 60) return `${minutes} phút trước`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours} giờ trước`;
-  const days = Math.round(hours / 24);
-  return `${days} ngày trước`;
-}
-
 const HCM_OFFSET_MS = 7 * 60 * 60 * 1000;
 
 /** Today's calendar date in Asia/Ho_Chi_Minh, as ISO "YYYY-MM-DD". */
 export function hcmToday(now: Date = new Date()): string {
   return new Date(now.getTime() + HCM_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+/** Today's date in Asia/Ho_Chi_Minh as "DD/MM" (no year) — for the PMS note. */
+export function hcmDayMonth(now: Date = new Date()): string {
+  const iso = hcmToday(now);
+  const [, m, d] = iso.split('-');
+  return `${d}/${m}`;
+}
+
+/**
+ * The canonical plain-text amount format used for every *copyable* amount in the
+ * app (nightly price, total, generated note): Vietnamese thousands separators,
+ * whole đồng, no currency symbol — e.g. 609120 -> "609.120". Unknown -> the
+ * agreed "Chưa xác định" placeholder so a missing amount is never blank.
+ */
+export function formatAmountCopy(amount: number | null | undefined): string {
+  if (amount === null || amount === undefined) return 'Chưa xác định';
+  return vndFormatter.format(Math.round(amount));
 }
 
 /** True when an ISO date equals today in Asia/Ho_Chi_Minh. */
@@ -95,4 +99,20 @@ export function payStatusCopy(status: string | null | undefined): string {
   if (status === 'PAY_BEFORE') return 'PAY BEFORE';
   if (status === 'PAY_AFTER') return 'PAY AFTER';
   return 'Chưa xác định';
+}
+
+/** Short relative time in Vietnamese, e.g. "vừa xong", "5 phút trước". */
+export function relativeTime(iso: string | null | undefined, now: Date = new Date()): string {
+  if (!iso) return '—';
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return '—';
+  const diffSec = Math.round((now.getTime() - then) / 1000);
+  if (diffSec < 45) return 'vừa xong';
+  const diffMin = Math.round(diffSec / 60);
+  if (diffMin < 60) return `${diffMin} phút trước`;
+  const diffHour = Math.round(diffMin / 60);
+  if (diffHour < 24) return `${diffHour} giờ trước`;
+  const diffDay = Math.round(diffHour / 24);
+  if (diffDay < 30) return `${diffDay} ngày trước`;
+  return formatDate(iso);
 }

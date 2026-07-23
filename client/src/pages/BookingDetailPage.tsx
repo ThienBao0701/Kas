@@ -1,6 +1,7 @@
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft } from 'lucide-react';
+import { useAuth } from '../auth/AuthProvider';
 import { bookingsApi } from '../api/bookings';
 import { toUserMessage } from '../api/errors';
 import { ErrorAlert } from '../components/ErrorAlert';
@@ -9,6 +10,7 @@ import { BookingDetailView } from '../components/BookingDetailView';
 
 export function BookingDetailPage() {
   const { id = '' } = useParams();
+  const { user } = useAuth();
   const navigate = useNavigate();
 
   const query = useQuery({
@@ -18,11 +20,11 @@ export function BookingDetailPage() {
   });
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <button
         type="button"
         onClick={() => navigate(-1)}
-        className="inline-flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-700"
+        className="inline-flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
       >
         <ArrowLeft className="h-4 w-4" aria-hidden="true" />
         Quay lại
@@ -32,9 +34,9 @@ export function BookingDetailPage() {
         <InlineSpinner />
       ) : query.isError ? (
         <ErrorAlert>{toUserMessage(query.error)}</ErrorAlert>
-      ) : (
-        <BookingDetailView booking={query.data!.booking} />
-      )}
+      ) : query.data ? (
+        <BookingDetailView booking={query.data.booking} isAdmin={user?.role === 'ADMIN'} />
+      ) : null}
     </div>
   );
 }

@@ -1,18 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Bell, CheckCheck, Flame } from 'lucide-react';
+import { Bell, CheckCheck } from 'lucide-react';
 import { notificationsApi, type NotificationItem } from '../api/notifications';
-import { toUserMessage } from '../api/errors';
 import { relativeTime } from '../lib/format';
 
 const POLL_MS = 20_000;
 
-function isLastMinute(n: NotificationItem): boolean {
-  return n.title.toUpperCase().includes('LAST MINUTE');
-}
-
-/** Fire a subtle browser notification only if permission is already granted. */
+/** A subtle browser notification when unread rises — only if permission is already granted. */
 function maybeBrowserNotify(count: number): void {
   if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
   try {
@@ -21,7 +16,7 @@ function maybeBrowserNotify(count: number): void {
       tag: 'kas-unread',
     });
   } catch {
-    // ignore — notifications are best-effort
+    // best-effort only
   }
 }
 
@@ -31,6 +26,7 @@ export function NotificationBell() {
   const queryClient = useQueryClient();
   const prevCount = useRef<number | null>(null);
 
+  // Poll the cheap unread count on a timer (no SSE in this phase).
   const unread = useQuery({
     queryKey: ['notifications', 'unread'],
     queryFn: () => notificationsApi.unreadCount(),
@@ -44,6 +40,19 @@ export function NotificationBell() {
     enabled: open,
   });
 
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: ['notifications'] });
+  };
+
+  const markOne = useMutation({
+    mutationFn: (id: string) => notificationsApi.markRead(id),
+    onSuccess: invalidate,
+  });
+  const markAll = useMutation({
+    mutationFn: () => notificationsApi.markAllRead(),
+    onSuccess: invalidate,
+  });
+
   const count = unread.data?.count ?? 0;
 
   // Subtle browser notification when the unread count rises (permission granted only).
@@ -51,10 +60,6 @@ export function NotificationBell() {
     if (prevCount.current !== null && count > prevCount.current) maybeBrowserNotify(count);
     prevCount.current = count;
   }, [count]);
-
-  const invalidate = () => void queryClient.invalidateQueries({ queryKey: ['notifications'] });
-  const markOne = useMutation({ mutationFn: (id: string) => notificationsApi.markRead(id), onSuccess: invalidate });
-  const markAll = useMutation({ mutationFn: () => notificationsApi.markAllRead(), onSuccess: invalidate });
 
   const onItem = (n: NotificationItem) => {
     if (!n.read) markOne.mutate(n.id);
@@ -98,9 +103,13 @@ export function NotificationBell() {
               {list.isLoading ? (
                 <p className="px-4 py-6 text-center text-sm text-slate-400">Đang tải…</p>
               ) : list.isError ? (
-                <div className="px-4 py-6 text-center text-sm text-red-600">
-                  {toUserMessage(list.error)}
-                  <button type="button" onClick={() => void list.refetch()} className="mt-2 block w-full text-brand-600 underline">
+                <div className="px-4 py-6 text-center">
+                  <p className="text-sm text-slate-500">Không thể tải thông báo.</p>
+                  <button
+                    type="button"
+                    onClick={() => void list.refetch()}
+                    className="mt-2 text-xs font-medium text-brand-600 hover:text-brand-700"
+                  >
                     Thử lại
                   </button>
                 </div>
@@ -108,21 +117,23 @@ export function NotificationBell() {
                 <p className="px-4 py-6 text-center text-sm text-slate-400">Chưa có thông báo.</p>
               ) : (
                 list.data!.notifications.map((n) => {
-                  const lastMin = isLastMinute(n);
+                  const isLastMinute = n.title.toUpperCase().includes('LAST MINUTE');
                   return (
                     <button
                       key={n.id}
                       type="button"
                       onClick={() => onItem(n)}
                       className={`block w-full border-b border-slate-100 px-4 py-3 text-left last:border-b-0 hover:bg-slate-50 ${
-                        n.read ? '' : lastMin ? 'bg-red-50/70' : 'bg-brand-50/50'
-                      } ${lastMin ? 'border-l-4 border-l-red-400' : ''}`}
+                        isLastMinute ? 'border-l-4 border-l-red-500' : ''
+                      } ${n.read ? '' : 'bg-brand-50/50'}`}
                     >
-                      <p className={`flex items-center gap-1.5 text-sm font-semibold ${lastMin ? 'text-red-700' : 'text-slate-800'}`}>
-                        {lastMin ? <Flame className="h-3.5 w-3.5" aria-hidden="true" /> : n.read ? null : <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-brand-600" />}
+                      <p className={`flex items-center gap-2 text-sm font-semibold ${isLastMinute ? 'text-red-700' : 'text-slate-800'}`}>
+                        {n.read ? null : (
+                          <span className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${isLastMinute ? 'bg-red-500' : 'bg-brand-600'}`} />
+                        )}
                         {n.title}
                       </p>
-                      <p className="mt-0.5 whitespace-pre-line text-sm text-slate-600">{n.body}</p>
+                      <p className="mt-0.5 text-sm text-slate-600">{n.body}</p>
                       <p className="mt-1 text-xs text-slate-400">{relativeTime(n.createdAt)}</p>
                     </button>
                   );
