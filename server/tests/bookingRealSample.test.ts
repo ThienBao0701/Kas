@@ -3,7 +3,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parseBooking } from '../src/booking/parser';
 import { resolvePaymentStatus } from '../src/booking/paymentStatus';
-import { extractArrivalNote } from '../src/booking/arrivalNote';
+import { extractSpecialRequest } from '../src/booking/arrivalNote';
 import { BRANCHES } from '../src/db/branches';
 import type { MatchableBranch, ParsedBooking } from '../src/booking/types';
 
@@ -82,8 +82,10 @@ describe('real Booking.com extranet sample — operational fields', () => {
     expect(r.paymentStatus).toBe('PAY_BEFORE');
   });
 
-  it('builds a concise arrival note from the guest chat', () => {
-    expect(r.specialRequest).toBe('Khách dự kiến đến khoảng 13:00, gửi hành lý và nhận phòng lúc 14:00.');
+  it('builds a concise special request from the guest chat (arrival + early check-in + luggage)', () => {
+    expect(r.specialRequest).toBe(
+      'Khách dự kiến đến khoảng 13:00. Khách hỏi nhận phòng sớm. Có thể gửi hành lý nếu phòng chưa sẵn sàng.',
+    );
   });
 
   it('does not expose email, nationality, commission or IATA in the operational output', () => {
@@ -124,17 +126,17 @@ describe('payment status triggers', () => {
   });
 });
 
-describe('arrival-note extraction', () => {
-  it('ignores hotel messages and returns null without guest arrival info', () => {
+describe('special-request extraction', () => {
+  it('ignores hotel messages and returns null without a guest request', () => {
     const text = [
       'Khách sạn - 09:20',
       'Dear guest, early check-in before 14:00 costs 200.000 VND. Transfer at 350.000 VND per car.',
     ].join('\n');
-    expect(extractArrivalNote(text)).toBeNull();
+    expect(extractSpecialRequest(text)).toBeNull();
   });
 
   it('extracts a guest arrival time only', () => {
     const text = ['Khách - 10:00', 'Hello, I will arrive around 3pm today.'].join('\n');
-    expect(extractArrivalNote(text)).toBe('Khách dự kiến đến khoảng 15:00.');
+    expect(extractSpecialRequest(text)).toBe('Khách dự kiến đến khoảng 15:00.');
   });
 });

@@ -145,9 +145,11 @@ export function createBookingsRouter(): Router {
         ...preview,
         suggestedBranch: candidateBranch,
         branchMatchScore: parsed.branchMatchScore,
+        branchConfidence: parsed.branchConfidence,
         branchConfident: parsed.branchConfident,
         requiresManualConfirmation: parsed.requiresManualConfirmation,
         fieldConfidence: parsed.fieldConfidence,
+        parserQuality: parsed.parserQuality,
       });
     })().catch(next);
   });

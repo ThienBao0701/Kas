@@ -117,6 +117,38 @@ export function findDate(raw: string | undefined | null): string | null {
   return null;
 }
 
+// Vietnamese "tháng" / "thg" and English month names for a year-less rate row.
+const RANGE_MONTH_NAMES: Record<string, number> = MONTH_NAMES;
+
+/**
+ * The stay date of a Booking.com nightly-rate-table row that shows a *date range
+ * without a year*, e.g. "23 - 24 Tháng 7" or "23 - 24 Jul". The first day of the
+ * range is the stay night; the second is that night's check-out and is ignored.
+ * The year is not printed in these rows, so it is inferred from the reservation
+ * (`yearHint`, typically the check-in year). Returns null for anything that is
+ * not a bare "DD - DD <month>" range, so full dates and prose never match here.
+ */
+export function parseDateRangeStayDate(
+  raw: string | undefined | null,
+  yearHint: number | null,
+): string | null {
+  if (!raw || yearHint === null) return null;
+  const flat = removeDiacritics(raw).trim().toLowerCase();
+
+  // "23 - 24 thang 7" / "23 - 24 thg 7"
+  const vi = flat.match(/^(\d{1,2})\s*[-–]\s*(\d{1,2})\s*(?:thang|thg)\s*(\d{1,2})\b/);
+  if (vi) {
+    return buildIso(yearHint, Number(vi[3]), Number(vi[1]));
+  }
+  // "23 - 24 jul" / "23 - 24 july"
+  const en = flat.match(/^(\d{1,2})\s*[-–]\s*(\d{1,2})\s+([a-z]{3,9})\b/);
+  if (en) {
+    const month = RANGE_MONTH_NAMES[(en[3] ?? '').slice(0, 3)];
+    if (month) return buildIso(yearHint, month, Number(en[1]));
+  }
+  return null;
+}
+
 /** Parses a whole-string date, or null. */
 export function parseDate(raw: string | undefined | null): string | null {
   if (!raw) return null;

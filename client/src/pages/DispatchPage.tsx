@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { FilePlus2, Send, Sparkles } from 'lucide-react';
-import { bookingsApi, branchesApi, SOURCE_LABEL, type BookingDetail, type BookingEdit, type BookingSource, type WarningView } from '../api/bookings';
+import { bookingsApi, branchesApi, SOURCE_LABEL, type BookingDetail, type BookingEdit, type BookingSource, type ParserQuality, type WarningView } from '../api/bookings';
 import { ApiError, toUserMessage } from '../api/errors';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
@@ -100,6 +100,8 @@ export function DispatchPage() {
   const [form, setForm] = useState<FormState | null>(null);
   const [branchId, setBranchId] = useState<number | undefined>(undefined);
   const [warnings, setWarnings] = useState<WarningView[]>([]);
+  const [quality, setQuality] = useState<ParserQuality | null>(null);
+  const [branchConfidence, setBranchConfidence] = useState<number | null>(null);
   const [pendingWarnings, setPendingWarnings] = useState<WarningView[] | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
   const [saveNote, setSaveNote] = useState<string | null>(null);
@@ -112,6 +114,8 @@ export function DispatchPage() {
     onSuccess: (res) => {
       setDraftId(res.booking.id);
       setBranchId(res.branchConfident && res.suggestedBranch ? res.suggestedBranch.id : undefined);
+      setQuality(res.parserQuality);
+      setBranchConfidence(res.suggestedBranch ? res.branchConfidence : null);
     },
   });
 
@@ -261,6 +265,8 @@ export function DispatchPage() {
               setDraftId(null);
               setForm(null);
               setRawText('');
+              setQuality(null);
+              setBranchConfidence(null);
             }}
           >
             <FilePlus2 className="h-4 w-4" aria-hidden="true" />
@@ -268,6 +274,8 @@ export function DispatchPage() {
           </Button>
         }
       />
+
+      {quality ? <DataQualityCard quality={quality} branchConfidence={branchConfidence} /> : null}
 
       {warnings.length > 0 ? (
         <Card className="border-amber-200 bg-amber-50/50 p-4">
@@ -425,5 +433,52 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <span className="mb-1 block text-sm font-medium text-slate-600">{label}</span>
       {children}
     </label>
+  );
+}
+
+const QUALITY_STYLES: Record<ParserQuality['level'], { dot: string; text: string }> = {
+  HIGH: { dot: 'bg-green-500', text: 'text-green-700' },
+  MEDIUM: { dot: 'bg-amber-500', text: 'text-amber-700' },
+  LOW: { dot: 'bg-red-500', text: 'text-red-700' },
+};
+
+/**
+ * A small, additive read-out of the extraction's operational completeness score
+ * and (when a branch is suggested) the branch-match confidence. It never blocks
+ * editing or hides backend warnings — the warning-acknowledgement flow stays
+ * authoritative; this only tells the admin how much to double-check.
+ */
+function DataQualityCard({
+  quality,
+  branchConfidence,
+}: {
+  quality: ParserQuality;
+  branchConfidence: number | null;
+}) {
+  const style = QUALITY_STYLES[quality.level];
+  return (
+    <Card className="p-4">
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+        <p className={`inline-flex items-center gap-2 text-sm font-semibold ${style.text}`}>
+          <span className={`h-2.5 w-2.5 rounded-full ${style.dot}`} aria-hidden="true" />
+          <span>
+            Độ hoàn thiện dữ liệu: <span role="status">{quality.score}%</span>
+          </span>
+        </p>
+        {branchConfidence !== null ? (
+          <p className="text-sm text-slate-600">
+            Độ tin cậy chi nhánh: <span className="font-semibold text-slate-900">{branchConfidence}%</span>
+          </p>
+        ) : null}
+      </div>
+      {quality.requiresAdminReview ? (
+        <p
+          role="alert"
+          className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800"
+        >
+          Admin cần kiểm tra lại booking này trước khi gửi.
+        </p>
+      ) : null}
+    </Card>
   );
 }

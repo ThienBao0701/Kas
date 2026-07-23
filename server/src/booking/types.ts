@@ -19,6 +19,20 @@ export interface ExtractWarning {
   severity: WarningSeverity;
 }
 
+/**
+ * An operational *completeness* score for the extracted booking (0–100). It is
+ * NOT an AI confidence: it is a deterministic weighted measure of how many of the
+ * fields a receptionist needs were extracted cleanly, plus whether an admin must
+ * re-check the booking before dispatch. Preview metadata only; never persisted.
+ */
+export interface ParserQuality {
+  score: number;
+  level: 'HIGH' | 'MEDIUM' | 'LOW';
+  requiresAdminReview: boolean;
+  missingCriticalFields: string[];
+  warningCount: number;
+}
+
 export interface ParsedNight {
   /** ISO "YYYY-MM-DD". */
   stayDate: string;
@@ -59,12 +73,16 @@ export interface ParsedBooking {
   /** Best branch candidate (>= suggest threshold), even when not auto-assigned. */
   suggestedBranch: MatchableBranch | null;
   branchMatchScore: number;
+  /** The branch match score on a stable 0–100 scale (round of branchMatchScore). */
+  branchConfidence: number;
   /** True when the branch match is strong enough to auto-assign without review. */
   branchConfident: boolean;
   /** True when the admin must confirm the branch before dispatch. */
   requiresManualConfirmation: boolean;
   /** Per-field extraction confidence for the preview. */
   fieldConfidence: Record<string, FieldConfidence>;
+  /** Operational completeness score + admin-review flag (preview metadata). */
+  parserQuality: ParserQuality;
   warnings: ExtractWarning[];
   parserVersion: string;
 }

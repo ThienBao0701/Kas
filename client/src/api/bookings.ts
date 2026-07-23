@@ -214,11 +214,21 @@ export interface ListResponse<T> {
   pagination: Pagination;
 }
 
+export interface ParserQuality {
+  score: number;
+  level: 'HIGH' | 'MEDIUM' | 'LOW';
+  requiresAdminReview: boolean;
+  missingCriticalFields: string[];
+  warningCount: number;
+}
+
 export interface ExtractResponse {
   booking: { id: string; status: BookingStatus };
   suggestedBranch: Branch | null;
+  branchConfidence: number;
   branchConfident: boolean;
   requiresManualConfirmation: boolean;
+  parserQuality: ParserQuality;
   warnings: WarningView[];
 }
 

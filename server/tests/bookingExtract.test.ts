@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app';
@@ -70,6 +72,50 @@ describe('POST /api/bookings/extract', () => {
     expect(stored.createdByUserId).not.toBeNull();
     expect(stored.rooms).toHaveLength(1);
     expect(stored.rooms[0]!.nights).toHaveLength(3);
+  });
+
+  it('flows the two-room nightly-table sample through store + serialize to the review payload', async () => {
+    const raw = fs.readFileSync(
+      path.join(__dirname, 'fixtures', 'booking', '25-real-sample-two-room-nightly.txt'),
+      'utf8',
+    );
+    const res = await adminAgent.post('/api/bookings/extract').send({ rawText: raw });
+
+    expect(res.status).toBe(201);
+    // The exact review-form fields the frontend renders.
+    expect(res.body.booking.hotelName).toBe('Saigon Hotel & Ben Thanh Market');
+    expect(res.body.booking.guestName).toBe('Thùy Chi Phan');
+    expect(res.body.booking.phone).toBe('+84 964 934 713');
+    expect(res.body.booking.bookingCode).toBe('6312474567');
+    expect(res.body.booking.totalAmount).toBe(3_078_000);
+    expect(res.body.booking.checkIn).toBe('2026-07-23');
+    expect(res.body.booking.checkOut).toBe('2026-07-25');
+    expect(res.body.booking.paymentStatus).toBe('PAY_AFTER');
+    expect(res.body.booking.specialRequest).toBe(
+      'Khách dự kiến đến trong khoảng 13:00 - 14:00. Có thể gửi hành lý nếu phòng chưa sẵn sàng.',
+    );
+    expect(res.body.suggestedBranch.address).toBe('05 Trương Định');
+
+    expect(res.body.rooms).toHaveLength(2);
+    for (const room of res.body.rooms) {
+      expect(room.roomName).toBe('Phòng Tiêu Chuẩn Giường Đôi');
+      expect(room.roomTotal).toBe(1_539_000);
+      expect(room.nights.map((n: { stayDate: string }) => n.stayDate)).toEqual([
+        '2026-07-23',
+        '2026-07-24',
+      ]);
+      expect(room.nights.map((n: { amount: number }) => n.amount)).toEqual([648_000, 891_000]);
+    }
+    expect(res.body.warnings).toEqual([]);
+
+    // Persisted through the store exactly as previewed.
+    const stored = await testPrisma.booking.findUniqueOrThrow({
+      where: { id: res.body.booking.id },
+      include: { rooms: { include: { nights: true } } },
+    });
+    expect(stored.rooms).toHaveLength(2);
+    expect(stored.totalAmount).toBe(3_078_000);
+    expect(stored.rooms.every((r) => r.nights.length === 2)).toBe(true);
   });
 
   it('persists extraction warnings for a missing nightly price', async () => {

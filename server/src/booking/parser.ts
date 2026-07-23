@@ -1,8 +1,8 @@
 import { normalizeText, removeDiacritics, toLines } from './text';
 import { detectCurrency, looksLikeMoney, parseFirstAmount } from './money';
-import { findDate, generateStayDates } from './dates';
+import { findDate, generateStayDates, parseDateRangeStayDate } from './dates';
 import { resolvePaymentStatus } from './paymentStatus';
-import { extractArrivalNote } from './arrivalNote';
+import { extractSpecialRequest } from './arrivalNote';
 import {
   BRANCH_CONFIDENT_THRESHOLD,
   BRANCH_MATCH_THRESHOLD,
@@ -16,6 +16,7 @@ import type {
   ParsedBooking,
   ParsedNight,
   ParsedRoom,
+  ParserQuality,
 } from './types';
 
 /** Extraction-engine version stamped onto every booking it produces. */
@@ -44,10 +45,14 @@ const FIELD_LABELS: Record<string, readonly string[]> = {
   ],
   checkIn: ['nhan phong', 'ngay nhan phong', 'ngay nhan', 'ngay den', 'check in', 'checkin', 'arrival'],
   checkOut: ['tra phong', 'ngay tra phong', 'ngay tra', 'ngay di', 'check out', 'checkout', 'departure'],
+  // Booking-*level* total only. Per-room totals ("Tổng giá phòng" / "Total room
+  // price" / "Tổng phụ") are deliberately excluded so a room's own subtotal is
+  // never captured as the booking total — the room subtotal is derived from its
+  // nights instead. Booking.com's booking-level field is "Tổng tiền phòng".
   total: [
-    'tong cong', 'tong tien', 'tong tien phong', 'tong gia', 'tong gia phong', 'thanh tien',
-    'tong thanh toan', 'tong so tien', 'gia cua ban', 'total', 'total price', 'total room price',
-    'total room', 'total cost', 'grand total',
+    'tong cong', 'tong tien', 'tong tien phong', 'tong gia', 'thanh tien',
+    'tong thanh toan', 'tong so tien', 'gia cua ban', 'total', 'total price',
+    'total cost', 'grand total',
     // Agoda
     'total charge', 'total amount', 'total all rooms', 'tong tien tat ca phong',
   ],
@@ -74,6 +79,13 @@ for (const [field, labels] of Object.entries(FIELD_LABELS)) {
 }
 
 const ROOM_HEADER = /^(?:ph[oòơ]ng|room)\s*(\d+)?\s*[:\-–]\s*(.+)$/i;
+
+// A leading room ordinal that precedes the type, as Booking.com's extranet lists
+// physical rooms: "1 Phòng Tiêu Chuẩn …", "2 Room Standard …". The number is the
+// room's ordinal (its index), never a quantity — the second capture is the type.
+// Guarded by requiring "Phòng"/"Room" right after the number, so "2 người lớn",
+// "3 đêm" or a "23 - 24 Tháng 7" date row never match.
+const LEADING_ORDINAL_ROOM = /^(\d{1,2})\s+((?:ph[oòơ]ng|room)\b.+)$/i;
 
 // Room-name detection for raw text where the type is a bare line ("Deluxe Double
 // Room") rather than "Phòng N: …". Requires a strong type qualifier next to a
@@ -198,23 +210,37 @@ function stripEnglishParenthetical(name: string): string {
 }
 
 /**
- * Detects a room section on a line and returns its type name (accents preserved)
- * and any inline quantity. Handles "Phòng N: name", a "Loại phòng: name" prefix,
- * and bare English/Vietnamese type names.
+ * Detects a room section on a line and returns its type name (accents preserved),
+ * any inline quantity, and whether the header was explicitly *numbered*
+ * ("1 Phòng…", "Phòng 1:", "Room 2:"). Handles a leading ordinal, "Phòng N: name",
+ * a "Loại phòng: name" prefix, and bare English/Vietnamese type names.
+ *
+ * `ordinal` marks a header whose room number makes it a certain physical room:
+ * such a header is always kept (it is never mistaken for a repeated policy
+ * heading) and its number is discarded, never read as a room quantity.
  */
-function detectRoom(line: string): { name: string | null; quantity: number } | null {
+function detectRoom(line: string): { name: string | null; quantity: number; ordinal: boolean } | null {
   const prefixed = line.match(ROOM_PREFIX_LABEL);
   const target = prefixed ? prefixed[1]!.trim() : line;
+
+  // "1 Phòng …" / "2 Room …": the leading number is the room ordinal, not a type
+  // qualifier and not a quantity. Strip it and keep the type that follows.
+  const lead = target.match(LEADING_ORDINAL_ROOM);
+  if (lead) {
+    const { name, quantity } = extractInlineQuantity(lead[2]!.trim());
+    const clean = nonEmpty(name);
+    return { name: clean ? stripEnglishParenthetical(clean) : null, quantity, ordinal: true };
+  }
 
   const header = matchRoomHeader(target);
   if (header && header.name.length > 0) {
     const { name, quantity } = extractInlineQuantity(header.name);
     const clean = nonEmpty(name);
-    return { name: clean ? stripEnglishParenthetical(clean) : null, quantity };
+    return { name: clean ? stripEnglishParenthetical(clean) : null, quantity, ordinal: header.index !== null };
   }
   if (isRoomTypeName(target)) {
     const { name, quantity } = extractInlineQuantity(target.trim());
-    return { name: stripEnglishParenthetical(nonEmpty(name) ?? target.trim()), quantity };
+    return { name: stripEnglishParenthetical(nonEmpty(name) ?? target.trim()), quantity, ordinal: false };
   }
   return null;
 }
@@ -241,7 +267,10 @@ function isRealRoomHeading(
   let policyNearby = false;
   for (let j = index + 1; j < end; j += 1) {
     const l = lines[j]!;
-    if (looksLikeMoney(l) || findDate(l)) return true; // real pricing/date context
+    // Real pricing context is the strongest signal of an actual room. A nearby
+    // *date* alone is not — a repeated room name in the policy/chat section sits
+    // near message timestamps, and must not be resurrected into a phantom room.
+    if (looksLikeMoney(l)) return true;
     if (POLICY_KEYWORDS.test(normalizeText(l))) policyNearby = true;
   }
   const normName = normalizeText(name ?? '');
@@ -271,6 +300,41 @@ function cleanName(line: string): string | null {
   if (looksLikeMoney(trimmed) || findDate(trimmed)) return null;
   if (extractPhone(trimmed)) return null;
   return trimmed;
+}
+
+/**
+ * Removes a trailing Booking.com property ID that is glued to (or trails) the
+ * hotel name, e.g. "Saigon Hotel & Ben Thanh Market16806954" -> "…Market". Only a
+ * long digit run (6+) at the very end is stripped, so a hotel whose name ends in
+ * a small number is untouched. Used for display only — the raw text is preserved.
+ */
+function cleanHotelName(name: string | null): string | null {
+  if (!name) return name;
+  const stripped = name.replace(/\s*\d{6,}\s*$/, '').trim();
+  return stripped.length > 0 ? stripped : name;
+}
+
+/**
+ * The guest's own phone number, read from the primary guest-information block
+ * (the few lines following the "Tên khách:" label) even when Booking.com prints
+ * it without its own label. Bounded to that block so a hotel hotline, transfer
+ * contact or a number inside the chat further down is never captured.
+ */
+function extractPrimaryGuestPhone(classified: readonly Classified[]): string | null {
+  for (let i = 0; i < classified.length; i += 1) {
+    const e = classified[i]!;
+    const isGuestLabel =
+      (e.kind === 'bareLabel' || e.kind === 'labeled') && e.field === 'guestName';
+    if (!isGuestLabel) continue;
+    const end = Math.min(classified.length, i + 7);
+    for (let j = i + 1; j < end; j += 1) {
+      const l = classified[j]!;
+      if (l.kind === 'room') break;
+      const phone = extractPhone(l.raw);
+      if (phone) return phone;
+    }
+  }
+  return null;
 }
 
 /** A Booking.com confirmation number: 8–12 digits not starting with 0. */
@@ -359,9 +423,14 @@ export function parseBooking(
     let kind: Classified = { raw: line, kind: 'other' };
 
     const room = detectRoom(line);
-    if (room && isRealRoomHeading(lines, i, room.name, sections)) {
+    // A numbered ("ordinal") header is always a real, distinct physical room —
+    // it bypasses the phantom-heading guard, so two identical "1 Phòng…" /
+    // "2 Phòng…" rooms are both kept even though their type names match.
+    if (room && (room.ordinal || isRealRoomHeading(lines, i, room.name, sections))) {
       let quantity = room.quantity;
-      if (quantity === 1 && pendingQuantity !== null) quantity = pendingQuantity;
+      // An ordinal header's number is its index, never a quantity, and it must
+      // not absorb a pending "Số phòng: N" from before it.
+      if (!room.ordinal && quantity === 1 && pendingQuantity !== null) quantity = pendingQuantity;
       pendingQuantity = null;
       sections.push({ roomName: room.name, quantity, startLine: i });
       kind = { raw: line, kind: 'room' };
@@ -432,6 +501,17 @@ export function parseBooking(
 
   for (let i = 0; i < classified.length; i += 1) {
     const entry = classified[i]!;
+    // Guest-name protection: a "Tên khách" label *inside* a room section names a
+    // room occupant, not the reservation-level customer. Once the reservation
+    // (pre-room) guest name is captured, room-level ones are ignored — never
+    // overwriting it and never raising a duplicate-label conflict.
+    if (
+      entry.field === 'guestName' &&
+      roomOrdinalOf[i]! >= 0 &&
+      captured.guestName?.value != null
+    ) {
+      continue;
+    }
     if (entry.kind === 'labeled') {
       offer(entry.field!, extractField(entry.field!, entry.value!), entry.value!);
     } else if (entry.kind === 'bareLabel') {
@@ -457,11 +537,13 @@ export function parseBooking(
 
   const suggestedBranch = branchMatchScore >= BRANCH_MATCH_THRESHOLD ? branchCandidate : null;
   const branchConfident = suggestedBranch !== null && branchMatchScore >= BRANCH_CONFIDENT_THRESHOLD;
-  const hotelName = hotelLabel ?? branchLine ?? otherLines[0] ?? null;
+  const hotelName = cleanHotelName(hotelLabel ?? branchLine ?? otherLines[0] ?? null);
 
   // --- Scalar fields --------------------------------------------------------
   const guestName = captured.guestName?.value ?? null;
-  const phone = captured.phone?.value ?? null;
+  // Prefer a labelled phone; otherwise read it from the primary guest block, where
+  // Booking.com often lists the number with no "Số điện thoại:" label of its own.
+  const phone = captured.phone?.value ?? extractPrimaryGuestPhone(classified);
   const bookingCode = captured.bookingCode?.value ?? null;
   const checkIn = captured.checkIn?.value ?? null;
   const checkOut = captured.checkOut?.value ?? null;
@@ -470,7 +552,7 @@ export function parseBooking(
     : null;
   const currency = detectCurrency(captured.total?.raw) ?? 'VND';
   const paymentStatus = resolvePaymentStatus(rawText, captured.payment?.value ?? null);
-  const specialRequest = extractArrivalNote(rawText);
+  const specialRequest = extractSpecialRequest(rawText);
 
   // Authoritative room count from an explicit label ("Tổng số căn", "Số phòng",
   // "Number of rooms", …). It takes priority over any count inferred from guest
@@ -498,21 +580,46 @@ export function parseBooking(
   // date-bearing line whose amount is on the same line or the immediately
   // following money-only line. Only dates within the stay range count (when the
   // range is known), which keeps cancellation-deadline fees out of the nights.
+  // The year is not printed on nightly-rate-table rows ("23 - 24 Tháng 7"); infer
+  // it from the reservation's own check-in/out year.
+  const yearHint = checkIn ? Number(checkIn.slice(0, 4)) : checkOut ? Number(checkOut.slice(0, 4)) : null;
+
+  // Labels that end a room's nightly rows — the amount after them is a subtotal /
+  // room total / booking total, never a night's price.
+  const STOP_AMOUNT_LABEL = /\b(?:tong phu|tong gia phong|tong tien phong|tong cong|tong thanh toan|subtotal|sub total|grand total)\b/;
+
+  /**
+   * The nightly amount for a rate-table date row whose price sits a couple of
+   * lines below it, after the rate-plan description ("Fully flexible, …"). Skips
+   * such description lines and returns the first money value, but stops at the
+   * next date row or a subtotal/total label so a room total is never read as a
+   * night's price.
+   */
+  const scanNightAmount = (start: number): number | null => {
+    const limit = Math.min(classified.length, start + 4);
+    for (let j = start + 1; j < limit; j += 1) {
+      const e = classified[j]!;
+      if (e.kind !== 'other') break; // a label/room header ends the room's rows
+      if (findDate(e.raw) || parseDateRangeStayDate(e.raw, yearHint)) break; // next night
+      if (STOP_AMOUNT_LABEL.test(normalizeText(e.raw))) break; // subtotal / total
+      if (looksLikeMoney(e.raw)) return amountOnLine(e.raw);
+      // otherwise a rate-plan description line: keep scanning
+    }
+    return null;
+  };
+
   interface Candidate { date: string; amount: number | null; room: number }
   const candidates: Candidate[] = [];
   for (let i = 0; i < classified.length; i += 1) {
     const entry = classified[i]!;
     if (entry.kind !== 'other') continue;
-    const date = findDate(entry.raw);
+    // A full date ("Thứ Năm, 23 tháng 7 2026") or a year-less rate-table range
+    // ("23 - 24 Tháng 7", first day = the stay night).
+    const date = findDate(entry.raw) ?? parseDateRangeStayDate(entry.raw, yearHint);
     if (!date) continue;
     if (rangeValid && !expectedSet.has(date)) continue;
     let amount = amountOnLine(entry.raw);
-    if (amount === null) {
-      const next = classified[i + 1];
-      if (next && next.kind === 'other' && looksLikeMoney(next.raw) && !findDate(next.raw)) {
-        amount = amountOnLine(next.raw);
-      }
-    }
+    if (amount === null) amount = scanNightAmount(i);
     candidates.push({ date, amount, room: roomOrdinalOf[i]! });
   }
 
@@ -764,6 +871,24 @@ export function parseBooking(
     total: confidenceOf(captured.total),
   };
 
+  // 0–100 scale of the matcher score for the *suggested* branch; 0 when the hotel
+  // is unknown (no branch reached the suggest threshold).
+  const branchConfidence = suggestedBranch ? Math.round(branchMatchScore * 100) : 0;
+  const parserQuality = computeParserQuality({
+    bookingCode,
+    guestName,
+    checkIn,
+    checkOut,
+    totalAmount,
+    rooms: finalRooms,
+    rangeValid,
+    branchConfident,
+    requiresManualConfirmation: !branchConfident,
+    warnings,
+    phone,
+    specialRequest,
+  });
+
   return {
     hotelName,
     guestName,
@@ -779,11 +904,95 @@ export function parseBooking(
     rooms: finalRooms,
     suggestedBranch,
     branchMatchScore,
+    branchConfidence,
     branchConfident,
     requiresManualConfirmation: !branchConfident,
     fieldConfidence,
+    parserQuality,
     warnings,
     parserVersion: PARSER_VERSION,
+  };
+}
+
+/** The critical fields a receptionist cannot dispatch without. */
+const CRITICAL_FIELDS = [
+  'bookingCode',
+  'customerName',
+  'checkInDate',
+  'checkOutDate',
+  'rooms',
+  'totalAmount',
+] as const;
+
+interface QualityInput {
+  bookingCode: string | null;
+  guestName: string | null;
+  checkIn: string | null;
+  checkOut: string | null;
+  totalAmount: number | null;
+  rooms: readonly ParsedRoom[];
+  rangeValid: boolean;
+  branchConfident: boolean;
+  requiresManualConfirmation: boolean;
+  warnings: readonly ExtractWarning[];
+  phone: string | null;
+  specialRequest: string | null;
+}
+
+/**
+ * A deterministic, weighted *completeness* score (0–100) for the extraction. It
+ * measures how much of what a receptionist needs was extracted cleanly — it is
+ * not a probabilistic confidence. Optional fields (phone, special request) carry
+ * negligible weight, so a complete booking that simply lacks a phone stays HIGH.
+ * A missing critical field or any blocking (ERROR) warning forces admin review.
+ */
+function computeParserQuality(input: QualityInput): ParserQuality {
+  const has = (code: string): boolean => input.warnings.some((w) => w.code === code);
+  const roomsOk = input.rooms.length > 0;
+  const everyNightPresent =
+    roomsOk && input.rooms.every((r) => r.nights.length > 0 && r.nights.every((n) => n.amount !== null));
+  const everyNightDatePresent = roomsOk && input.rangeValid && !has('NIGHT_COUNT_MISMATCH');
+  const roomStructureOk = roomsOk && !has('ROOM_COUNT_MISMATCH');
+
+  let score = 0;
+  if (input.bookingCode) score += 15;
+  if (input.guestName) score += 10;
+  if (input.checkIn) score += 10;
+  if (input.checkOut) score += 10;
+  if (roomStructureOk) score += 10;
+  if (everyNightDatePresent) score += 10;
+  if (everyNightPresent) score += 15;
+  if (input.totalAmount !== null) score += 10;
+  if (input.branchConfident) score += 5;
+  score += 3; // payment status is always resolved to a definite value
+  if (input.phone) score += 1;
+  if (input.specialRequest) score += 1;
+  score = Math.max(0, Math.min(100, Math.round(score)));
+
+  const missingCriticalFields: string[] = [];
+  if (!input.bookingCode) missingCriticalFields.push('bookingCode');
+  if (!input.guestName) missingCriticalFields.push('customerName');
+  if (!input.checkIn) missingCriticalFields.push('checkInDate');
+  if (!input.checkOut) missingCriticalFields.push('checkOutDate');
+  if (!roomsOk) missingCriticalFields.push('rooms');
+  if (input.totalAmount === null) missingCriticalFields.push('totalAmount');
+  void CRITICAL_FIELDS; // documents the critical-field set
+
+  const hasBlockingWarning = input.warnings.some((w) => w.severity === 'ERROR');
+  const requiresAdminReview =
+    score < 90 ||
+    hasBlockingWarning ||
+    missingCriticalFields.length > 0 ||
+    input.requiresManualConfirmation;
+
+  const level: ParserQuality['level'] = score >= 90 ? 'HIGH' : score >= 75 ? 'MEDIUM' : 'LOW';
+
+  return {
+    score,
+    level,
+    requiresAdminReview,
+    missingCriticalFields,
+    warningCount: input.warnings.length,
   };
 }
 

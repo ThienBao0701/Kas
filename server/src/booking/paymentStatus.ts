@@ -37,6 +37,29 @@ const PREPAYMENT_POLICY_NEEDLES: readonly string[] = [
 ].map((p) => normalizeForPhrase(p));
 
 /**
+ * Explicit "no prepayment" phrases. Their presence means the guest pays at the
+ * property (PAY_AFTER) and must override a generic "Trả trước" heading or a
+ * prepayment-policy phrase that appears elsewhere in the same document — a
+ * property page often shows the "Trả trước" section header even when that
+ * section's body says no prepayment is needed.
+ */
+const NO_PREPAYMENT_NEEDLES: readonly string[] = [
+  'khong can thanh toan truoc',
+  'khong yeu cau thanh toan truoc',
+  'khong phai thanh toan truoc',
+  'no prepayment needed',
+  'no prepayment is needed',
+  'no prepayment required',
+  'no prepayment is required',
+].map((p) => normalizeForPhrase(p));
+
+/** True when the text explicitly states that no prepayment is needed. */
+export function containsNoPrepayment(rawText: string): boolean {
+  const flat = normalizeForPhrase(rawText);
+  return NO_PREPAYMENT_NEEDLES.some((needle) => flat.includes(needle));
+}
+
+/**
  * True when the raw pasted text contains the credit-card-hidden sentence.
  * Matching is diacritic- and whitespace-insensitive so broken line wrapping or
  * lost accents in the copied text cannot hide it.
@@ -99,18 +122,22 @@ export function parsePaymentStatus(raw: string | undefined | null): ParsedPaymen
  * always yields a definite answer (never "unknown"):
  *
  *   1. If the raw text contains the credit-card-hidden sentence  -> PAY_BEFORE.
- *   2. Else if the text states an explicit prepayment policy     -> PAY_BEFORE.
- *   3. Else if a "Thanh toán:" label clearly says prepaid/at-property, honour it
+ *   2. Else if the text explicitly says no prepayment is needed  -> PAY_AFTER
+ *      (a negative phrase overrides a generic "Trả trước" heading or policy line).
+ *   3. Else if the text states an explicit prepayment policy     -> PAY_BEFORE.
+ *   4. Else if a "Thanh toán:" label clearly says prepaid/at-property, honour it
  *      (preserves the labelled synthetic format).
- *   4. Otherwise                                                 -> PAY_AFTER.
+ *   5. Otherwise                                                 -> PAY_AFTER.
  *
- * The credit-card / prepayment signals win over any conflicting label.
+ * The credit-card signal is the strongest (it means the card was already charged);
+ * after it, an explicit no-prepayment statement wins over any prepayment keyword.
  */
 export function resolvePaymentStatus(
   rawText: string,
   paymentLabelValue: string | undefined | null,
 ): ParsedPaymentStatus {
   if (containsCardHiddenPhrase(rawText)) return 'PAY_BEFORE';
+  if (containsNoPrepayment(rawText)) return 'PAY_AFTER';
   if (containsPrepaymentPolicy(rawText)) return 'PAY_BEFORE';
   const labelHint = parsePaymentStatus(paymentLabelValue);
   if (labelHint) return labelHint;
