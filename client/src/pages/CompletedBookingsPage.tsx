@@ -35,7 +35,7 @@ export function CompletedBookingsPage() {
   return (
     <div>
       <PageHeader
-        title={isAdmin ? 'Đã xác nhận' : 'Đã hoàn thành'}
+        title="Đã xác nhận tạo"
         description="Các đơn lễ tân đã xác nhận tạo thành công trên hệ thống khách sạn."
         actions={
           isAdmin ? (

@@ -47,6 +47,8 @@ export interface ParsedBooking {
   checkOut: string | null;
   currency: string;
   totalAmount: number | null;
+  /** Operational arrival note distilled from the guest chat, or null. */
+  specialRequest: string | null;
   paymentStatus: ParsedPaymentStatus;
   /**
    * Retained for backwards compatibility. The payment rule is authoritative and

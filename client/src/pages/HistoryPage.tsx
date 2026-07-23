@@ -99,7 +99,7 @@ export function HistoryPage() {
 
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-500">Trạng thái</label>
-            <select value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })} className={selectClass}>
+            <select aria-label="Trạng thái" value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })} className={selectClass}>
               <option value="">Tất cả</option>
               <option value="NEW">Chờ xác nhận</option>
               <option value="COMPLETED">Đã xác nhận</option>
@@ -111,7 +111,7 @@ export function HistoryPage() {
 
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-500">Thanh toán</label>
-            <select value={draft.paymentStatus} onChange={(e) => setDraft({ ...draft, paymentStatus: e.target.value })} className={selectClass}>
+            <select aria-label="Thanh toán" value={draft.paymentStatus} onChange={(e) => setDraft({ ...draft, paymentStatus: e.target.value })} className={selectClass}>
               <option value="">Tất cả</option>
               <option value="PAY_BEFORE">Đã thanh toán</option>
               <option value="PAY_AFTER">Tại khách sạn</option>
@@ -121,7 +121,7 @@ export function HistoryPage() {
           {isAdmin ? (
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-500">Chi nhánh</label>
-              <select value={draft.branchId} onChange={(e) => setDraft({ ...draft, branchId: e.target.value })} className={selectClass}>
+              <select aria-label="Chi nhánh" value={draft.branchId} onChange={(e) => setDraft({ ...draft, branchId: e.target.value })} className={selectClass}>
                 <option value="">Tất cả</option>
                 {branches.data?.branches.map((b) => (
                   <option key={b.id} value={b.id}>

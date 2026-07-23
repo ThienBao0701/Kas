@@ -53,6 +53,7 @@ export async function persistDraftBooking(
         totalAmount: parsed.totalAmount,
         currency: parsed.currency,
         paymentStatus: parsed.paymentStatus,
+        specialRequest: parsed.specialRequest,
         rawText,
         status: 'DRAFT',
         parserVersion: parsed.parserVersion,

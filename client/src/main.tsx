@@ -5,6 +5,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { App } from './app/App';
 import { queryClient } from './app/queryClient';
 import { AuthProvider } from './auth/AuthProvider';
+import { PwaManager } from './pwa/PwaManager';
 import './styles/index.css';
 
 const rootElement = document.getElementById('root');
@@ -18,6 +19,7 @@ ReactDOM.createRoot(rootElement).render(
       <BrowserRouter>
         <AuthProvider>
           <App />
+          <PwaManager />
         </AuthProvider>
       </BrowserRouter>
     </QueryClientProvider>

@@ -192,8 +192,92 @@ later phase.**
 filters (branch, status, payment, last-minute, sent/check-in/completed date
 ranges) with pagination; receptionists are always constrained to their own branch.
 
+## Operational app (frontend)
+
+Kas is an internal **booking dispatch centre** — it is **not** a hotel PMS and
+never creates hotel reservations. It extracts Booking.com information, dispatches
+it to one branch, helps receptionists copy it into their own hotel system, and
+records confirmation.
+
+### Vietnamese status labels (UI)
+
+| DB status | UI label |
+| --- | --- |
+| `DRAFT` | Bản nháp |
+| `NEW` | Chờ chi nhánh tạo |
+| `COMPLETED` | Đã xác nhận tạo |
+| `ARCHIVED` | Đã lưu trữ |
+
+The receptionist action is **“Xác nhận đã tạo”** — meaning *“I have created this
+reservation in the hotel system.”* Kas never claims to create the booking itself.
+
+### Admin workflow
+
+Tổng quan (dashboard) → **Nhập đơn Booking.com** (paste → Trích xuất → sửa → chọn
+chi nhánh → Gửi) → **Chờ chi nhánh tạo** (monitor) → **Đã xác nhận tạo** →
+**Lịch sử**. Account management lives in the account menu (**Quản lý tài khoản**).
+
+### Receptionist workflow
+
+**Đơn mới** (master-detail inbox, auto-refresh every 20s, last-minute first) →
+open a booking → copy fields / **Sao chép toàn bộ** → create it in the hotel
+system → **Xác nhận đã tạo** (confirmation dialog) → it moves to **Đã xác nhận
+tạo**. Receptionists only ever see their own branch.
+
+### LAST MINUTE
+
+🔥 **LAST MINUTE / Nhận phòng hôm nay** = check-in date is today in
+Asia/Ho_Chi_Minh (backend authoritative). Shown with a red badge, sorted first in
+the inbox, and distinguished in the notification dropdown. No sound, no flashing.
+
+### “Sao chép toàn bộ” (COPY ALL) format
+
+Plain text (no Markdown/HTML/JSON), Vietnamese accents and VND separators
+preserved, every room and every expected night listed; missing values show
+`Chưa xác định`, a hidden phone shows `(Hiển thị số điện thoại)`:
+
+```
+CHI NHÁNH: 05 Trương Định
+NAME: Nguyễn Văn A
+SDT: 0901234567
+MÃ BOOKING: 489234523
+GIÁ TIỀN TỔNG: 1.700.000 ₫
+NGÀY CHECK IN: Chủ Nhật, 19/07/2026
+NGÀY CHECK OUT: Thứ Ba, 21/07/2026
+GIÁ TIỀN CHO TỪNG ĐÊM CỦA TỪNG PHÒNG:
+
+PHÒNG 1:
+HẠNG PHÒNG: Deluxe Double Room
+* Đêm 19/07/2026: 850.000 ₫
+* Đêm 20/07/2026: 850.000 ₫
+
+TRẠNG THÁI: PAY AFTER
+```
+
+Individual fields and whole-room blocks each have their own **Sao chép** button.
+
+### PWA (installable app)
+
+The client is an installable PWA (`vite-plugin-pwa`): app name **Kas Booking
+Dispatch** / short name **Kas**, `display: standalone`, theme `#2563eb`. A
+**“Cài ứng dụng”** button appears when the browser offers installation, and a
+**“Có phiên bản mới”** prompt appears when an update is ready. The service worker
+**precaches static assets only** — it has **no runtime API caching** and never
+serves `/api` from cache, so operational data is always live. See
+[`docs/pwa-install.md`](docs/pwa-install.md).
+
+### LAN deployment (internal network)
+
+The Admin machine runs the central server; receptionist machines open the Admin
+machine's LAN IP in Chrome/Edge. All users share the **one** SQLite database on
+the server machine — never copy the `.db` file to each machine. See
+[`docs/deployment.md`](docs/deployment.md). Windows Firewall may need the port
+allowed. **Back up the server's `data.db` regularly.** No Docker required.
+
+> Accounting / finance / PMS integration and real-time SSE are **future
+> extensions**, intentionally not built in this milestone.
+
 ## Documentation
 
-- Setup, local-network deployment and Windows PWA installation instructions: see `docs/` (completed in the final phase).
-
-> Status: project under construction — phases 0–9. This README is completed in Phase 9.
+- [`docs/deployment.md`](docs/deployment.md) — LAN deployment on Windows + SQLite backup.
+- [`docs/pwa-install.md`](docs/pwa-install.md) — installing Kas as a Windows PWA and pinning to the taskbar.

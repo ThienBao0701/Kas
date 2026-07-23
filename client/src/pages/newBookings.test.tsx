@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { screen, within } from '@testing-library/react';
+import { screen } from '@testing-library/react';
 import { RECEPTIONIST_USER, installApiMock, renderApp } from '../test/utils';
 
 afterEach(() => {
@@ -31,7 +31,7 @@ function row(overrides: Record<string, unknown>) {
 }
 
 describe('NewBookingsPage — receptionist inbox', () => {
-  it('renders dispatched bookings and flags the last-minute one', async () => {
+  it('renders the master list and flags the last-minute booking first', async () => {
     installApiMock({
       'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),
       'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
@@ -45,14 +45,15 @@ describe('NewBookingsPage — receptionist inbox', () => {
           pagination: { page: 1, pageSize: 20, total: 2, totalPages: 1 },
         },
       }),
+      // The first booking is auto-selected into the detail pane.
+      'GET /api/bookings/lm': () => ({ status: 404, body: { error: { code: 'NOT_FOUND', message: 'x' } } }),
     });
 
     renderApp('/app/new');
 
-    const table = await screen.findByRole('table');
-    expect(within(table).getByText('LASTMIN001')).toBeInTheDocument();
-    expect(within(table).getByText('NORMAL0001')).toBeInTheDocument();
+    expect(await screen.findByText('LASTMIN001')).toBeInTheDocument();
+    expect(screen.getByText('NORMAL0001')).toBeInTheDocument();
     // The last-minute badge is present in the list.
-    expect(within(table).getByText(/Last minute/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/Last minute/i).length).toBeGreaterThan(0);
   });
 });

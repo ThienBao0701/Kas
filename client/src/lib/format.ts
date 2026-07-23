@@ -17,6 +17,16 @@ export function formatDate(iso: string | null | undefined): string {
   return `${d}/${m}/${y}`;
 }
 
+const VI_WEEKDAYS = ['Chủ Nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'];
+
+/** ISO "YYYY-MM-DD" -> "Thứ Bảy, 19/07/2026" (Vietnamese weekday + full date). */
+export function formatViWeekdayDate(iso: string | null | undefined): string {
+  if (!iso) return 'Chưa xác định';
+  const date = new Date(`${iso.slice(0, 10)}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime())) return 'Chưa xác định';
+  return `${VI_WEEKDAYS[date.getUTCDay()]}, ${formatDate(iso)}`;
+}
+
 /** ISO datetime -> "DD/MM/YYYY HH:mm" in the viewer's locale time. */
 export function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return '—';
@@ -24,6 +34,20 @@ export function formatDateTime(iso: string | null | undefined): string {
   if (Number.isNaN(date.getTime())) return '—';
   const pad = (n: number) => n.toString().padStart(2, '0');
   return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+/** A short Vietnamese relative time, e.g. "Vừa xong", "5 phút trước". */
+export function relativeTime(iso: string | null | undefined, now: number = Date.now()): string {
+  if (!iso) return '';
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return '';
+  const minutes = Math.round((now - then) / 60_000);
+  if (minutes < 1) return 'Vừa xong';
+  if (minutes < 60) return `${minutes} phút trước`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} giờ trước`;
+  const days = Math.round(hours / 24);
+  return `${days} ngày trước`;
 }
 
 const HCM_OFFSET_MS = 7 * 60 * 60 * 1000;
@@ -55,13 +79,20 @@ export function paymentLabel(status: string | null | undefined): string {
 }
 
 const STATUS_LABELS: Record<string, string> = {
-  DRAFT: 'Nháp',
+  DRAFT: 'Bản nháp',
   READY: 'Sẵn sàng',
-  NEW: 'Chờ xác nhận',
+  NEW: 'Chờ chi nhánh tạo',
   COMPLETED: 'Đã xác nhận tạo',
-  ARCHIVED: 'Lưu trữ',
+  ARCHIVED: 'Đã lưu trữ',
 };
 
 export function statusLabel(status: string | null | undefined): string {
   return status ? (STATUS_LABELS[status] ?? status) : '—';
+}
+
+/** The exact PAY BEFORE / PAY AFTER token used in the "Sao chép toàn bộ" text. */
+export function payStatusCopy(status: string | null | undefined): string {
+  if (status === 'PAY_BEFORE') return 'PAY BEFORE';
+  if (status === 'PAY_AFTER') return 'PAY AFTER';
+  return 'Chưa xác định';
 }

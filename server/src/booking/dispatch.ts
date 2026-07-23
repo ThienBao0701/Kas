@@ -182,11 +182,13 @@ async function createSendNotifications(
   });
   if (receptionists.length === 0) return;
 
+  const branch = await tx.branch.findUnique({ where: { id: branchId }, select: { hotelName: true } });
+  const branchName = branch?.hotelName ?? '';
   const customer = booking.customerName.length > 0 ? booking.customerName : 'Khách';
   const title = lastMinute ? 'ĐƠN LAST MINUTE' : 'Có đơn mới';
   const body = lastMinute
-    ? `${customer} nhận phòng hôm nay. Vui lòng ưu tiên xử lý.`
-    : `${customer} – nhận phòng ${isoDate(booking.checkInDate)}`;
+    ? `${customer} nhận phòng hôm nay\n${branchName}\nVui lòng ưu tiên xử lý`
+    : `${customer} – nhận phòng ${isoDate(booking.checkInDate)}\n${branchName}`;
 
   await tx.notification.createMany({
     data: receptionists.map((r) => ({ userId: r.id, bookingId, title, body })),
@@ -262,9 +264,9 @@ async function createCompletionNotifications(
 
   const code = booking.bookingCode.length > 0 ? booking.bookingCode : '(không mã)';
   const branchName = booking.branch?.hotelName ?? 'chi nhánh';
-  const body = `${code} tại ${branchName} đã được ${actor.fullName} hoàn thành.`;
+  const body = `${code} đã được xác nhận bởi ${actor.fullName}\n${branchName}`;
 
   await tx.notification.createMany({
-    data: admins.map((a) => ({ userId: a.id, bookingId, title: 'Đơn đã hoàn thành', body })),
+    data: admins.map((a) => ({ userId: a.id, bookingId, title: 'Đã xác nhận tạo', body })),
   });
 }

@@ -1,7 +1,8 @@
-import { normalizeText, toLines } from './text';
+import { normalizeText, removeDiacritics, toLines } from './text';
 import { detectCurrency, looksLikeMoney, parseFirstAmount } from './money';
 import { findDate, generateStayDates } from './dates';
 import { resolvePaymentStatus } from './paymentStatus';
+import { extractArrivalNote } from './arrivalNote';
 import {
   BRANCH_CONFIDENT_THRESHOLD,
   BRANCH_MATCH_THRESHOLD,
@@ -32,19 +33,27 @@ const FIELD_LABELS: Record<string, readonly string[]> = {
   ],
   phone: ['dien thoai', 'so dien thoai', 'sdt', 'dt', 'phone', 'phone number', 'tel', 'mobile'],
   bookingCode: [
-    'ma dat phong', 'ma xac nhan', 'so xac nhan', 'so xac nhan dat phong',
-    'ma xac nhan dat phong', 'so dat phong', 'ma dat cho', 'ma booking',
-    'booking code', 'booking number', 'booking id', 'confirmation',
-    'confirmation number', 'reservation', 'reservation number',
+    'ma dat phong', 'ma so dat phong', 'ma so dat cho', 'ma xac nhan', 'so xac nhan',
+    'so xac nhan dat phong', 'ma xac nhan dat phong', 'so dat phong', 'so dat cho',
+    'ma dat cho', 'ma booking', 'booking code', 'booking number', 'booking id',
+    'confirmation', 'confirmation number', 'reservation', 'reservation number',
   ],
   checkIn: ['nhan phong', 'ngay nhan phong', 'ngay nhan', 'ngay den', 'check in', 'checkin', 'arrival'],
   checkOut: ['tra phong', 'ngay tra phong', 'ngay tra', 'ngay di', 'check out', 'checkout', 'departure'],
   total: [
-    'tong cong', 'tong tien', 'tong gia', 'thanh tien', 'tong thanh toan',
-    'tong so tien', 'gia cua ban', 'total', 'total price', 'total cost', 'grand total',
+    'tong cong', 'tong tien', 'tong tien phong', 'tong gia', 'tong gia phong', 'thanh tien',
+    'tong thanh toan', 'tong so tien', 'gia cua ban', 'total', 'total price', 'total room price',
+    'total room', 'total cost', 'grand total',
   ],
   payment: ['thanh toan', 'hinh thuc thanh toan', 'phuong thuc thanh toan', 'payment', 'payment status'],
   hotel: ['khach san', 'ten khach san', 'hotel', 'property'],
+  // Authoritative room count (Booking.com extranet). Two-line forms ("Tổng số
+  // căn" then "1") are captured here; single-line "Số phòng: 2" is still read as
+  // a room quantity by detectRoomQuantity (which runs first in Pass 1).
+  roomCount: [
+    'tong so can', 'so can', 'tong so phong', 'so luong phong', 'so luong can',
+    'so phong', 'tong so don vi', 'number of rooms', 'total rooms', 'total units',
+  ],
 };
 
 const LABEL_LOOKUP = new Map<string, string>();
@@ -78,6 +87,11 @@ const GENERIC_ROOM_PHRASES = new Set([
 // A "Loại phòng: …" / "Phòng đã đặt: …" style prefix that introduces the real type.
 const ROOM_PREFIX_LABEL =
   /^(?:phòng đã đặt|loại phòng|kiểu phòng|hạng phòng|room type)\s*[:\-–]\s*(.+)$/i;
+
+// Policy-section keywords. A room-type heading immediately followed only by these
+// (and no price/date) is a policy heading, not a physical room.
+const POLICY_KEYWORDS =
+  /\b(huy dat phong|huy phong|chinh sach huy|tra truoc|thanh toan truoc|internet|wi fi|wifi|chinh sach|tre em|giuong phu|do xe|vat nuoi|dat coc|thiet hai|cancellation|prepayment|children|extra bed|parking|pets|deposit|breakfast|bua sang)\b/;
 
 // Room-quantity signals within a section.
 const PER_ROOM_SIGNAL =
@@ -161,6 +175,17 @@ function isRoomTypeName(line: string): boolean {
 }
 
 /**
+ * Booking.com shows a bilingual room type: the Vietnamese name with the English
+ * name in a trailing parenthesis, e.g. "Phòng Tiêu Chuẩn Giường Đôi (Standard
+ * Double Room)". Keep the Vietnamese name the receptionist reads, dropping the
+ * trailing "(…)".
+ */
+function stripEnglishParenthetical(name: string): string {
+  const stripped = name.replace(/\s*\([^)]*\)\s*$/, '').trim();
+  return stripped.length > 0 ? stripped : name.trim();
+}
+
+/**
  * Detects a room section on a line and returns its type name (accents preserved)
  * and any inline quantity. Handles "Phòng N: name", a "Loại phòng: name" prefix,
  * and bare English/Vietnamese type names.
@@ -172,11 +197,12 @@ function detectRoom(line: string): { name: string | null; quantity: number } | n
   const header = matchRoomHeader(target);
   if (header && header.name.length > 0) {
     const { name, quantity } = extractInlineQuantity(header.name);
-    return { name: nonEmpty(name), quantity };
+    const clean = nonEmpty(name);
+    return { name: clean ? stripEnglishParenthetical(clean) : null, quantity };
   }
   if (isRoomTypeName(target)) {
     const { name, quantity } = extractInlineQuantity(target.trim());
-    return { name: nonEmpty(name) ?? target.trim(), quantity };
+    return { name: stripEnglishParenthetical(nonEmpty(name) ?? target.trim()), quantity };
   }
   return null;
 }
@@ -184,6 +210,31 @@ function detectRoom(line: string): { name: string | null; quantity: number } | n
 function nonEmpty(value: string | undefined | null): string | null {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : null;
+}
+
+/**
+ * A real room block has price/date context within a few lines of its heading.
+ * A heading with no such context is dropped as a phantom only when it duplicates
+ * an already-seen room name or sits amongst policy keywords (e.g. the room type
+ * repeated in the cancellation/policy section). A unique heading with no nearby
+ * context is kept, so a legitimate room is never silently deleted.
+ */
+function isRealRoomHeading(
+  lines: readonly string[],
+  index: number,
+  name: string | null,
+  seen: readonly { roomName: string | null }[],
+): boolean {
+  const end = Math.min(lines.length, index + 7);
+  let policyNearby = false;
+  for (let j = index + 1; j < end; j += 1) {
+    const l = lines[j]!;
+    if (looksLikeMoney(l) || findDate(l)) return true; // real pricing/date context
+    if (POLICY_KEYWORDS.test(normalizeText(l))) policyNearby = true;
+  }
+  const normName = normalizeText(name ?? '');
+  const duplicate = normName.length > 0 && seen.some((s) => normalizeText(s.roomName ?? '') === normName);
+  return !(duplicate || policyNearby);
 }
 
 // Removes date tokens so the amount reader never swallows the date's digits, on
@@ -251,6 +302,17 @@ function extractField(field: string, line: string): string | null {
       const amount = amountOnLine(line);
       return amount === null ? null : String(amount);
     }
+    case 'roomCount': {
+      // A bare small integer, optionally with a room unit ("1", "2 căn",
+      // "2 rooms"). Reject guest/adult/child/night counts ("1 người lớn").
+      const t = line.trim();
+      const m = t.match(/^(\d{1,2})\b/);
+      if (!m) return null;
+      const rest = removeDiacritics(t.slice(m[0].length)).toLowerCase();
+      if (/(nguoi|khach|guest|adult|child|tre em|dem|night)/.test(rest)) return null;
+      const n = Number(m[1]);
+      return n >= 1 && n <= 16 ? String(n) : null;
+    }
     case 'payment':
       return nonEmpty(line);
     default:
@@ -285,12 +347,16 @@ export function parseBooking(
     let kind: Classified = { raw: line, kind: 'other' };
 
     const room = detectRoom(line);
-    if (room) {
+    if (room && isRealRoomHeading(lines, i, room.name, sections)) {
       let quantity = room.quantity;
       if (quantity === 1 && pendingQuantity !== null) quantity = pendingQuantity;
       pendingQuantity = null;
       sections.push({ roomName: room.name, quantity, startLine: i });
       kind = { raw: line, kind: 'room' };
+    } else if (room) {
+      // A room-type heading with no pricing/date context that repeats an existing
+      // room or sits in a policy section — treat as ordinary noise, not a room.
+      kind = { raw: line, kind: 'other' };
     } else {
       const quantity = detectRoomQuantity(line);
       if (quantity !== null) {
@@ -392,6 +458,23 @@ export function parseBooking(
     : null;
   const currency = detectCurrency(captured.total?.raw) ?? 'VND';
   const paymentStatus = resolvePaymentStatus(rawText, captured.payment?.value ?? null);
+  const specialRequest = extractArrivalNote(rawText);
+
+  // Authoritative room count from an explicit label ("Tổng số căn", "Số phòng",
+  // "Number of rooms", …). It takes priority over any count inferred from guest
+  // counts, occupancy, nights, prices or ids. When it is greater than a single
+  // detected room, that room is treated as a quantity-based group and expanded by
+  // the existing Pass-3 quantity logic (which never divides or duplicates prices).
+  const authoritativeRoomCount =
+    captured.roomCount?.value != null ? Number(captured.roomCount.value) : null;
+  if (
+    authoritativeRoomCount !== null &&
+    authoritativeRoomCount > 1 &&
+    sections.length === 1 &&
+    sections[0]!.quantity === 1
+  ) {
+    sections[0]!.quantity = authoritativeRoomCount;
+  }
 
   const warnings: ExtractWarning[] = [];
   const rangeValid = checkIn !== null && checkOut !== null && checkOut > checkIn;
@@ -448,6 +531,31 @@ export function parseBooking(
     const start = activeSections[si]!.startLine;
     const end = si + 1 < activeSections.length ? activeSections[si + 1]!.startLine : lines.length;
     return normalizeText(lines.slice(start, end).join(' '));
+  };
+
+  /**
+   * The single room price stated in a section *before* its stay-date rows, e.g.
+   * "Phòng … / VND 510.138 / T3, 21 tháng 7 2026". Only the few lines between the
+   * room header and the first date are inspected (bounded window), so commission,
+   * policy and chat amounts far below can never be mistaken for the room price.
+   * Returns the amount only when the window holds exactly one distinct value.
+   */
+  const priceBeforeDates = (si: number): number | null => {
+    if (defaultRoomFallback) return null;
+    const start = activeSections[si]!.startLine;
+    const nextStart = si + 1 < activeSections.length ? activeSections[si + 1]!.startLine : lines.length;
+    const limit = Math.min(nextStart, start + 8, lines.length);
+    const amounts: number[] = [];
+    for (let j = start + 1; j < limit; j += 1) {
+      const l = lines[j]!;
+      if (findDate(l)) break; // reached the stay-date rows
+      if (looksLikeMoney(l)) {
+        const a = amountOnLine(l);
+        if (a !== null) amounts.push(a);
+      }
+    }
+    const distinct = [...new Set(amounts)];
+    return distinct.length === 1 ? distinct[0]! : null;
   };
 
   const finalRooms: ParsedRoom[] = [];
@@ -513,6 +621,15 @@ export function parseBooking(
     const hasPerNight = [...byDate.values()].some((v) => v !== null);
 
     if (section.quantity <= 1) {
+      // Single room, single night, with the price stated before the date: assign
+      // that one section price to the one stay night (never divide or invent).
+      if (rangeValid && expectedNights.length === 1) {
+        const only = expectedNights[0]!;
+        if ((byDate.get(only) ?? null) === null) {
+          const price = priceBeforeDates(si);
+          if (price !== null) byDate.set(only, price);
+        }
+      }
       pushRoom(section.roomName, byDate, priceConflict, true);
       continue;
     }
@@ -564,6 +681,16 @@ export function parseBooking(
       code: 'LOW_BRANCH_CONFIDENCE',
       severity: 'WARNING',
       message: `Chưa chắc chắn khách sạn là "${suggestedBranch.hotelName}". Vui lòng xác nhận chi nhánh.`,
+    });
+  }
+  // Authoritative room count disagrees with the rooms actually built (e.g. the
+  // count conflicts with explicit separate room sections). Preserve the safe
+  // detected rooms and flag it — never silently delete, merge or invent rooms.
+  if (authoritativeRoomCount !== null && authoritativeRoomCount !== finalRooms.length) {
+    warnings.push({
+      code: 'ROOM_COUNT_MISMATCH',
+      severity: 'WARNING',
+      message: `Số căn khai báo (${authoritativeRoomCount}) khác số phòng nhận diện (${finalRooms.length}); vui lòng kiểm tra.`,
     });
   }
   if (!guestName) {
@@ -634,6 +761,7 @@ export function parseBooking(
     checkOut,
     currency,
     totalAmount,
+    specialRequest,
     paymentStatus,
     paymentStatusKnown: true,
     rooms: finalRooms,

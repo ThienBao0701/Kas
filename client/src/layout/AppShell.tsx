@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Outlet } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
+import { OfflineIndicator } from '../components/OfflineIndicator';
 
 export function AppShell() {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -28,6 +29,7 @@ export function AppShell() {
       ) : null}
 
       <div className="flex min-w-0 flex-1 flex-col">
+        <OfflineIndicator />
         <Topbar onOpenMenu={() => setMobileOpen(true)} />
         <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">
           <div className="mx-auto max-w-5xl">

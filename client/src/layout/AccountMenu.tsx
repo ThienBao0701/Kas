@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { ChevronDown, KeyRound, LogOut } from 'lucide-react';
+import { ChevronDown, KeyRound, LogOut, Users } from 'lucide-react';
 import { useAuth } from '../auth/AuthProvider';
 
 function initials(fullName: string): string {
@@ -69,6 +69,20 @@ export function AccountMenu() {
               ) : null}
             </div>
             <div className="my-1 h-px bg-slate-100" />
+            {user.role === 'ADMIN' ? (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setOpen(false);
+                  navigate('/app/settings');
+                }}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100"
+              >
+                <Users className="h-4 w-4" aria-hidden="true" />
+                Quản lý tài khoản
+              </button>
+            ) : null}
             <button
               type="button"
               role="menuitem"

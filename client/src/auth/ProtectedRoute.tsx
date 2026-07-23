@@ -19,7 +19,8 @@ export function RequireAuth() {
 export function PublicOnly({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   if (user) {
-    return <Navigate to={user.mustChangePassword ? '/change-password' : '/app/new'} replace />;
+    // /app resolves to each role's landing page (admin → dashboard, else inbox).
+    return <Navigate to={user.mustChangePassword ? '/change-password' : '/app'} replace />;
   }
   return <>{children}</>;
 }

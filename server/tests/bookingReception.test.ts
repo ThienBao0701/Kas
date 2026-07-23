@@ -122,7 +122,7 @@ describe('POST /api/bookings/:id/complete', () => {
     // The admin receives a completion notification.
     const adminNotes = await testPrisma.notification.findMany({ where: { userId: adminId, bookingId: b.id } });
     expect(adminNotes).toHaveLength(1);
-    expect(adminNotes[0]!.title).toBe('Đơn đã hoàn thành');
+    expect(adminNotes[0]!.title).toBe('Đã xác nhận tạo');
   });
 
   it("forbids completing another branch's booking", async () => {

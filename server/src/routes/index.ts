@@ -5,6 +5,7 @@ import { createBranchesRouter } from './branches';
 import { createAdminUsersRouter } from './adminUsers';
 import { createBookingsRouter } from './bookings';
 import { createAdminBookingsRouter } from './adminBookings';
+import { createAdminDashboardRouter } from './adminDashboard';
 import { createNotificationsRouter } from './notifications';
 
 /**
@@ -19,6 +20,7 @@ export function createApiRouter(): Router {
   router.use(createBranchesRouter());
   router.use(createAdminUsersRouter());
   router.use(createAdminBookingsRouter());
+  router.use(createAdminDashboardRouter());
   router.use(createBookingsRouter());
   router.use(createNotificationsRouter());
 

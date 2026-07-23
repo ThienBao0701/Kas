@@ -208,3 +208,12 @@ export const bookingsApi = {
 export const branchesApi = {
   list: () => api.get<{ branches: Branch[] }>('/branches'),
 };
+
+export interface DashboardSummary {
+  totals: { waiting: number; confirmedToday: number; lastMinute: number; sentToday: number };
+  branches: { branch: Branch; waiting: number; confirmedToday: number; lastMinute: number }[];
+}
+
+export const dashboardApi = {
+  summary: () => api.get<DashboardSummary>('/admin/dashboard/summary'),
+};

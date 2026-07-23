@@ -49,6 +49,7 @@ export function serializeBookingPreview(booking: BookingWithExtractRelations) {
       currency: booking.currency,
       totalAmount: booking.totalAmount,
       paymentStatus: booking.paymentStatus,
+      specialRequest: booking.specialRequest,
       status: booking.status,
       parserVersion: booking.parserVersion,
       createdAt: booking.createdAt.toISOString(),

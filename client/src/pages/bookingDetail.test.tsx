@@ -78,15 +78,16 @@ describe('BookingDetailPage — receptionist confirmation', () => {
 
     // Core fields with a copy control.
     expect(await screen.findByText('489234523')).toBeInTheDocument();
-    expect(screen.getByLabelText('Sao chép Mã đặt phòng')).toBeInTheDocument();
-    expect(screen.getByLabelText('Sao chép toàn bộ đơn')).toBeInTheDocument();
+    expect(screen.getByLabelText('Sao chép Mã Booking')).toBeInTheDocument();
+    expect(screen.getByLabelText('Sao chép toàn bộ')).toBeInTheDocument();
 
-    // Confirm flow: open dialog, then confirm.
+    // Confirm flow: open dialog, then confirm (the modal footer button).
     await user.click(screen.getByRole('button', { name: 'Xác nhận đã tạo' }));
     expect(
       await screen.findByText('Bạn xác nhận booking này đã được tạo thành công trên hệ thống khách sạn?'),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Xác nhận' }));
+    const confirmButtons = screen.getAllByRole('button', { name: 'Xác nhận đã tạo' });
+    await user.click(confirmButtons[confirmButtons.length - 1]!);
 
     // The complete endpoint was called and the UI reflects the confirmed state.
     expect((await screen.findAllByText('Đã xác nhận tạo')).length).toBeGreaterThan(0);
@@ -94,5 +95,30 @@ describe('BookingDetailPage — receptionist confirmation', () => {
       ([url, init]) => String(url) === '/api/bookings/b1/complete' && (init as RequestInit).method === 'POST',
     );
     expect(called).toBe(true);
+  });
+
+  it('shows who confirmed it when another user already confirmed', async () => {
+    installApiMock({
+      'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),
+      'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
+      'GET /api/bookings/b1': () => ({
+        status: 200,
+        // Server already reflects the completion by a colleague.
+        body: {
+          booking: {
+            ...NEW_BOOKING,
+            status: 'COMPLETED',
+            completedBy: { id: 9, fullName: 'Lễ tân Khác' },
+            completedAt: '2026-07-16T02:00:00.000Z',
+          },
+        },
+      }),
+    });
+
+    renderApp('/app/booking/b1');
+
+    expect(await screen.findByText(/Người xác nhận: Lễ tân Khác/)).toBeInTheDocument();
+    // No confirm action is offered for an already-confirmed booking.
+    expect(screen.queryByRole('button', { name: 'Xác nhận đã tạo' })).not.toBeInTheDocument();
   });
 });
