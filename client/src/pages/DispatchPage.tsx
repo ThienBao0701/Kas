@@ -322,7 +322,7 @@ export function DispatchPage() {
             <input
               className={`${inputClass} bg-slate-50 text-slate-700`}
               value={selectedBranch ? selectedBranch.address : ''}
-              placeholder="Chọn chi nhánh để hiển thị địa chỉ khách sạn"
+              placeholder="Chưa chọn chi nhánh"
               readOnly
               aria-readonly="true"
             />

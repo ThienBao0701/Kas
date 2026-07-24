@@ -142,9 +142,11 @@ export function buildPmsNote(b: BookingDetail, now: Date = new Date()): PmsNoteR
   const code = b.bookingCode?.trim();
   if (!code) return { ok: false, error: NO_CODE_MESSAGE };
 
+  // Exactly one space after "BK" and between every token — collapse any accidental
+  // run of spaces so the first line is always cleanly "BK <code>_… CI".
   const line1 = `BK ${code}_${roomsAbbreviation(b.rooms)}_${noteNights(b)} ĐÊM ${formatAmountCopy(
     b.totalAmount,
-  )} ${paymentCode(b.paymentStatus)} CI`;
+  )} ${paymentCode(b.paymentStatus)} CI`.replace(/ {2,}/g, ' ');
 
   const breakfast = b.branch ? BREAKFAST_BRANCH_CODES.has(b.branch.code) : false;
   const arrival = arrivalNote(b.specialRequest);

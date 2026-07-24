@@ -3,10 +3,10 @@ import { useQueryClient } from '@tanstack/react-query';
 import { CalendarCheck2, ClipboardList, StickyNote } from 'lucide-react';
 import { type BookingDetail, type RoomView } from '../api/bookings';
 import { buildPmsNote } from '../lib/pmsNote';
-import { formatAmountCopy, formatDate, formatDateTime, formatMoney, paymentLabel } from '../lib/format';
+import { formatAmountCopy, formatDate, formatDateTime, formatMoney } from '../lib/format';
 import { Card } from './Card';
 import { CopyButton, CopyField } from './CopyButton';
-import { BusinessTypeBadge, LastMinuteBadge, SourceBadge, StatusBadge, VerificationBadge } from './Badges';
+import { BusinessTypeBadge, LastMinuteBadge, PaymentBadge, SourceBadge, StatusBadge, VerificationBadge } from './Badges';
 import { ProofSection } from './ProofSection';
 import { Toast } from './Toast';
 
@@ -102,7 +102,10 @@ export function BookingDetailView({
         {/* Supporting read-only fields (no copy buttons) */}
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           <ReadField label="Chi nhánh" value={b.branch?.address ?? '—'} />
-          <ReadField label="Thanh toán" value={paymentLabel(b.paymentStatus)} />
+          <div className="rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2.5">
+            <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Thanh toán</p>
+            <div className="mt-1"><PaymentBadge status={b.paymentStatus} /></div>
+          </div>
           <ReadField label="Check-in" value={formatDate(b.checkInDate)} />
           <ReadField label="Check-out" value={formatDate(b.checkOutDate)} />
         </div>

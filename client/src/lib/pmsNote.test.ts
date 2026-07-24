@@ -227,6 +227,17 @@ describe('buildPmsNote — exact output', () => {
     );
   });
 
+  it('G — first line has exactly one space after "BK" (never "BK<digit>")', () => {
+    const res = buildPmsNote(booking(), NOW);
+    const line1 = res.text!.split('\n')[0]!;
+    expect(line1.startsWith('BK ')).toBe(true);
+    expect(line1).not.toMatch(/^BK {2,}/); // no double space
+    expect(line1).not.toMatch(/^BK\d/); // never glued to the code
+    // Even a code with stray whitespace normalises to one space.
+    const padded = buildPmsNote(booking({ bookingCode: '  6037224525  ' }), NOW);
+    expect(padded.text!.split('\n')[0]).toMatch(/^BK 6037224525_/);
+  });
+
   it('blocks generation when the booking code is missing', () => {
     const res = buildPmsNote(booking({ bookingCode: null }), NOW);
     expect(res.ok).toBe(false);

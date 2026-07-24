@@ -172,8 +172,9 @@ function NewIssueModal({ onClose, onCreated }: { onClose: () => void; onCreated:
     >
       <div className="space-y-3">
         <label className="block text-sm font-medium text-slate-600">
-          Số phòng (không bắt buộc)
+          Số phòng <span className="font-normal text-slate-400">(không bắt buộc)</span>
           <input className={`${inputClass} mt-1`} value={roomNumber} onChange={(e) => setRoomNumber(e.target.value)} placeholder="Ví dụ: 301" />
+          <span className="mt-1 block text-xs font-normal text-slate-500">Để trống nếu sự cố không liên quan đến phòng.</span>
         </label>
 
         <label className="block text-sm font-medium text-slate-600">

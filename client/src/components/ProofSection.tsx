@@ -18,11 +18,12 @@ import {
   type ProofView,
 } from '../api/bookings';
 import { ApiError, toUserMessage } from '../api/errors';
-import { formatDate, formatDateTime, formatFileSize, formatMoney, paymentLabel } from '../lib/format';
+import { formatDate, formatDateTime, formatFileSize, formatMoney } from '../lib/format';
 import { Card } from './Card';
 import { Button } from './Button';
 import { Modal } from './Modal';
 import { ErrorAlert } from './ErrorAlert';
+import { PaymentBadge } from './Badges';
 
 const ACCEPTED = 'image/png,image/jpeg,image/webp';
 const MAX_BYTES = 10 * 1024 * 1024;
@@ -294,7 +295,7 @@ function AdminReviewCard({
             <CompareRow label="Số phòng" value={String(b.rooms.length)} />
             <CompareRow label="Hạng phòng" value={b.rooms.map((r) => r.roomType ?? '—').join(', ') || '—'} />
             <CompareRow label="Tổng tiền" value={formatMoney(b.totalAmount, b.currency)} />
-            <CompareRow label="Thanh toán" value={paymentLabel(b.paymentStatus)} />
+            <CompareRow label="Thanh toán" value={<PaymentBadge status={b.paymentStatus} />} />
           </dl>
         </div>
 
@@ -380,7 +381,7 @@ function AdminReviewCard({
   );
 }
 
-function CompareRow({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+function CompareRow({ label, value, mono = false }: { label: string; value: React.ReactNode; mono?: boolean }) {
   return (
     <div className="flex justify-between gap-3">
       <dt className="text-slate-500">{label}</dt>

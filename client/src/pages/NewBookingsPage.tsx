@@ -10,12 +10,12 @@ import { EmptyState } from '../components/EmptyState';
 import { ErrorAlert } from '../components/ErrorAlert';
 import { ConnectionWarning } from '../components/ConnectionWarning';
 import { SkeletonList } from '../components/Skeleton';
-import { LastMinuteBadge, StatusBadge } from '../components/Badges';
+import { LastMinuteBadge, PaymentBadge, StatusBadge } from '../components/Badges';
 import { Pagination } from '../components/Pagination';
 import { PageHeader, InlineSpinner, QueryState } from '../components/PageState';
 import { BookingDetailView } from '../components/BookingDetailView';
 import { Toast } from '../components/Toast';
-import { formatDate, formatDateTime, paymentLabel } from '../lib/format';
+import { formatDate, formatDateTime } from '../lib/format';
 
 const POLL_MS = 20_000;
 
@@ -191,7 +191,7 @@ function BookingListRow({
       </div>
       <div className="mt-1 flex items-center justify-between gap-2 text-xs text-slate-500">
         <span>Nhận phòng: {formatDate(b.checkInDate)}</span>
-        <span className="rounded-full bg-slate-100 px-2 py-0.5">{paymentLabel(b.paymentStatus)}</span>
+        <PaymentBadge status={b.paymentStatus} />
       </div>
     </button>
   );

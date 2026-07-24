@@ -142,6 +142,7 @@ describe('DispatchPage — branch address field', () => {
     const addressField = await screen.findByLabelText('Địa chỉ khách sạn');
     expect(addressField).toHaveValue('05 Trương Định');
     expect(addressField).toHaveAttribute('readonly');
+    expect(addressField).toHaveAttribute('placeholder', 'Chưa chọn chi nhánh');
     // The raw Booking.com property name is not shown as the address.
     expect(addressField).not.toHaveValue('Saigon Hotel & Ben Thanh Market');
 
@@ -149,6 +150,20 @@ describe('DispatchPage — branch address field', () => {
     const branchSelect = screen.getByLabelText('Chọn chi nhánh gửi đến');
     await user.selectOptions(branchSelect, '2');
     expect(addressField).toHaveValue('260 Lý Tự Trọng');
+  });
+
+  it('shows an empty address with the placeholder when no branch is resolved', async () => {
+    mockDispatch(
+      { ...DEFAULT_EXTRACT, suggestedBranch: null, branchConfident: false, branchConfidence: 0 },
+      { 'GET /api/admin/bookings/d1': () => ({ status: 200, body: { booking: detail({ branch: null, branchId: null }) } }) },
+    );
+    const user = userEvent.setup();
+    renderApp('/app/dispatch');
+    await extract(user);
+
+    const addressField = await screen.findByLabelText('Địa chỉ khách sạn');
+    expect(addressField).toHaveValue('');
+    expect(addressField).toHaveAttribute('placeholder', 'Chưa chọn chi nhánh');
   });
 });
 

@@ -55,6 +55,8 @@ describe('IssuesPage — receptionist', () => {
 
     await user.click(screen.getByRole('button', { name: 'Báo cáo mới' }));
     const dialog = await screen.findByRole('dialog');
+    // Room number is clearly marked optional with helper text.
+    expect(within(dialog).getByText('Để trống nếu sự cố không liên quan đến phòng.')).toBeInTheDocument();
     await user.type(within(dialog).getByLabelText('Mô tả'), 'Máy lạnh không lạnh');
     await user.click(within(dialog).getByRole('button', { name: 'Gửi báo cáo' }));
 
@@ -101,5 +103,29 @@ describe('IssuesPage — admin', () => {
     const resolveCalled = fetchMock.mock.calls.some(([u, i]) => String(u) === '/api/issues/i1/resolve' && (i as RequestInit).method === 'POST');
     expect(acceptCalled).toBe(true);
     expect(resolveCalled).toBe(true);
+  });
+
+  it('renders visually distinct NEW / IN_PROGRESS / RESOLVED status badges', async () => {
+    installApiMock({
+      'GET /api/auth/me': () => ({ status: 200, body: { user: ADMIN_USER } }),
+      'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
+      'GET /api/issues?pageSize=100': () =>
+        listBody([
+          issue({ id: 'a', status: 'NEW' }),
+          issue({ id: 'b', status: 'IN_PROGRESS' }),
+          issue({ id: 'c', status: 'RESOLVED' }),
+        ]),
+    });
+    renderApp('/app/issues');
+
+    const table = await screen.findByRole('table');
+    const rows = within(table).getAllByRole('row').slice(1); // skip the header row
+    // Rows are newest-first but each was created with the same timestamp, so match
+    // by the badge label within its own row. Each status has a distinct colour
+    // class (colour is not the sole signal — the labels differ too).
+    expect(within(rows.find((r) => within(r).queryByText('Mới'))!).getByText('Mới').className).toMatch(/amber/);
+    expect(within(rows.find((r) => within(r).queryByText('Đang xử lý'))!).getByText('Đang xử lý').className).toMatch(/blue/);
+    const resolvedRow = rows.find((r) => within(r).queryByText('Đã xử lý') && !within(r).queryByRole('button', { name: /Đã xử lý/ }))!;
+    expect(within(resolvedRow).getByText('Đã xử lý').className).toMatch(/green/);
   });
 });

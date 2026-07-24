@@ -1,23 +1,42 @@
 import { Flame } from 'lucide-react';
-import type { BookingSource, BookingStatus, BusinessType, VerificationStatus } from '../api/bookings';
+import type { BookingSource, BookingStatus, BusinessType, PaymentStatus, VerificationStatus } from '../api/bookings';
 import { SOURCE_LABEL } from '../api/bookings';
-import { statusLabel, verificationLabel } from '../lib/format';
+import { paymentLabel, statusLabel, verificationLabel } from '../lib/format';
+
+const BUSINESS_TYPE_META: Record<BusinessType, { label: string; styles: string }> = {
+  DIRECT: { label: 'ĐƠN THƯỜNG', styles: 'bg-green-100 text-green-700 ring-1 ring-inset ring-green-200' },
+  PARTNER: { label: 'ĐƠN ĐỐI TÁC', styles: 'bg-orange-100 text-orange-800 ring-1 ring-inset ring-orange-200' },
+  UNKNOWN: { label: 'CHƯA XÁC ĐỊNH', styles: 'bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-300' },
+};
 
 /**
- * Business-type badge. PARTNER shows a prominent "ĐƠN ĐỐI TÁC" chip and UNKNOWN a
- * "CHƯA XÁC ĐỊNH LOẠI ĐƠN" chip; an ordinary DIRECT booking shows nothing (no
- * badge needed for the common case).
+ * Business-type badge with three distinct, colour-plus-text states (the label
+ * carries the meaning, so screen readers and colour-blind users are covered):
+ * ĐƠN THƯỜNG (green) / ĐƠN ĐỐI TÁC (orange) / CHƯA XÁC ĐỊNH (gray).
  */
 export function BusinessTypeBadge({ type }: { type: BusinessType }) {
-  if (type === 'DIRECT') return null;
-  const styles =
-    type === 'PARTNER'
-      ? 'bg-orange-100 text-orange-800 ring-1 ring-inset ring-orange-200'
-      : 'bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-200';
-  const label = type === 'PARTNER' ? 'ĐƠN ĐỐI TÁC' : 'CHƯA XÁC ĐỊNH LOẠI ĐƠN';
+  const meta = BUSINESS_TYPE_META[type] ?? BUSINESS_TYPE_META.UNKNOWN;
   return (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${styles}`}>
-      {label}
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${meta.styles}`}>
+      {meta.label}
+    </span>
+  );
+}
+
+const PAYMENT_STYLES: Record<PaymentStatus, string> = {
+  PAY_BEFORE: 'bg-green-100 text-green-700 ring-1 ring-inset ring-green-200',
+  PAY_AFTER: 'bg-amber-100 text-amber-800 ring-1 ring-inset ring-amber-200',
+};
+
+/**
+ * The single payment badge used everywhere payment is shown: PAY BEFORE CHECK-IN
+ * (green) / PAY AFTER CHECK-IN (amber). Wording comes from `paymentLabel`; the DB
+ * enum is unchanged. The text (not colour) conveys the status.
+ */
+export function PaymentBadge({ status }: { status: PaymentStatus }) {
+  return (
+    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${PAYMENT_STYLES[status]}`}>
+      {paymentLabel(status)}
     </span>
   );
 }

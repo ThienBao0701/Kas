@@ -7,6 +7,7 @@ import { bookingsApi, branchesApi } from '../api/bookings';
 import { Card } from '../components/Card';
 import { EmptyState } from '../components/EmptyState';
 import { BusinessTypeBadge, LastMinuteBadge } from '../components/Badges';
+import { RoomSummary } from '../components/RoomSummary';
 import { Pagination } from '../components/Pagination';
 import { PageHeader, QueryState } from '../components/PageState';
 import { formatDate, formatDateTime, formatMoney } from '../lib/format';
@@ -104,8 +105,8 @@ export function CompletedBookingsPage() {
                       <td className="px-4 py-3 text-slate-800">{b.customerName ?? '—'}</td>
                       <td className="px-4 py-3 text-slate-600">{b.branch?.address ?? '—'}</td>
                       <td className="px-4 py-3 text-slate-600">{formatDate(b.checkInDate)}</td>
-                      <td className="px-4 py-3 text-slate-700">{b.roomSummary || '—'}</td>
-                      <td className="px-4 py-3 font-medium text-slate-900">
+                      <td className="px-4 py-3 text-slate-700"><RoomSummary summary={b.roomSummary} /></td>
+                      <td className="px-4 py-3 font-bold text-slate-900">
                         {b.totalAmount != null ? formatMoney(b.totalAmount, b.currency) : 'Chưa xác định'}
                       </td>
                       <td className="px-4 py-3 text-slate-600">{b.reviewedBy?.fullName ?? '—'}</td>
