@@ -200,9 +200,10 @@ describe('BookingDetailPage — receptionist proof upload', () => {
 
     // The receptionist sees a simple "received" note…
     expect(await screen.findByText('Ảnh đã được hệ thống tiếp nhận.')).toBeInTheDocument();
-    // …and never the admin-only OCR card or its re-analyse control.
+    // …and never the admin-only OCR card, comparison card, or their controls.
     expect(screen.queryByText('Dữ liệu nhận diện từ ảnh')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Phân tích lại ảnh' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Kết quả đối chiếu')).not.toBeInTheDocument();
   });
 
   it('shows the rejection reason and a resubmit prompt for a rejected booking', async () => {
@@ -356,6 +357,7 @@ describe('BookingDetailPage — admin review', () => {
       'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
       'GET /api/bookings/b1': () => ({ status: 200, body: { booking: approved ? COMPLETED_BOOKING : PENDING_BOOKING } }),
       'GET /api/admin/bookings/b1/proofs/p1/analyses/latest': () => ({ status: 200, body: { analysis: { id: 'a1', proofId: 'p1', status: 'DISABLED', provider: 'disabled', analysisVersion: '1', extractedText: null, fields: null, errorMessage: null, startedAt: null, completedAt: null, createdAt: '2026-07-16T02:00:00.000Z' } } }),
+      'GET /api/admin/bookings/b1/proofs/p1/comparisons/latest': () => ({ status: 200, body: { comparison: null } }),
       'POST /api/bookings/b1/proofs/p1/approve': () => {
         approved = true;
         return { status: 200, body: { booking: COMPLETED_BOOKING } };
@@ -368,8 +370,9 @@ describe('BookingDetailPage — admin review', () => {
     // The review comparison shows both the source facts and the proof image.
     expect(await screen.findByText('Thông tin đơn gốc')).toBeInTheDocument();
     expect(screen.getByText('Ảnh lễ tân gửi')).toBeInTheDocument();
-    // Admin sees the advisory OCR card (advisory only — no verdict label).
+    // Admin sees the advisory OCR + comparison cards (advisory only — no auto verdict).
     expect(screen.getByText('Dữ liệu nhận diện từ ảnh')).toBeInTheDocument();
+    expect(screen.getByText('Kết quả đối chiếu')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /Đúng — xác nhận/ }));
 
@@ -386,6 +389,7 @@ describe('BookingDetailPage — admin review', () => {
       'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
       'GET /api/bookings/b1': () => ({ status: 200, body: { booking: PENDING_BOOKING } }),
       'GET /api/admin/bookings/b1/proofs/p1/analyses/latest': () => ({ status: 200, body: { analysis: null } }),
+      'GET /api/admin/bookings/b1/proofs/p1/comparisons/latest': () => ({ status: 200, body: { comparison: null } }),
       'POST /api/bookings/b1/proofs/p1/reject': () => ({ status: 200, body: { booking: { ...NEW_BOOKING, verificationStatus: 'REJECTED' } } }),
     });
 
@@ -401,5 +405,42 @@ describe('BookingDetailPage — admin review', () => {
       ([url, init]) => String(url) === '/api/bookings/b1/proofs/p1/reject' && (init as RequestInit).method === 'POST',
     );
     expect(called).toBe(true);
+  });
+
+  it('asks for an extra confirmation before approving a MISMATCH (never auto-approves)', async () => {
+    const mismatch = {
+      id: 'c1', bookingId: 'b1', proofId: 'p1', analysisId: 'a1', overallStatus: 'MISMATCH', comparisonVersion: 'proof-compare-v1',
+      errorMessage: null, createdAt: '2026-07-16T02:10:00.000Z',
+      result: { overall: 'MISMATCH', version: 'proof-compare-v1', summary: { matchCount: 0, mismatchCount: 1, warningCount: 0, notFoundCount: 0 },
+        fields: [{ field: 'TOTAL_AMOUNT', label: 'Giá tổng', importance: 'CRITICAL', result: 'MISMATCH', expected: '4.720.680', detected: '4.270.680', message: 'Giá tổng trong ảnh không khớp.' }] },
+    };
+    const fetchMock = installApiMock({
+      'GET /api/auth/me': () => ({ status: 200, body: { user: ADMIN_USER } }),
+      'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
+      'GET /api/bookings/b1': () => ({ status: 200, body: { booking: PENDING_BOOKING } }),
+      'GET /api/admin/bookings/b1/proofs/p1/analyses/latest': () => ({ status: 200, body: { analysis: null } }),
+      'GET /api/admin/bookings/b1/proofs/p1/comparisons/latest': () => ({ status: 200, body: { comparison: mismatch } }),
+      'POST /api/bookings/b1/proofs/p1/approve': () => ({ status: 200, body: { booking: COMPLETED_BOOKING } }),
+    });
+
+    const user = userEvent.setup();
+    renderApp('/app/booking/b1');
+
+    // The comparison card is visible with the mismatch banner.
+    expect(await screen.findByLabelText('Kết quả đối chiếu: CÓ SAI KHÁC')).toBeInTheDocument();
+    // Both manual verdict buttons remain available (never disabled by the result).
+    const approveBtn = screen.getByRole('button', { name: /Đúng — xác nhận/ });
+    expect(approveBtn).toBeEnabled();
+    expect(screen.getByRole('button', { name: /Sai — yêu cầu tạo lại/ })).toBeEnabled();
+
+    // Clicking approve does NOT auto-approve — it asks for confirmation first.
+    await user.click(approveBtn);
+    expect(await screen.findByText('Hệ thống phát hiện thông tin không khớp. Bạn vẫn muốn xác nhận đúng?')).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([u, i]) => String(u).endsWith('/approve') && (i as RequestInit).method === 'POST')).toBe(false);
+
+    // Confirming proceeds with the real approval.
+    await user.click(screen.getByRole('button', { name: 'Vẫn xác nhận đúng' }));
+    expect(await screen.findByText('Đã xác nhận đúng. Đơn đã hoàn thành.')).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([u, i]) => String(u).endsWith('/approve') && (i as RequestInit).method === 'POST')).toBe(true);
   });
 });

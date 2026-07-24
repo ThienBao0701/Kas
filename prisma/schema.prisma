@@ -76,6 +76,20 @@ enum ProofAnalysisStatus {
   DISABLED
 }
 
+/// Overall verdict of one proof-vs-booking comparison run. Advisory only — it
+/// never approves/rejects a proof and never changes any status.
+/// MATCH       = every critical field that was detected matches safely.
+/// WARNING     = no confirmed critical mismatch, but some fields are missing,
+///               uncertain or need manual review.
+/// MISMATCH    = at least one critical (or opposite-payment) field clearly differs.
+/// UNAVAILABLE = OCR was disabled/pending/failed, or no completed analysis exists.
+enum ProofComparisonOverallStatus {
+  MATCH
+  WARNING
+  MISMATCH
+  UNAVAILABLE
+}
+
 /// Why an Admin rejected a proof attempt (a stable code; UI shows Vietnamese).
 enum ProofReviewReason {
   WRONG_CUSTOMER_NAME
@@ -280,6 +294,7 @@ model Booking {
   notifications Notification[]
   warnings      BookingExtractWarning[]
   proofs        BookingCreationProof[]
+  proofComparisons BookingProofComparison[]
 
   @@index([bookingCode])
   @@index([branchId, status])
@@ -325,6 +340,7 @@ model BookingCreationProof {
   submittedBy User?   @relation("ProofSubmittedBy", fields: [submittedByUserId], references: [id])
   reviewedBy  User?   @relation("ProofReviewedBy", fields: [reviewedByUserId], references: [id])
   analyses    BookingProofAnalysis[]
+  comparisons BookingProofComparison[]
 
   @@unique([bookingId, attemptNumber])
   @@index([bookingId])
@@ -357,10 +373,43 @@ model BookingProofAnalysis {
   createdAt      DateTime            @default(now())
   updatedAt      DateTime            @updatedAt
 
-  proof BookingCreationProof @relation(fields: [proofId], references: [id], onDelete: Cascade)
+  proof       BookingCreationProof   @relation(fields: [proofId], references: [id], onDelete: Cascade)
+  comparisons BookingProofComparison[]
 
   @@index([proofId])
   @@index([proofId, status])
+  @@index([createdAt])
+}
+
+/// One immutable proof-vs-booking comparison run. It compares the persisted
+/// booking (what the Admin dispatched) against the structured fields of a
+/// COMPLETED OCR analysis, and stores a field-by-field result as validated JSON
+/// text. Advisory only: it carries no automatic approval/rejection and never
+/// changes booking or proof status. Re-analysis creates a new comparison; earlier
+/// runs are preserved. Only one comparison per (analysis, comparisonVersion).
+model BookingProofComparison {
+  id               String                       @id @default(cuid())
+  bookingId        String
+  proofId          String
+  analysisId       String
+  overallStatus    ProofComparisonOverallStatus
+  /// Stable version tag for the comparison ruleset (e.g. "proof-compare-v1").
+  comparisonVersion String
+  /// Field-by-field result serialised as a validated JSON string (no BLOB/path).
+  resultJson       String
+  /// Sanitised, user-safe error message when a run failed (never a stack/path).
+  errorMessage     String?
+  /// The Admin who triggered a manual re-comparison; null for a system run.
+  createdByUserId  Int?
+  createdAt        DateTime                     @default(now())
+
+  booking  Booking              @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  proof    BookingCreationProof @relation(fields: [proofId], references: [id], onDelete: Cascade)
+  analysis BookingProofAnalysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+
+  @@unique([analysisId, comparisonVersion])
+  @@index([proofId])
+  @@index([bookingId])
   @@index([createdAt])
 }
 

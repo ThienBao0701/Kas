@@ -69,6 +69,17 @@ npm run dev        # backend :3001 + client dev :5173 (client proxy /api sang ba
   trường) lưu trong SQLite dưới dạng **chữ** (không lưu ảnh trong DB), nên đã được
   sao lưu cùng `data.db`. Không lưu byte ảnh hay đường dẫn hệ thống tệp trong DB.
 
+## Đối chiếu ảnh với đơn (compare — chỉ hỗ trợ)
+
+- Sau khi OCR xong, hệ thống **tự đối chiếu** dữ liệu OCR với đơn Admin đã gửi và
+  lưu một bản kết quả (KHỚP / CẦN KIỂM TRA / CÓ SAI KHÁC / CHƯA CÓ KẾT QUẢ). Đây là
+  **logic cục bộ, xác định** — không dùng AI, không gọi dịch vụ ngoài.
+- Kết quả **chỉ mang tính hỗ trợ**: hệ thống **không** tự duyệt/từ chối và **không**
+  đổi trạng thái đơn/ảnh. Admin vẫn là người quyết định cuối cùng.
+- Mỗi lần phân tích OCR mới tạo một bản đối chiếu mới; các bản cũ được giữ lại. Kết
+  quả lưu dưới dạng **chữ (JSON)** trong SQLite, sao lưu cùng `data.db`. Chỉ Admin
+  đọc được; lễ tân không thấy.
+
 ## Tường lửa Windows
 
 Nếu máy lễ tân không mở được Kas, cho phép cổng của máy chủ (ví dụ 3001) qua

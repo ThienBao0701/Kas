@@ -9,6 +9,7 @@ import { updateBookingDraft, updateBookingSchema } from '../booking/adminEdit';
 import { markBookingReady, sendBooking } from '../booking/dispatch';
 import { confirmBusinessType } from '../booking/businessTypeService';
 import { latestAnalysis, listAnalyses, reanalyzeProof } from '../booking/ocr/analysisService';
+import { compareLatest, latestComparison, listComparisons } from '../booking/compare/compareService';
 import type { UserWithBranch } from '../auth/serialize';
 
 const readySchema = z.object({ note: z.string().trim().max(500).optional() });
@@ -110,6 +111,34 @@ export function createAdminBookingsRouter(): Router {
     (async () => {
       const analysis = await reanalyzeProof(bookingId(req.params.bookingId), proofIdOf(req.params.proofId), getClock());
       res.status(201).json({ analysis });
+    })().catch(next);
+  });
+
+  // --- Proof compare (advisory; Admin-only via the router middleware) ---
+
+  // GET …/proofs/:proofId/comparisons — all comparison runs (newest first).
+  router.get('/admin/bookings/:bookingId/proofs/:proofId/comparisons', (req, res, next) => {
+    (async () => {
+      const comparisons = await listComparisons(bookingId(req.params.bookingId), proofIdOf(req.params.proofId));
+      res.json({ comparisons });
+    })().catch(next);
+  });
+
+  // GET …/proofs/:proofId/comparisons/latest — most recent run (or null).
+  router.get('/admin/bookings/:bookingId/proofs/:proofId/comparisons/latest', (req, res, next) => {
+    (async () => {
+      const comparison = await latestComparison(bookingId(req.params.bookingId), proofIdOf(req.params.proofId));
+      res.json({ comparison });
+    })().catch(next);
+  });
+
+  // POST …/proofs/:proofId/compare — Admin compares the latest completed OCR run
+  // (409 when no completed analysis, or one already exists for that analysis).
+  router.post('/admin/bookings/:bookingId/proofs/:proofId/compare', (req, res, next) => {
+    (async () => {
+      const user = req.currentUser!;
+      const comparison = await compareLatest(bookingId(req.params.bookingId), proofIdOf(req.params.proofId), user.id);
+      res.status(201).json({ comparison });
     })().catch(next);
   });
 

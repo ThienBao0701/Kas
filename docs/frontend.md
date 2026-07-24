@@ -199,6 +199,26 @@ nhận diện từ ảnh. Admin vẫn phải tự kiểm tra ảnh trước khi 
 never see this card or any raw OCR data — their pending view only says *"Ảnh đã
 được hệ thống tiếp nhận."*
 
+## Proof comparison card (admin-only, advisory)
+
+Below the OCR card, `ProofComparisonCard`
+(`client/src/components/ProofComparisonCard.tsx`, driven by `useProofComparison`)
+shows **"Kết quả đối chiếu"** — the deterministic proof-vs-booking comparison. The
+overall banner is one of **✅ KHỚP**, **⚠️ CẦN KIỂM TRA**, **❌ CÓ SAI KHÁC**, or
+**◌ CHƯA CÓ KẾT QUẢ** (each with an icon + text, never colour alone; the banner has
+an accessible `aria-label`). A table lists every field — *Hạng mục · Kết quả · Admin
+gửi · OCR nhận diện* — with the Vietnamese explanation under any non-matching row.
+It polls until a result exists, has a **Làm mới** refresh, and shows loading/error
+states.
+
+The manual **Đúng — xác nhận** / **Sai — yêu cầu tạo lại** buttons are **never
+disabled or auto-clicked** by the comparison. As a safety net, if the overall
+result is **CÓ SAI KHÁC** and the Admin clicks approve, one extra confirmation
+appears — *"Hệ thống phát hiện thông tin không khớp. Bạn vẫn muốn xác nhận đúng?"* —
+which the Admin can proceed through. A permanent disclaimer reads *"Kết quả đối
+chiếu chỉ mang tính hỗ trợ. Admin phải kiểm tra ảnh trước khi xác nhận."*
+Receptionists never see the comparison card or its data.
+
 ## Hotel issue counters (branch command center)
 
 `useIssueSummary` (`client/src/hooks/useIssueSummary.ts`) polls

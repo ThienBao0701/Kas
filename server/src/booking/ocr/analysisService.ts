@@ -18,6 +18,7 @@ import { env } from '../../config/env';
 import { readProofFile } from '../proofStorage';
 import { getOcrProvider } from './provider';
 import { extractProofFields, limitOcrText } from './normalize';
+import { runComparisonAfterOcr } from '../compare/compareService';
 import type { ProofExtractedData, ProofOcrProvider } from './types';
 
 /** Bump when the extraction logic changes so old rows stay interpretable. */
@@ -113,7 +114,7 @@ async function process(id: string, storedFileName: string, provider: ProofOcrPro
     const raw = await provider.recognize(bytes, env.PROOF_OCR_LANGUAGE);
     const text = limitOcrText(raw.rawText ?? '');
     const fields = extractProofFields(text, { meanConfidence: raw.meanConfidence });
-    return await prisma.bookingProofAnalysis.update({
+    const completed = await prisma.bookingProofAnalysis.update({
       where: { id },
       data: {
         status: 'COMPLETED',
@@ -122,6 +123,9 @@ async function process(id: string, storedFileName: string, provider: ProofOcrPro
         completedAt: clock.now(),
       },
     });
+    // Advisory compare against the booking (never changes status; never throws).
+    await runComparisonAfterOcr(completed.id);
+    return completed;
   } catch (err) {
     return prisma.bookingProofAnalysis.update({
       where: { id },

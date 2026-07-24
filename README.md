@@ -235,6 +235,49 @@ GET  /api/admin/bookings/:bookingId/proofs/:proofId/analyses/latest   # most rec
 POST /api/admin/bookings/:bookingId/proofs/:proofId/analyze           # re-analyse (guards duplicates)
 ```
 
+### Proof compare engine — advisory, deterministic, local
+
+After an OCR analysis becomes `COMPLETED`, the server compares the **persisted
+booking** (what the Admin dispatched) against the **OCR-detected** fields and
+stores an immutable `BookingProofComparison`. It is **local, deterministic logic
+only** — no AI, no external service — and is **advisory**: it never approves,
+rejects, or changes any booking/proof status. The Admin remains the decision-maker.
+
+**Field states** are `MATCH` / `MISMATCH` / `WARNING` / `NOT_FOUND` /
+`NOT_APPLICABLE`; the **overall** verdict is:
+
+- `MATCH` — every detected field matches safely.
+- `WARNING` — no confirmed critical mismatch, but some fields are missing/uncertain.
+- `MISMATCH` — at least one field clearly differs (any critical field, or an
+  opposite payment instruction).
+- `UNAVAILABLE` — OCR disabled/pending/failed, or no completed analysis.
+
+**Critical fields** (a confirmed mismatch ⇒ overall `MISMATCH`): booking code
+(exact digits, never fuzzy), check-in, check-out, total amount, room quantity.
+**Operational fields**: customer name (accent-insensitive, bounded edit distance),
+room type (controlled alias map, e.g. *Standard Double ≈ STAN*), payment status
+(opposite ⇒ `MISMATCH`), night count, nightly prices, PMS-note components.
+Unreadable nightly prices are `NOT_APPLICABLE` (excluded) so an otherwise-clean
+proof is never marked wrong just because per-night prices weren't legible.
+
+Rules live in focused modules (`server/src/booking/compare/`: `comparators.ts`,
+`engine.ts`, `textNormalize.ts`, `derive.ts`) under a stable
+`comparisonVersion` (**`proof-compare-v1`**); a future ruleset change gets a new
+version. Runs are immutable — re-analysis (a new `COMPLETED` analysis) yields a new
+comparison and preserves earlier ones. At most one comparison per
+`(analysis, version)`.
+
+**Admin-only APIs** (receptionists cannot read comparison JSON; proof∈booking
+enforced):
+
+```
+GET  /api/admin/bookings/:bookingId/proofs/:proofId/comparisons          # all runs, newest first
+GET  /api/admin/bookings/:bookingId/proofs/:proofId/comparisons/latest   # most recent (or null)
+POST /api/admin/bookings/:bookingId/proofs/:proofId/compare              # compare latest completed
+                                                                         #   analysis (409 if none /
+                                                                         #   already compared)
+```
+
 ### Send-to-branch flow
 
 `POST /api/admin/bookings/:id/send` (Admin) assigns one branch, re-runs full

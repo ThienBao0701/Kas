@@ -25,6 +25,8 @@ import { ErrorAlert } from './ErrorAlert';
 import { PaymentBadge } from './Badges';
 import { ImageUploadDropzone } from './ImageUploadDropzone';
 import { ProofOcrCard } from './ProofOcrCard';
+import { ProofComparisonCard } from './ProofComparisonCard';
+import { useProofComparison } from '../hooks/useProofComparison';
 
 /**
  * The proof-of-creation workflow surface. What it renders depends on the
@@ -210,10 +212,20 @@ function AdminReviewCard({
   const [reasonCode, setReasonCode] = useState<ProofReviewReason>('WRONG_BOOKING_CODE');
   const [reviewNote, setReviewNote] = useState('');
   const [zoom, setZoom] = useState(false);
+  const [confirmMismatch, setConfirmMismatch] = useState(false);
+
+  // Advisory comparison verdict — used only to add a safety confirm before an
+  // Admin approves a proof the engine flagged as MISMATCH. It never disables or
+  // auto-clicks any button.
+  const comparison = useProofComparison(b.id, proof.id);
+  const isMismatch = comparison.data?.comparison?.overallStatus === 'MISMATCH';
 
   const approve = useMutation({
     mutationFn: () => bookingsApi.approveProof(b.id, proof.id),
-    onSuccess: () => onChanged?.('Đã xác nhận đúng. Đơn đã hoàn thành.'),
+    onSuccess: () => {
+      setConfirmMismatch(false);
+      onChanged?.('Đã xác nhận đúng. Đơn đã hoàn thành.');
+    },
     onError: (err) => {
       if (err instanceof ApiError && (err.code === 'PROOF_ALREADY_REVIEWED' || err.code === 'BOOKING_ALREADY_COMPLETED')) {
         onChanged?.('Đơn đã được xử lý trước đó.');
@@ -272,12 +284,15 @@ function AdminReviewCard({
       {/* Advisory OCR extraction (admin-only). Never a MATCH/MISMATCH verdict. */}
       <ProofOcrCard bookingId={b.id} proofId={proof.id} />
 
+      {/* Advisory proof-vs-booking comparison (admin-only). Never auto-decides. */}
+      <ProofComparisonCard bookingId={b.id} proofId={proof.id} />
+
       {approve.isError && !(approve.error instanceof ApiError && approve.error.code === 'PROOF_ALREADY_REVIEWED') ? (
         <div className="mt-3"><ErrorAlert>{toUserMessage(approve.error)}</ErrorAlert></div>
       ) : null}
 
       <div className="mt-4 flex flex-wrap gap-2">
-        <Button onClick={() => approve.mutate()} loading={approve.isPending}>
+        <Button onClick={() => (isMismatch ? setConfirmMismatch(true) : approve.mutate())} loading={approve.isPending}>
           <ThumbsUp className="h-4 w-4" aria-hidden="true" />
           Đúng — xác nhận
         </Button>
@@ -327,6 +342,27 @@ function AdminReviewCard({
           />
         </label>
         {reject.isError ? <div className="mt-3"><ErrorAlert>{toUserMessage(reject.error)}</ErrorAlert></div> : null}
+      </Modal>
+
+      <Modal
+        open={confirmMismatch}
+        title="Xác nhận dù có sai khác"
+        onClose={() => setConfirmMismatch(false)}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setConfirmMismatch(false)}>Xem lại</Button>
+            <Button onClick={() => approve.mutate()} loading={approve.isPending}>
+              Vẫn xác nhận đúng
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-slate-600">
+          Hệ thống phát hiện thông tin không khớp. Bạn vẫn muốn xác nhận đúng?
+        </p>
+        {approve.isError && !(approve.error instanceof ApiError && approve.error.code === 'PROOF_ALREADY_REVIEWED') ? (
+          <div className="mt-3"><ErrorAlert>{toUserMessage(approve.error)}</ErrorAlert></div>
+        ) : null}
       </Modal>
 
       {zoom ? <ImageLightbox url={proof.imageUrl} onClose={() => setZoom(false)} /> : null}
