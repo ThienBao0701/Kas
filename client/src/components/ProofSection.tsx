@@ -1,10 +1,9 @@
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import {
   AlertTriangle,
   CheckCircle2,
   Clock3,
-  ImageUp,
   ThumbsDown,
   ThumbsUp,
   X,
@@ -24,9 +23,7 @@ import { Button } from './Button';
 import { Modal } from './Modal';
 import { ErrorAlert } from './ErrorAlert';
 import { PaymentBadge } from './Badges';
-
-const ACCEPTED = 'image/png,image/jpeg,image/webp';
-const MAX_BYTES = 10 * 1024 * 1024;
+import { ImageUploadDropzone } from './ImageUploadDropzone';
 
 /**
  * The proof-of-creation workflow surface. What it renders depends on the
@@ -74,45 +71,20 @@ export function ProofSection({
 /* -------------------------------------------------------------------------- */
 
 function UploadCard({ booking: b, onChanged }: { booking: BookingDetail; onChanged?: (m: string) => void }) {
-  const inputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [note, setNote] = useState('');
-  const [localError, setLocalError] = useState<string | null>(null);
   const rejected = b.verificationStatus === 'REJECTED';
   const lastRejection = [...b.proofs].reverse().find((p) => p.status === 'REJECTED');
 
   const submit = useMutation({
     mutationFn: () => bookingsApi.submitProof(b.id, file!, note),
     onSuccess: () => {
-      clearSelection();
+      // Only clear on success; a failure keeps the image so the user can retry.
+      setFile(null);
       setNote('');
       onChanged?.('Đã gửi ảnh cho Admin kiểm tra.');
     },
   });
-
-  function clearSelection() {
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-    setPreviewUrl(null);
-    setFile(null);
-    if (inputRef.current) inputRef.current.value = '';
-  }
-
-  function onPick(picked: File | undefined) {
-    setLocalError(null);
-    if (!picked) return;
-    if (!ACCEPTED.split(',').includes(picked.type)) {
-      setLocalError('Chỉ chấp nhận ảnh PNG, JPEG hoặc WebP.');
-      return;
-    }
-    if (picked.size > MAX_BYTES) {
-      setLocalError('Ảnh vượt quá 10 MB. Vui lòng chọn ảnh nhỏ hơn.');
-      return;
-    }
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-    setFile(picked);
-    setPreviewUrl(URL.createObjectURL(picked));
-  }
 
   return (
     <Card className={`p-5 ${rejected ? 'border-red-200 bg-red-50/40' : 'border-brand-200 bg-brand-50/40'}`}>
@@ -139,35 +111,10 @@ function UploadCard({ booking: b, onChanged }: { booking: BookingDetail; onChang
         </>
       )}
 
-      <input
-        ref={inputRef}
-        type="file"
-        accept={ACCEPTED}
-        className="sr-only"
-        onChange={(e) => onPick(e.target.files?.[0] ?? undefined)}
-      />
+      <div className="mt-4">
+        <ImageUploadDropzone value={file} onChange={setFile} disabled={submit.isPending} />
+      </div>
 
-      {previewUrl ? (
-        <div className="mt-4 flex items-start gap-3">
-          <img src={previewUrl} alt="Ảnh sẽ gửi" className="h-32 w-32 rounded-xl border border-slate-200 object-cover" />
-          <div className="min-w-0 text-sm">
-            <p className="truncate font-medium text-slate-800">{file?.name}</p>
-            <p className="text-slate-500">{file ? formatFileSize(file.size) : ''}</p>
-            <button type="button" onClick={clearSelection} className="mt-1 inline-flex items-center gap-1 text-xs text-slate-500 hover:text-red-600">
-              <X className="h-3.5 w-3.5" aria-hidden="true" /> Chọn ảnh khác
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div className="mt-4">
-          <Button variant="secondary" onClick={() => inputRef.current?.click()}>
-            <ImageUp className="h-4 w-4" aria-hidden="true" />
-            Chọn ảnh chụp màn hình
-          </Button>
-        </div>
-      )}
-
-      {localError ? <div className="mt-3"><ErrorAlert>{localError}</ErrorAlert></div> : null}
       {submit.isError ? <div className="mt-3"><ErrorAlert>{toUserMessage(submit.error)}</ErrorAlert></div> : null}
 
       <label className="mt-4 block text-sm font-medium text-slate-600">
@@ -183,9 +130,9 @@ function UploadCard({ booking: b, onChanged }: { booking: BookingDetail; onChang
       </label>
 
       <div className="mt-4">
-        <Button onClick={() => submit.mutate()} disabled={!file} loading={submit.isPending}>
+        <Button onClick={() => submit.mutate()} disabled={!file || submit.isPending} loading={submit.isPending}>
           <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-          Gửi Admin kiểm tra
+          {submit.isPending ? 'Đang gửi ảnh...' : 'Gửi Admin kiểm tra'}
         </Button>
       </div>
 

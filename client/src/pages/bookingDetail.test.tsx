@@ -1,7 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { screen, within } from '@testing-library/react';
+import { act, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { ADMIN_USER, RECEPTIONIST_USER, installApiMock, renderApp } from '../test/utils';
+import { ADMIN_USER, RECEPTIONIST_USER, installApiMock, jsonResponse, renderApp } from '../test/utils';
+
+/** Dispatches a document paste event carrying a single PNG clipboard image. */
+function firePasteImage(type = 'image/png') {
+  const item = { kind: 'file', type, getAsFile: () => new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'x', { type }) };
+  const e = new Event('paste', { bubbles: true, cancelable: true });
+  Object.defineProperty(e, 'clipboardData', { value: { items: [item] } });
+  act(() => {
+    document.dispatchEvent(e);
+  });
+}
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -207,6 +217,119 @@ describe('BookingDetailPage — receptionist proof upload', () => {
     // The reason shows in the banner and again in the attempt history.
     expect(screen.getAllByText(/Sai ngày check-in\/check-out/).length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: 'Gửi Admin kiểm tra' })).toBeInTheDocument();
+  });
+
+  it('submits a proof pasted via Ctrl+V (dropzone integration)', async () => {
+    let submitted = false;
+    const fetchMock = installApiMock({
+      'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),
+      'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
+      'GET /api/bookings/b1': () => ({ status: 200, body: { booking: submitted ? PENDING_BOOKING : NEW_BOOKING } }),
+      'POST /api/bookings/b1/proofs': () => {
+        submitted = true;
+        return { status: 201, body: { booking: PENDING_BOOKING } };
+      },
+    });
+    const user = userEvent.setup();
+    renderApp('/app/booking/b1');
+
+    const submitBtn = await screen.findByRole('button', { name: 'Gửi Admin kiểm tra' });
+    expect(submitBtn).toBeDisabled();
+
+    firePasteImage('image/png');
+    // Paste preview + success notice appear, and submit becomes enabled.
+    expect(await screen.findByText('Đã dán ảnh từ clipboard.')).toBeInTheDocument();
+    expect(await screen.findByText(/^pasted-proof-\d+\.png$/)).toBeInTheDocument();
+    expect(submitBtn).toBeEnabled();
+
+    await user.click(submitBtn);
+    expect(await screen.findByText('Đã gửi ảnh cho Admin kiểm tra.')).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([u, i]) => String(u) === '/api/bookings/b1/proofs' && (i as RequestInit).method === 'POST')).toBe(true);
+  });
+
+  it('supports the same upload experience for a rejected-booking resubmission', async () => {
+    const rejected = { ...NEW_BOOKING, verificationStatus: 'REJECTED', proofs: [{ ...PENDING_PROOF, status: 'REJECTED', reviewReasonCode: 'UNCLEAR_IMAGE' }] };
+    let submitted = false;
+    const fetchMock = installApiMock({
+      'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),
+      'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
+      'GET /api/bookings/b1': () => ({ status: 200, body: { booking: submitted ? PENDING_BOOKING : rejected } }),
+      'POST /api/bookings/b1/proofs': () => {
+        submitted = true;
+        return { status: 201, body: { booking: PENDING_BOOKING } };
+      },
+    });
+    const user = userEvent.setup();
+    renderApp('/app/booking/b1');
+
+    await screen.findByText('Admin yêu cầu tạo lại');
+    // Drag-drop a valid image onto the resubmission dropzone.
+    const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'again.png', { type: 'image/png' });
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(input, file);
+
+    await user.click(screen.getByRole('button', { name: 'Gửi Admin kiểm tra' }));
+    expect(await screen.findByText('Đã gửi ảnh cho Admin kiểm tra.')).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([u, i]) => String(u) === '/api/bookings/b1/proofs' && (i as RequestInit).method === 'POST')).toBe(true);
+  });
+
+  it('keeps the selected image and shows the error when the upload fails', async () => {
+    installApiMock({
+      'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),
+      'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
+      'GET /api/bookings/b1': () => ({ status: 200, body: { booking: NEW_BOOKING } }),
+      'POST /api/bookings/b1/proofs': () => ({ status: 500, body: { error: { code: 'INTERNAL_ERROR', message: 'Lỗi máy chủ.' } } }),
+    });
+    const user = userEvent.setup();
+    renderApp('/app/booking/b1');
+
+    const submitBtn = await screen.findByRole('button', { name: 'Gửi Admin kiểm tra' });
+    const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'proof.png', { type: 'image/png' });
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(input, file);
+    expect(screen.getByText('proof.png')).toBeInTheDocument();
+
+    await user.click(submitBtn);
+    // The image preview is preserved so the receptionist can retry.
+    expect(await screen.findByText('Lỗi máy chủ.')).toBeInTheDocument();
+    expect(screen.getByText('proof.png')).toBeInTheDocument();
+  });
+
+  it('disables submit while uploading and prevents a double submit', async () => {
+    let resolveUpload: () => void = () => {};
+    let postCount = 0;
+    const fetchMock = vi.fn(async (url: string | URL, init: RequestInit = {}) => {
+      const key = `${(init.method ?? 'GET').toUpperCase()} ${String(url)}`;
+      if (key === 'GET /api/auth/me') return jsonResponse(200, { user: RECEPTIONIST_USER });
+      if (key === 'GET /api/notifications/unread-count') return jsonResponse(200, { count: 0 });
+      if (key === 'GET /api/bookings/b1') return jsonResponse(200, { booking: NEW_BOOKING });
+      if (key === 'POST /api/bookings/b1/proofs') {
+        postCount += 1;
+        return new Promise<Response>((resolve) => {
+          resolveUpload = () => resolve(jsonResponse(201, { booking: PENDING_BOOKING }));
+        });
+      }
+      return jsonResponse(404, { error: { code: 'NOT_FOUND', message: key } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const user = userEvent.setup();
+    renderApp('/app/booking/b1');
+
+    const submitBtn = await screen.findByRole('button', { name: 'Gửi Admin kiểm tra' });
+    const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'proof.png', { type: 'image/png' });
+    await user.upload(document.querySelector('input[type="file"]') as HTMLInputElement, file);
+
+    await user.click(submitBtn);
+    // While the deferred upload is in flight the button shows the uploading label
+    // and is disabled — a second click cannot fire a duplicate request.
+    const uploadingBtn = await screen.findByRole('button', { name: 'Đang gửi ảnh...' });
+    expect(uploadingBtn).toBeDisabled();
+    await user.click(uploadingBtn);
+    expect(postCount).toBe(1);
+
+    resolveUpload();
+    expect(await screen.findByText('Đã gửi ảnh cho Admin kiểm tra.')).toBeInTheDocument();
   });
 });
 

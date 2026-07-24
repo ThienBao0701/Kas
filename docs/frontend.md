@@ -86,8 +86,8 @@ On the review form (`DispatchPage` stage 2):
 
 - The first field is **"Địa chỉ khách sạn"** — a **read-only** display of the
   selected branch's address (data priority: selected branch → confidently
-  suggested branch → empty with the placeholder "Chọn chi nhánh để hiển thị địa
-  chỉ khách sạn"). It updates the instant the Admin changes the branch dropdown.
+  suggested branch → empty with the placeholder "Chưa chọn chi nhánh"). It updates
+  the instant the Admin changes the branch dropdown.
   The original `hotelName` is kept internally (parser matching/audit) and the real
   `branchId` is dispatched; the send preview reads the branch address.
 - A **business-type card** (`BusinessTypeCard`) shows the detected type
@@ -98,10 +98,10 @@ On the review form (`DispatchPage` stage 2):
   detection and shows "Admin đã xác nhận". Detection lives server-side; the
   frontend only displays and confirms.
 
-A `BusinessTypeBadge` renders **ĐƠN ĐỐI TÁC** (partner) or **CHƯA XÁC ĐỊNH LOẠI
-ĐƠN** (unknown) on the booking detail header and history/completed rows; DIRECT
-shows no badge. Receptionists see only the final persisted type, never the
-detection debug.
+A `BusinessTypeBadge` renders three distinct colour-plus-text states — **ĐƠN
+THƯỜNG** (green) / **ĐƠN ĐỐI TÁC** (orange) / **CHƯA XÁC ĐỊNH** (gray) — on the
+booking detail header and history/completed rows. Receptionists see only the final
+persisted type, never the detection debug.
 
 ## Payment wording
 
@@ -126,6 +126,61 @@ Both history/completed tables add **Hạng phòng (SL)** (from the backend
 `totalAmount`, "Chưa xác định" when null), plus the business-type badge. Tables
 scroll horizontally on mobile; booking code, room summary and total are never
 dropped.
+
+## Proof image upload (Ctrl+V paste, drag & drop, browse)
+
+The receptionist attaches a proof screenshot through a reusable
+`ImageUploadDropzone` (`client/src/components/ImageUploadDropzone.tsx`), used by
+both the first submission and the rejected-booking resubmission (inside
+`ProofSection`'s `UploadCard`). It supports three input methods:
+
+- **Clipboard paste (Ctrl+V)** — while the upload area is active, a document-level
+  paste listener reads the first image item, converts it to a `File`
+  (`pasted-proof-<timestamp>.png`), validates and previews it, and shows *"Đã dán
+  ảnh từ clipboard."*. Plain-text pastes are ignored; an unsupported clipboard
+  image shows *"Clipboard không có ảnh PNG, JPEG hoặc WebP hợp lệ."*. Nothing is
+  uploaded automatically — the receptionist reviews the preview and submits.
+- **Drag & drop** — dragging highlights the zone (border + "Thả ảnh vào đây"
+  label, not colour alone); dropping validates and previews the first image
+  (multiple files → *"Chỉ được gửi một ảnh cho mỗi lần xác nhận."* and the first
+  is used).
+- **Click / keyboard to browse** — the zone is `role="button"`, focusable, and
+  opens the native picker on click, Enter or Space (the accessible/mobile
+  fallback; the input `accept`s `image/png,image/jpeg,image/webp` so mobile
+  gallery/camera works).
+
+**Formats & size:** PNG / JPEG / WebP, max 10 MB — shared constants in
+`client/src/lib/imageUpload.ts` mirror the backend limits. **Frontend validation
+is UX only; the backend remains authoritative** (magic-byte sniff + MIME + size);
+no filename/extension is trusted. Errors: *"Định dạng ảnh không được hỗ trợ."*,
+*"Ảnh vượt quá dung lượng tối đa 10 MB."*.
+
+**Preview:** shows the image (aspect-ratio preserved, constrained), filename,
+type, size and `W × H` when available, with **Thay ảnh** (replace) and **Xóa ảnh**
+(remove). Object URLs are revoked on replace/remove/unmount (no memory leaks).
+
+**Auto-replace (newest wins):** paste, drop and browse all funnel through the same
+commit path, so a second Ctrl+V / drop / pick simply **replaces** the current image
+— no confirmation dialog, no duplicate preview. The previous object URL is always
+revoked before the new one is created, for every input method.
+
+**Zoom viewer:** clicking the preview opens `ImageViewer`
+(`client/src/components/ImageViewer.tsx`) — a **view-only** modal that **reuses the
+existing preview object URL** (never re-reads the file, recreates the blob, or
+re-uploads). Features: zoom presets (100 / 150 / 200 %, fit-width, original size),
+mouse-wheel zoom, drag-to-pan when zoomed (grab / grabbing cursor), 90° rotate
+left/right, and a **Đặt lại** (reset) to 100 % / 0° / centered. Rotation and zoom
+are pure CSS transforms — they never alter the uploaded file. Keyboard: **ESC**
+close, **+/-** zoom, **0** reset, **R** rotate right, **L** rotate left; double-tap
+toggles fit-width ⇄ original; optional two-finger pinch zoom on touch. Accessible:
+`role="dialog"` + `aria-modal`, focus moved to the close button on open and restored
+on close, a Tab focus-trap, body-scroll lock while open, and labelled controls.
+
+**Submit:** unchanged endpoint and workflow. The button is disabled without a
+valid image or while uploading (shows *"Đang gửi ảnh..."* + spinner, preventing a
+duplicate multipart request). On success the existing toast/state transition
+applies; on failure the selected image is kept so the receptionist can retry.
+**No OCR in C.1** — the image is only uploaded, never analysed.
 
 ## Proof verification — "Gửi Admin kiểm tra" → "Đúng / Sai"
 
