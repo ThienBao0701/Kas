@@ -64,6 +64,25 @@ export interface IssueListResponse {
   pagination: Pagination;
 }
 
+/** Unresolved (NEW + IN_PROGRESS) counters for one branch. */
+export interface BranchIssueSummary {
+  branchId: number;
+  code: string;
+  address: string;
+  hotelName: string;
+  newCount: number;
+  inProgressCount: number;
+  totalUnresolved: number;
+}
+
+/** Unresolved-issue summary within the caller's branch scope. */
+export interface IssueSummary {
+  totalUnresolved: number;
+  newCount: number;
+  inProgressCount: number;
+  byBranch: BranchIssueSummary[];
+}
+
 function query(params: Record<string, string | number | undefined>): string {
   const q = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
@@ -97,4 +116,6 @@ export const issuesApi = {
 
   accept: (id: string) => api.post<{ issue: Issue }>(`/issues/${id}/accept`, {}),
   resolve: (id: string) => api.post<{ issue: Issue }>(`/issues/${id}/resolve`, {}),
+
+  summary: () => api.get<{ summary: IssueSummary }>('/issues/summary'),
 };

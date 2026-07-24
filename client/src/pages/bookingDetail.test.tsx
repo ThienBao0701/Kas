@@ -190,6 +190,21 @@ describe('BookingDetailPage — receptionist proof upload', () => {
     expect(called).toBe(true);
   });
 
+  it('does not expose OCR details to the receptionist (only a received note)', async () => {
+    installApiMock({
+      'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),
+      'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
+      'GET /api/bookings/b1': () => ({ status: 200, body: { booking: PENDING_BOOKING } }),
+    });
+    renderApp('/app/booking/b1');
+
+    // The receptionist sees a simple "received" note…
+    expect(await screen.findByText('Ảnh đã được hệ thống tiếp nhận.')).toBeInTheDocument();
+    // …and never the admin-only OCR card or its re-analyse control.
+    expect(screen.queryByText('Dữ liệu nhận diện từ ảnh')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Phân tích lại ảnh' })).not.toBeInTheDocument();
+  });
+
   it('shows the rejection reason and a resubmit prompt for a rejected booking', async () => {
     const rejected = {
       ...NEW_BOOKING,
@@ -340,6 +355,7 @@ describe('BookingDetailPage — admin review', () => {
       'GET /api/auth/me': () => ({ status: 200, body: { user: ADMIN_USER } }),
       'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
       'GET /api/bookings/b1': () => ({ status: 200, body: { booking: approved ? COMPLETED_BOOKING : PENDING_BOOKING } }),
+      'GET /api/admin/bookings/b1/proofs/p1/analyses/latest': () => ({ status: 200, body: { analysis: { id: 'a1', proofId: 'p1', status: 'DISABLED', provider: 'disabled', analysisVersion: '1', extractedText: null, fields: null, errorMessage: null, startedAt: null, completedAt: null, createdAt: '2026-07-16T02:00:00.000Z' } } }),
       'POST /api/bookings/b1/proofs/p1/approve': () => {
         approved = true;
         return { status: 200, body: { booking: COMPLETED_BOOKING } };
@@ -352,6 +368,8 @@ describe('BookingDetailPage — admin review', () => {
     // The review comparison shows both the source facts and the proof image.
     expect(await screen.findByText('Thông tin đơn gốc')).toBeInTheDocument();
     expect(screen.getByText('Ảnh lễ tân gửi')).toBeInTheDocument();
+    // Admin sees the advisory OCR card (advisory only — no verdict label).
+    expect(screen.getByText('Dữ liệu nhận diện từ ảnh')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /Đúng — xác nhận/ }));
 
@@ -367,6 +385,7 @@ describe('BookingDetailPage — admin review', () => {
       'GET /api/auth/me': () => ({ status: 200, body: { user: ADMIN_USER } }),
       'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
       'GET /api/bookings/b1': () => ({ status: 200, body: { booking: PENDING_BOOKING } }),
+      'GET /api/admin/bookings/b1/proofs/p1/analyses/latest': () => ({ status: 200, body: { analysis: null } }),
       'POST /api/bookings/b1/proofs/p1/reject': () => ({ status: 200, body: { booking: { ...NEW_BOOKING, verificationStatus: 'REJECTED' } } }),
     });
 

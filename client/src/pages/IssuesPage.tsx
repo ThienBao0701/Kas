@@ -20,6 +20,8 @@ import { ErrorAlert } from '../components/ErrorAlert';
 import { PageHeader, QueryState } from '../components/PageState';
 import { Toast } from '../components/Toast';
 import { formatDateTime } from '../lib/format';
+import { useIssueSummary } from '../hooks/useIssueSummary';
+import type { BranchIssueSummary } from '../api/issues';
 
 const POLL_MS = 20_000;
 const ACCEPTED = 'image/png,image/jpeg,image/webp';
@@ -250,11 +252,16 @@ function IssueThumb({ url }: { url: string }) {
 function AdminIssues() {
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState<IssueStatus | ''>('');
+  const [branchFilter, setBranchFilter] = useState<number | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
+  const summary = useIssueSummary();
+  const branches = summary.data?.summary.byBranch ?? [];
+  const activeBranch = branches.find((b) => b.branchId === branchFilter) ?? null;
+
   const list = useQuery({
-    queryKey: ['issues', { admin: true, status: statusFilter }],
-    queryFn: () => issuesApi.list({ status: statusFilter || undefined, pageSize: 100 }),
+    queryKey: ['issues', { admin: true, status: statusFilter, branchId: branchFilter }],
+    queryFn: () => issuesApi.list({ status: statusFilter || undefined, branchId: branchFilter ?? undefined, pageSize: 100 }),
     refetchInterval: POLL_MS,
   });
   const issues = list.data?.issues ?? [];
@@ -306,12 +313,36 @@ function AdminIssues() {
         }
       />
 
+      {/* Branch command center: unresolved counts per branch (all branches, incl.
+          zero). Click a card to filter the list to that branch. */}
+      <BranchIssueCards
+        branches={branches}
+        activeBranchId={branchFilter}
+        onSelect={(id) => setBranchFilter((cur) => (cur === id ? null : id))}
+      />
+
+      {activeBranch ? (
+        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-brand-200 bg-brand-50 px-3 py-2 text-sm">
+          <span className="font-medium text-brand-800">
+            Đang lọc theo chi nhánh: {activeBranch.address}
+          </span>
+          <button
+            type="button"
+            onClick={() => setBranchFilter(null)}
+            className="inline-flex items-center gap-1 rounded-lg px-2 py-0.5 text-xs font-medium text-brand-700 hover:bg-brand-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+          >
+            <X className="h-3.5 w-3.5" aria-hidden="true" />
+            Bỏ lọc chi nhánh
+          </button>
+        </div>
+      ) : null}
+
       <QueryState isLoading={list.isLoading} isError={list.isError} error={list.error}>
         {issues.length === 0 ? (
           <EmptyState
             icon={<Wrench className="h-6 w-6" aria-hidden="true" />}
             title="Chưa có sự cố"
-            message="Không có sự cố nào được báo cáo."
+            message={activeBranch ? `Không có sự cố cho chi nhánh ${activeBranch.address}.` : 'Không có sự cố nào được báo cáo.'}
           />
         ) : (
           <Card className="overflow-hidden">
@@ -347,6 +378,60 @@ function AdminIssues() {
       </QueryState>
 
       <Toast message={toast} onDone={() => setToast(null)} />
+    </div>
+  );
+}
+
+/** The per-branch unresolved-issue summary cards at the top of the Admin page. */
+function BranchIssueCards({
+  branches,
+  activeBranchId,
+  onSelect,
+}: {
+  branches: BranchIssueSummary[];
+  activeBranchId: number | null;
+  onSelect: (branchId: number) => void;
+}) {
+  if (branches.length === 0) return null;
+  return (
+    <div className="mb-4">
+      <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Sự cố theo chi nhánh</h2>
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        {branches.map((b) => {
+          const active = b.branchId === activeBranchId;
+          const hasOpen = b.totalUnresolved > 0;
+          return (
+            <button
+              key={b.branchId}
+              type="button"
+              onClick={() => onSelect(b.branchId)}
+              aria-pressed={active}
+              aria-label={`${b.totalUnresolved} sự cố chưa xử lý tại ${b.address}${active ? ' (đang lọc)' : ''}`}
+              className={`rounded-xl border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 ${
+                active
+                  ? 'border-brand-500 bg-brand-50 ring-1 ring-brand-500'
+                  : hasOpen
+                    ? 'border-red-200 bg-white hover:border-red-300'
+                    : 'border-slate-200 bg-white hover:border-slate-300'
+              }`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <span className="min-w-0 truncate text-sm font-semibold text-slate-800">{b.address}</span>
+                <span
+                  className={`inline-flex min-w-[1.5rem] items-center justify-center rounded-full px-1.5 py-0.5 text-xs font-bold leading-none ${
+                    hasOpen ? 'bg-red-600 text-white' : 'bg-slate-100 text-slate-500'
+                  }`}
+                >
+                  {b.totalUnresolved}
+                </span>
+              </div>
+              <p className="mt-1 text-xs text-slate-500">
+                Mới: {b.newCount} · Đang xử lý: {b.inProgressCount}
+              </p>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

@@ -1,10 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { CalendarClock, CheckCircle2, Clock, Flame } from 'lucide-react';
+import { CalendarClock, CheckCircle2, Clock, Flame, Wrench } from 'lucide-react';
 import { dashboardApi } from '../api/bookings';
 import { Card } from '../components/Card';
 import { StatCard } from '../components/StatCard';
 import { PageHeader, QueryState } from '../components/PageState';
+import { useIssueSummary } from '../hooks/useIssueSummary';
 
 const POLL_MS = 30_000;
 
@@ -19,6 +20,9 @@ export function DashboardPage() {
     queryFn: () => dashboardApi.summary(),
     refetchInterval: POLL_MS,
   });
+
+  const issues = useIssueSummary();
+  const issueSummary = issues.data?.summary;
 
   const totals = query.data?.totals;
   const branches = [...(query.data?.branches ?? [])].sort(
@@ -42,6 +46,26 @@ export function DashboardPage() {
           </Link>
           <StatCard label="LAST MINUTE" value={totals?.lastMinute ?? 0} icon={Flame} tone="red" />
           <StatCard label="Tổng đơn gửi hôm nay" value={totals?.sentToday ?? 0} icon={CalendarClock} />
+
+          {/* Unresolved hotel-issue counter — links straight to the Issues page. */}
+          <Link
+            to="/app/issues"
+            className="focus-visible:outline-none"
+            aria-label={`Sự cố đang mở: ${issueSummary?.totalUnresolved ?? 0} chưa xử lý`}
+          >
+            <Card className={`flex items-center gap-4 p-5 ${(issueSummary?.totalUnresolved ?? 0) > 0 ? 'border-red-200' : ''}`}>
+              <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl bg-red-50 text-red-600">
+                <Wrench className="h-5 w-5" aria-hidden="true" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-2xl font-semibold text-slate-900">{issueSummary?.totalUnresolved ?? 0}</p>
+                <p className="truncate text-sm text-slate-500">Sự cố đang mở</p>
+                <p className="truncate text-xs text-slate-400">
+                  {issueSummary?.newCount ?? 0} mới · {issueSummary?.inProgressCount ?? 0} đang xử lý
+                </p>
+              </div>
+            </Card>
+          </Link>
         </div>
 
         <div className="mt-6">

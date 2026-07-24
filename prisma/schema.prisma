@@ -64,6 +64,18 @@ enum ProofStatus {
   REJECTED
 }
 
+/// Lifecycle of one OCR analysis run over a proof screenshot. Advisory only —
+/// the analysis never approves/rejects a proof and never compares against the
+/// booking. DISABLED means the OCR feature flag was off when the run was created;
+/// FAILED means the provider errored (the proof itself stays valid regardless).
+enum ProofAnalysisStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  DISABLED
+}
+
 /// Why an Admin rejected a proof attempt (a stable code; UI shows Vietnamese).
 enum ProofReviewReason {
   WRONG_CUSTOMER_NAME
@@ -312,10 +324,44 @@ model BookingCreationProof {
   booking     Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   submittedBy User?   @relation("ProofSubmittedBy", fields: [submittedByUserId], references: [id])
   reviewedBy  User?   @relation("ProofReviewedBy", fields: [reviewedByUserId], references: [id])
+  analyses    BookingProofAnalysis[]
 
   @@unique([bookingId, attemptNumber])
   @@index([bookingId])
   @@index([status])
+}
+
+/// One immutable OCR analysis run over a proof screenshot. A proof may have many
+/// runs (re-analysis creates a new row; earlier rows are never overwritten). The
+/// extracted text and the structured fields are stored as plain TEXT (the JSON is
+/// serialised to a string), never as image BLOBs and never as a filesystem path.
+/// This record is advisory extraction only: it carries no MATCH/MISMATCH verdict
+/// and no approval recommendation.
+model BookingProofAnalysis {
+  id             String              @id @default(cuid())
+  proofId        String
+  status         ProofAnalysisStatus @default(PENDING)
+  /// Which provider produced the run, e.g. "tesseract", "disabled", "mock".
+  provider       String
+  /// A version stamp for the extraction logic, so old runs remain interpretable.
+  analysisVersion String
+  /// Raw OCR text, length-capped by the service before it is stored (never bytes).
+  extractedText  String?
+  /// Structured fields serialised as a JSON string (validated before storage).
+  extractedDataJson String?
+  /// Sanitised, user-safe error message when status is FAILED (never a stack/path).
+  errorMessage   String?
+  startedAt      DateTime?
+  completedAt    DateTime?
+
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  proof BookingCreationProof @relation(fields: [proofId], references: [id], onDelete: Cascade)
+
+  @@index([proofId])
+  @@index([proofId, status])
+  @@index([createdAt])
 }
 
 /// One room within a booking. Rooms are never merged; each keeps its own prices.

@@ -22,6 +22,8 @@ import {
 import { loadBookingDetail } from '../booking/bookingRepo';
 import { approveProof, rejectProof, submitProof, authorizeProofImage } from '../booking/proof';
 import { readProofFile } from '../booking/proofStorage';
+import { analyzeAfterSubmit } from '../booking/ocr/analysisService';
+import { isTest } from '../config/env';
 import type { UserWithBranch } from '../auth/serialize';
 
 const extractSchema = z.object({
@@ -315,6 +317,20 @@ export function createBookingsRouter(): Router {
           ? { buffer: req.file.buffer, originalName: req.file.originalname, size: req.file.size }
           : undefined;
         const booking = await submitProof(req.params.id!, file, note, actor(user), getClock());
+
+        // Advisory OCR extraction on the just-created proof. It never blocks or
+        // fails the upload: awaited only in tests for determinism, fire-and-forget
+        // in production. The proof attempt is already valid regardless of OCR.
+        const latestProof = await prisma.bookingCreationProof.findFirst({
+          where: { bookingId: req.params.id! },
+          orderBy: { attemptNumber: 'desc' },
+          select: { id: true },
+        });
+        if (latestProof) {
+          if (isTest) await analyzeAfterSubmit(latestProof.id);
+          else void analyzeAfterSubmit(latestProof.id);
+        }
+
         res.status(201).json({ booking: serializeOpsBookingDetail(booking, user.role === 'ADMIN') });
       })().catch(next);
     },

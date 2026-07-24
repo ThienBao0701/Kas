@@ -49,6 +49,26 @@ npm run dev        # backend :3001 + client dev :5173 (client proxy /api sang ba
 - Thư mục này phải **cùng nằm trên máy chủ** với file `.db` để dữ liệu và ảnh luôn
   đồng bộ. Cấp quyền ghi cho tài khoản chạy Kas.
 
+## OCR ảnh chứng minh (tùy chọn, chỉ để đọc thông tin)
+
+- OCR **chỉ đọc** thông tin từ ảnh (mã booking, ngày, tổng tiền, thanh toán…) để
+  hỗ trợ Admin. Nó **không** tự duyệt/từ chối và **không** so sánh với đơn gốc.
+  Admin vẫn luôn tự kiểm tra ảnh.
+- Mặc định **tắt**: `PROOF_OCR_ENABLED=false`. Khi tắt, nộp ảnh vẫn hoạt động bình
+  thường, mỗi lần phân tích được ghi trạng thái `DISABLED`, Admin xem ảnh thủ công.
+- Khi bật (`PROOF_OCR_ENABLED=true`, ngôn ngữ `PROOF_OCR_LANGUAGE=eng+vie`) cần cài
+  gói **tùy chọn** `tesseract.js`:
+
+  ```bash
+  npm install tesseract.js -w server
+  ```
+
+  Nếu OCR lỗi hoặc chưa cài gói, việc nộp ảnh **vẫn thành công** — lần phân tích chỉ
+  được ghi là `FAILED` (thông báo đã được làm sạch, không lộ đường dẫn máy chủ).
+- Chỉ **Admin** đọc được dữ liệu OCR; lễ tân không thấy. Kết quả OCR (văn bản + các
+  trường) lưu trong SQLite dưới dạng **chữ** (không lưu ảnh trong DB), nên đã được
+  sao lưu cùng `data.db`. Không lưu byte ảnh hay đường dẫn hệ thống tệp trong DB.
+
 ## Tường lửa Windows
 
 Nếu máy lễ tân không mở được Kas, cho phép cổng của máy chủ (ví dụ 3001) qua

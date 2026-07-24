@@ -24,6 +24,7 @@ import { Modal } from './Modal';
 import { ErrorAlert } from './ErrorAlert';
 import { PaymentBadge } from './Badges';
 import { ImageUploadDropzone } from './ImageUploadDropzone';
+import { ProofOcrCard } from './ProofOcrCard';
 
 /**
  * The proof-of-creation workflow surface. What it renders depends on the
@@ -156,6 +157,8 @@ function ReceptionistPendingCard({ booking: b, proof }: { booking: BookingDetail
         Bạn đã gửi ảnh (lần {proof?.attemptNumber ?? b.proofs.length}). Vui lòng đợi Admin xác nhận. Bạn sẽ nhận được
         thông báo khi có kết quả.
       </p>
+      {/* Receptionists see only that the image was received — never OCR details. */}
+      <p className="mt-1 text-xs text-slate-500">Ảnh đã được hệ thống tiếp nhận.</p>
       {proof ? <ProofThumb proof={proof} className="mt-4 w-40" /> : null}
       {b.proofs.length > 1 ? <ProofHistory proofs={b.proofs} className="mt-5" /> : null}
     </Card>
@@ -265,6 +268,9 @@ function AdminReviewCard({
           ) : null}
         </div>
       </div>
+
+      {/* Advisory OCR extraction (admin-only). Never a MATCH/MISMATCH verdict. */}
+      <ProofOcrCard bookingId={b.id} proofId={proof.id} />
 
       {approve.isError && !(approve.error instanceof ApiError && approve.error.code === 'PROOF_ALREADY_REVIEWED') ? (
         <div className="mt-3"><ErrorAlert>{toUserMessage(approve.error)}</ErrorAlert></div>

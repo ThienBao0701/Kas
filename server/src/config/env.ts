@@ -55,6 +55,15 @@ const envSchema = z
     PROOF_UPLOAD_DIR: z.string().min(1).default('server/uploads/booking-proofs'),
     // Where receptionist issue-report photos are stored (same rules as proofs).
     ISSUE_UPLOAD_DIR: z.string().min(1).default('server/uploads/issue-photos'),
+
+    // --- Proof OCR (advisory extraction only) ---
+    // When false (the safe default), proof upload still works and the Admin reads
+    // the screenshot manually; every analysis is recorded as DISABLED. When true,
+    // the server attempts local OCR with Tesseract.js (an optional dependency —
+    // install it separately). OCR never approves/rejects and never compares.
+    PROOF_OCR_ENABLED: booleanFromEnv.default(false),
+    // Tesseract language packs to load (e.g. "eng+vie"). Only used when enabled.
+    PROOF_OCR_LANGUAGE: z.string().min(1).default('eng+vie'),
   })
   .superRefine((value, ctx) => {
     // In production a missing initial-admin variable must never silently create

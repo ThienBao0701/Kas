@@ -185,6 +185,56 @@ the client filename is never trusted. The real image type is verified by
 through an authenticated, branch-isolated route
 (`GET /api/bookings/:id/proofs/:proofId/image`), never as public static files.
 
+### Proof OCR — advisory extraction only
+
+When a proof is submitted, the server can run **OCR** over the screenshot to read
+operational text (booking code, guest name, check-in/out dates, nights, room type,
+room quantity, total, payment wording, note, branch/address when visible) and show
+it to the Admin. This is **advisory extraction only**:
+
+- It **never** approves, rejects, or compares a proof against the booking, and it
+  produces **no** MATCH/MISMATCH verdict and no approval recommendation. The Admin
+  always checks the screenshot themselves. (Comparison/decisioning is a later
+  milestone.)
+- Every extracted field carries an **OCR confidence** (0–100). That is a signal
+  about the *reading*, not about whether the proof is correct. Uncertain fields
+  are returned as `null` (NOT_FOUND) — a value is never invented.
+
+**Pluggable provider.** OCR runs through a `ProofOcrProvider` abstraction so no
+paid/cloud service is hard-coded. Two flags in `.env` control it:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `PROOF_OCR_ENABLED` | `false` | Off by default — the app always starts and works without OCR. |
+| `PROOF_OCR_LANGUAGE` | `eng+vie` | Tesseract language packs, used only when enabled. |
+
+When enabled, the first provider is **local [`tesseract.js`](https://github.com/naptha/tesseract.js)**,
+loaded lazily as an **optional** dependency (`npm install tesseract.js -w server`);
+if it is not installed the run simply fails gracefully. Automated tests use a
+deterministic mock provider and never require real Tesseract.
+
+**Failure / disabled behaviour.** Proof submission **never fails because of OCR**.
+If OCR is disabled the analysis is recorded as `DISABLED`; if it errors it is
+recorded as `FAILED` with a **sanitised** message (never a stack trace or file
+path) and the Admin sees a "check the image manually" note. The proof attempt is
+valid regardless.
+
+**Data model.** Each run is an immutable `BookingProofAnalysis` row
+(`PENDING → PROCESSING → COMPLETED | FAILED`, or `DISABLED`). A proof may have
+several runs — **re-analysis creates a new row; earlier runs are preserved**. The
+raw text is length-capped and the structured fields are stored as a JSON string;
+no image BLOBs and no filesystem paths are stored. Only one run may be active per
+proof at a time (duplicate active runs are refused with `409`).
+
+**Admin-only APIs** (receptionists cannot read raw OCR data; branch isolation and
+proof authorization are enforced):
+
+```
+GET  /api/admin/bookings/:bookingId/proofs/:proofId/analyses          # all runs, newest first
+GET  /api/admin/bookings/:bookingId/proofs/:proofId/analyses/latest   # most recent run (or null)
+POST /api/admin/bookings/:bookingId/proofs/:proofId/analyze           # re-analyse (guards duplicates)
+```
+
 ### Send-to-branch flow
 
 `POST /api/admin/bookings/:id/send` (Admin) assigns one branch, re-runs full
@@ -226,6 +276,28 @@ Notifications are stored rows exposed by polling-ready APIs
 `POST /api/notifications/:id/read`, `/api/notifications/read-all`); each is scoped
 to its owner. **Server-Sent Events / live push are intentionally deferred to a
 later phase.**
+
+### Hotel issue counters (branch command center)
+
+Unresolved hotel-issue counts are computed **live from `HotelIssue` status** — there
+is no persisted counter table and no duplicate totals. **Unresolved = `NEW` +
+`IN_PROGRESS`; `RESOLVED` issues stay in history but are never counted.**
+
+`GET /api/issues/summary` returns totals plus a per-branch breakdown:
+
+```jsonc
+{ "totalUnresolved": 8, "newCount": 5, "inProgressCount": 3,
+  "byBranch": [ { "branchId": 8, "address": "191 Lê Thánh Tôn",
+                  "newCount": 2, "inProgressCount": 1, "totalUnresolved": 3 } ] }
+```
+
+Branch scope mirrors the rest of the app: an **Admin** sees **all eight branches**
+(including zero-count ones); a **receptionist** sees **only their own branch** and
+cannot widen the scope with a `branchId` query parameter. The counters feed the
+Admin sidebar badge, the dashboard "Sự cố đang mở" card, and the per-branch summary
+cards on the Issues page (click a card to filter the list). They refresh on the
+existing **polling** cadence — **no SSE**. Counts always come from issue status,
+never from unread-notification rows.
 
 ### History API
 

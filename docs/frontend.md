@@ -180,7 +180,44 @@ on close, a Tab focus-trap, body-scroll lock while open, and labelled controls.
 valid image or while uploading (shows *"Đang gửi ảnh..."* + spinner, preventing a
 duplicate multipart request). On success the existing toast/state transition
 applies; on failure the selected image is kept so the receptionist can retry.
-**No OCR in C.1** — the image is only uploaded, never analysed.
+
+## Proof OCR card (admin-only, advisory)
+
+On the Admin proof-review screen, `ProofOcrCard`
+(`client/src/components/ProofOcrCard.tsx`, rendered only inside the admin review
+card) shows **"Dữ liệu nhận diện từ ảnh"** — what OCR read from the screenshot. It
+polls `GET /api/admin/bookings/:id/proofs/:proofId/analyses/latest` while a run is
+in progress and stops once terminal. States: **Đang phân tích ảnh…** (pending),
+**Đã nhận diện** (completed, with the extracted fields), **Không thể nhận diện**
+(failed → check the image manually), **OCR đang tắt** (disabled). Each field shows
+its value or *"Không nhận diện được"* plus *"Độ tin cậy OCR: N%"*. A **Phân tích lại
+ảnh** button re-runs analysis.
+
+It is **advisory only**: there is deliberately **no ĐÚNG/SAI/MATCH/MISMATCH/CÓ THỂ
+DUYỆT** anywhere, and a permanent disclaimer reads *"Kết quả OCR chỉ là dữ liệu
+nhận diện từ ảnh. Admin vẫn phải tự kiểm tra ảnh trước khi xác nhận."* Receptionists
+never see this card or any raw OCR data — their pending view only says *"Ảnh đã
+được hệ thống tiếp nhận."*
+
+## Hotel issue counters (branch command center)
+
+`useIssueSummary` (`client/src/hooks/useIssueSummary.ts`) polls
+`GET /api/issues/summary` (shared query key, 20 s) and drives three surfaces:
+
+- **Sidebar badge** on *"Sự cố khách sạn"* / *"Báo cáo sự cố"* — the unresolved
+  count (Admin: all branches; receptionist: own branch). Accessible label
+  *"N sự cố chưa xử lý"* (the number, not colour, carries the meaning).
+- **Dashboard card** *"Sự cố đang mở"* with an *"N mới · M đang xử lý"* breakdown,
+  linking to `/app/issues`.
+- **Admin Issues page** — a row of per-branch summary cards (all eight branches,
+  including zero-count). Each card shows the address, an unresolved badge and
+  *"Mới: x · Đang xử lý: y"*, with an accessible label *"N sự cố chưa xử lý tại
+  &lt;address&gt;"*. Clicking a card filters the list to that branch (keeping the
+  status filter), shows an active-filter banner, and offers **Bỏ lọc chi nhánh** to
+  clear it.
+
+Counts always come from `HotelIssue` status (**NEW + IN_PROGRESS**), never from
+unread-notification rows, and refresh via polling — **no SSE**.
 
 ## Proof verification — "Gửi Admin kiểm tra" → "Đúng / Sai"
 

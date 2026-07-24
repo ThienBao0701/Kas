@@ -8,6 +8,7 @@ import { serializeAdminBookingDetail } from '../booking/bookingView';
 import { updateBookingDraft, updateBookingSchema } from '../booking/adminEdit';
 import { markBookingReady, sendBooking } from '../booking/dispatch';
 import { confirmBusinessType } from '../booking/businessTypeService';
+import { latestAnalysis, listAnalyses, reanalyzeProof } from '../booking/ocr/analysisService';
 import type { UserWithBranch } from '../auth/serialize';
 
 const readySchema = z.object({ note: z.string().trim().max(500).optional() });
@@ -86,5 +87,36 @@ export function createAdminBookingsRouter(): Router {
     })().catch(next);
   });
 
+  // --- Proof OCR (advisory extraction; Admin-only via the router middleware) ---
+
+  // GET …/proofs/:proofId/analyses — all analysis runs for a proof (newest first).
+  router.get('/admin/bookings/:bookingId/proofs/:proofId/analyses', (req, res, next) => {
+    (async () => {
+      const analyses = await listAnalyses(bookingId(req.params.bookingId), proofIdOf(req.params.proofId));
+      res.json({ analyses });
+    })().catch(next);
+  });
+
+  // GET …/proofs/:proofId/analyses/latest — the most recent run (or null).
+  router.get('/admin/bookings/:bookingId/proofs/:proofId/analyses/latest', (req, res, next) => {
+    (async () => {
+      const analysis = await latestAnalysis(bookingId(req.params.bookingId), proofIdOf(req.params.proofId));
+      res.json({ analysis });
+    })().catch(next);
+  });
+
+  // POST …/proofs/:proofId/analyze — Admin triggers a fresh run (guards duplicates).
+  router.post('/admin/bookings/:bookingId/proofs/:proofId/analyze', (req, res, next) => {
+    (async () => {
+      const analysis = await reanalyzeProof(bookingId(req.params.bookingId), proofIdOf(req.params.proofId), getClock());
+      res.status(201).json({ analysis });
+    })().catch(next);
+  });
+
   return router;
+}
+
+function proofIdOf(raw: string | undefined): string {
+  if (!raw || raw.trim().length === 0) throw ApiError.notFound('Không tìm thấy ảnh.');
+  return raw;
 }

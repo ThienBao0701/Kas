@@ -13,6 +13,7 @@ import {
   setIssueStatus,
   updateIssue,
 } from '../issue/issueService';
+import { computeIssueSummary } from '../issue/issueSummary';
 import type { UserWithBranch } from '../auth/serialize';
 
 const CATEGORY = z.enum([
@@ -88,6 +89,17 @@ export function createIssuesRouter(): Router {
         issues: issues.map(serializeIssue),
         pagination: { page: q.page, pageSize: q.pageSize, total, totalPages: Math.max(1, Math.ceil(total / q.pageSize)) },
       });
+    })().catch(next);
+  });
+
+  // GET /api/issues/summary — unresolved counters within the caller's branch
+  // scope (Admin: all branches; receptionist: own branch only). Declared before
+  // "/issues/:id" so "summary" is never captured as an id.
+  router.get('/issues/summary', requireAuth, requirePasswordChanged, (req, res, next) => {
+    (async () => {
+      const user = req.currentUser!;
+      const summary = await computeIssueSummary(actor(user));
+      res.json({ summary });
     })().catch(next);
   });
 
