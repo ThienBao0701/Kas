@@ -73,9 +73,12 @@ export function nightCount(checkIn: string | null, checkOut: string | null): num
   return ms > 0 ? Math.round(ms / 86_400_000) : 0;
 }
 
+// Operational payment wording. Every user-facing screen shows exactly these
+// (never the old "Đã thanh toán" / "Thanh toán tại khách sạn"); the DB enum
+// values PAY_BEFORE / PAY_AFTER are unchanged internally.
 const PAYMENT_LABELS: Record<string, string> = {
-  PAY_BEFORE: 'Đã thanh toán',
-  PAY_AFTER: 'Thanh toán tại khách sạn',
+  PAY_BEFORE: 'PAY BEFORE CHECK-IN',
+  PAY_AFTER: 'PAY AFTER CHECK-IN',
 };
 
 export function paymentLabel(status: string | null | undefined): string {
@@ -114,10 +117,10 @@ export function formatFileSize(bytes: number): string {
   return `${mb.toFixed(mb < 10 ? 1 : 0).replace('.', ',')} MB`;
 }
 
-/** The exact PAY BEFORE / PAY AFTER token used in the "Sao chép toàn bộ" text. */
+/** The exact payment token used in the "Sao chép toàn bộ" text. */
 export function payStatusCopy(status: string | null | undefined): string {
-  if (status === 'PAY_BEFORE') return 'PAY BEFORE';
-  if (status === 'PAY_AFTER') return 'PAY AFTER';
+  if (status === 'PAY_BEFORE') return 'PAY BEFORE CHECK-IN';
+  if (status === 'PAY_AFTER') return 'PAY AFTER CHECK-IN';
   return 'Chưa xác định';
 }
 

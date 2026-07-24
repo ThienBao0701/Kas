@@ -89,9 +89,9 @@ export function noteNights(b: Pick<BookingDetail, 'checkInDate' | 'checkOutDate'
   return b.rooms.reduce((max, r) => Math.max(max, r.nights.length), 0);
 }
 
-/** PAY_BEFORE → "PAY BEFORE", PAY_AFTER → "PAY AFTER" (never the Vietnamese label). */
+/** PAY_BEFORE → "PAY BEFORE CHECK-IN", PAY_AFTER → "PAY AFTER CHECK-IN". */
 export function paymentCode(status: PaymentStatus): string {
-  return status === 'PAY_BEFORE' ? 'PAY BEFORE' : 'PAY AFTER';
+  return status === 'PAY_BEFORE' ? 'PAY BEFORE CHECK-IN' : 'PAY AFTER CHECK-IN';
 }
 
 /**
@@ -148,7 +148,10 @@ export function buildPmsNote(b: BookingDetail, now: Date = new Date()): PmsNoteR
 
   const breakfast = b.branch ? BREAKFAST_BRANCH_CODES.has(b.branch.code) : false;
   const arrival = arrivalNote(b.specialRequest);
-  const line2 = `${breakfast ? 'ĂN SÁNG ' : ''}${hcmDayMonth(now)} ${contactLabel(b.phone)}${
+  // For a partner booking the contact label (CÓ ZL / CÓ WA / NO CONTACT) is
+  // replaced by "ĐƠN ĐỐI TÁC"; breakfast, date, arrival and requests are kept.
+  const contact = b.businessType === 'PARTNER' ? 'ĐƠN ĐỐI TÁC' : contactLabel(b.phone);
+  const line2 = `${breakfast ? 'ĂN SÁNG ' : ''}${hcmDayMonth(now)} ${contact}${
     arrival ? ` ${arrival}` : ''
   }`;
 

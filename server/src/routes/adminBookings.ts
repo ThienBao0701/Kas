@@ -7,9 +7,12 @@ import { loadBookingDetail } from '../booking/bookingRepo';
 import { serializeAdminBookingDetail } from '../booking/bookingView';
 import { updateBookingDraft, updateBookingSchema } from '../booking/adminEdit';
 import { markBookingReady, sendBooking } from '../booking/dispatch';
+import { confirmBusinessType } from '../booking/businessTypeService';
 import type { UserWithBranch } from '../auth/serialize';
 
 const readySchema = z.object({ note: z.string().trim().max(500).optional() });
+
+const businessTypeSchema = z.object({ businessType: z.enum(['DIRECT', 'PARTNER']) });
 
 const sendSchema = z.object({
   branchId: z.number().int().positive(),
@@ -44,6 +47,16 @@ export function createAdminBookingsRouter(): Router {
       const user = req.currentUser!;
       const input = updateBookingSchema.parse(req.body);
       const booking = await updateBookingDraft(bookingId(req.params.id), input, user.id);
+      res.json({ booking: serializeAdminBookingDetail(booking) });
+    })().catch(next);
+  });
+
+  // POST /api/admin/bookings/:id/business-type — Admin confirms/overrides the type.
+  router.post('/admin/bookings/:id/business-type', (req, res, next) => {
+    (async () => {
+      const user = req.currentUser!;
+      const { businessType } = businessTypeSchema.parse(req.body ?? {});
+      const booking = await confirmBusinessType(bookingId(req.params.id), businessType, user.id);
       res.json({ booking: serializeAdminBookingDetail(booking) });
     })().catch(next);
   });

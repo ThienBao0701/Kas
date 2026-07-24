@@ -6,10 +6,15 @@ import { useAuth } from '../auth/AuthProvider';
 import { bookingsApi, branchesApi } from '../api/bookings';
 import { Card } from '../components/Card';
 import { EmptyState } from '../components/EmptyState';
-import { LastMinuteBadge, StatusBadge } from '../components/Badges';
+import { BusinessTypeBadge, LastMinuteBadge, StatusBadge } from '../components/Badges';
 import { Pagination } from '../components/Pagination';
 import { PageHeader, QueryState } from '../components/PageState';
-import { formatDate, formatDateTime } from '../lib/format';
+import { formatDate, formatDateTime, formatMoney } from '../lib/format';
+
+/** Whole VND (or "Chưa xác định" when the booking-level total is unknown). */
+function totalDisplay(amount: number | null, currency: string): string {
+  return amount != null ? formatMoney(amount, currency) : 'Chưa xác định';
+}
 
 interface Filters {
   search: string;
@@ -209,6 +214,8 @@ export function HistoryPage() {
                     <th className="px-4 py-3">Khách</th>
                     <th className="px-4 py-3">Chi nhánh</th>
                     <th className="px-4 py-3">Nhận phòng</th>
+                    <th className="px-4 py-3">Hạng phòng (SL)</th>
+                    <th className="px-4 py-3">Giá tổng</th>
                     <th className="px-4 py-3">Trạng thái</th>
                     <th className="px-4 py-3">Gửi (sentAt)</th>
                     <th className="px-4 py-3">Xác nhận (completedAt)</th>
@@ -222,14 +229,17 @@ export function HistoryPage() {
                       className="cursor-pointer border-b border-slate-100 last:border-b-0 hover:bg-slate-50"
                     >
                       <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           {b.isLastMinute ? <LastMinuteBadge /> : null}
                           <span className="font-mono text-slate-900">{b.bookingCode ?? '—'}</span>
+                          <BusinessTypeBadge type={b.businessType} />
                         </div>
                       </td>
                       <td className="px-4 py-3 text-slate-800">{b.customerName ?? '—'}</td>
-                      <td className="px-4 py-3 text-slate-600">{b.branch?.hotelName ?? '—'}</td>
+                      <td className="px-4 py-3 text-slate-600">{b.branch?.address ?? '—'}</td>
                       <td className="px-4 py-3 text-slate-600">{formatDate(b.checkInDate)}</td>
+                      <td className="px-4 py-3 text-slate-700">{b.roomSummary || '—'}</td>
+                      <td className="px-4 py-3 font-medium text-slate-900">{totalDisplay(b.totalAmount, b.currency)}</td>
                       <td className="px-4 py-3"><StatusBadge status={b.status} /></td>
                       <td className="px-4 py-3 text-slate-500">{formatDateTime(b.sentAt)}</td>
                       <td className="px-4 py-3 text-slate-500">

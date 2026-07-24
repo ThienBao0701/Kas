@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { FilePlus2, Send, Sparkles } from 'lucide-react';
-import { bookingsApi, branchesApi, SOURCE_LABEL, type BookingDetail, type BookingEdit, type BookingSource, type ParserQuality, type WarningView } from '../api/bookings';
+import { bookingsApi, branchesApi, BUSINESS_TYPE_LABEL, SOURCE_LABEL, type BookingDetail, type BookingEdit, type BookingSource, type BusinessType, type ParserQuality, type WarningView } from '../api/bookings';
 import { ApiError, toUserMessage } from '../api/errors';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
@@ -102,6 +102,9 @@ export function DispatchPage() {
   const [warnings, setWarnings] = useState<WarningView[]>([]);
   const [quality, setQuality] = useState<ParserQuality | null>(null);
   const [branchConfidence, setBranchConfidence] = useState<number | null>(null);
+  const [businessType, setBusinessType] = useState<BusinessType | null>(null);
+  const [businessTypeConfidence, setBusinessTypeConfidence] = useState<number | null>(null);
+  const [businessTypeManuallyConfirmed, setBusinessTypeManuallyConfirmed] = useState(false);
   const [pendingWarnings, setPendingWarnings] = useState<WarningView[] | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
   const [saveNote, setSaveNote] = useState<string | null>(null);
@@ -116,6 +119,18 @@ export function DispatchPage() {
       setBranchId(res.branchConfident && res.suggestedBranch ? res.suggestedBranch.id : undefined);
       setQuality(res.parserQuality);
       setBranchConfidence(res.suggestedBranch ? res.branchConfidence : null);
+      setBusinessType(res.businessType);
+      setBusinessTypeConfidence(res.businessTypeConfidence);
+      setBusinessTypeManuallyConfirmed(false);
+    },
+  });
+
+  const confirmBusinessMut = useMutation({
+    mutationFn: (type: 'DIRECT' | 'PARTNER') => bookingsApi.confirmBusinessType(draftId!, type),
+    onSuccess: (res) => {
+      setBusinessType(res.booking.businessType);
+      setBusinessTypeConfidence(res.booking.businessTypeConfidence ?? 100);
+      setBusinessTypeManuallyConfirmed(true);
     },
   });
 
@@ -267,6 +282,9 @@ export function DispatchPage() {
               setRawText('');
               setQuality(null);
               setBranchConfidence(null);
+              setBusinessType(null);
+              setBusinessTypeConfidence(null);
+              setBusinessTypeManuallyConfirmed(false);
             }}
           >
             <FilePlus2 className="h-4 w-4" aria-hidden="true" />
@@ -276,6 +294,16 @@ export function DispatchPage() {
       />
 
       {quality ? <DataQualityCard quality={quality} branchConfidence={branchConfidence} /> : null}
+
+      {businessType ? (
+        <BusinessTypeCard
+          type={businessType}
+          confidence={businessTypeConfidence}
+          manuallyConfirmed={businessTypeManuallyConfirmed}
+          onConfirm={(t) => confirmBusinessMut.mutate(t)}
+          confirming={confirmBusinessMut.isPending}
+        />
+      ) : null}
 
       {warnings.length > 0 ? (
         <Card className="border-amber-200 bg-amber-50/50 p-4">
@@ -290,7 +318,15 @@ export function DispatchPage() {
 
       <Card className="p-5">
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Khách sạn"><input className={inputClass} value={form.hotelName} onChange={(e) => updateForm({ hotelName: e.target.value })} /></Field>
+          <Field label="Địa chỉ khách sạn">
+            <input
+              className={`${inputClass} bg-slate-50 text-slate-700`}
+              value={selectedBranch ? selectedBranch.address : ''}
+              placeholder="Chọn chi nhánh để hiển thị địa chỉ khách sạn"
+              readOnly
+              aria-readonly="true"
+            />
+          </Field>
           <Field label="Mã đặt phòng"><input className={inputClass} value={form.bookingCode} onChange={(e) => updateForm({ bookingCode: e.target.value })} /></Field>
           <Field label="Tên khách"><input className={inputClass} value={form.customerName} onChange={(e) => updateForm({ customerName: e.target.value })} /></Field>
           <Field label="Số điện thoại"><input className={inputClass} value={form.phone} onChange={(e) => updateForm({ phone: e.target.value })} /></Field>
@@ -299,8 +335,8 @@ export function DispatchPage() {
           <Field label="Tổng tiền (VND)"><input inputMode="numeric" className={inputClass} value={form.totalAmount} onChange={(e) => updateForm({ totalAmount: e.target.value })} /></Field>
           <Field label="Thanh toán">
             <select className={inputClass} value={form.paymentStatus} onChange={(e) => updateForm({ paymentStatus: e.target.value as FormState['paymentStatus'] })}>
-              <option value="PAY_AFTER">Thanh toán tại khách sạn</option>
-              <option value="PAY_BEFORE">Đã thanh toán</option>
+              <option value="PAY_AFTER">PAY AFTER CHECK-IN</option>
+              <option value="PAY_BEFORE">PAY BEFORE CHECK-IN</option>
             </select>
           </Field>
         </div>
@@ -370,7 +406,7 @@ export function DispatchPage() {
         {selectedBranch ? (
           <p className="mt-3 rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-600">
             Xem trước: gửi <strong>{form.customerName || 'khách'}</strong> ({form.bookingCode || 'chưa có mã'}) đến{' '}
-            <strong>{selectedBranch.hotelName}</strong>, tổng {formatMoney(parseAmount(form.totalAmount))}.
+            <strong>{selectedBranch.address}</strong>, tổng {formatMoney(parseAmount(form.totalAmount))}.
           </p>
         ) : null}
 
@@ -479,6 +515,71 @@ function DataQualityCard({
           Admin cần kiểm tra lại booking này trước khi gửi.
         </p>
       ) : null}
+    </Card>
+  );
+}
+
+const BUSINESS_TYPE_META: Record<BusinessType, { emoji: string; text: string }> = {
+  DIRECT: { emoji: '🟢', text: 'text-green-700' },
+  PARTNER: { emoji: '🟠', text: 'text-amber-700' },
+  UNKNOWN: { emoji: '⚪', text: 'text-slate-600' },
+};
+
+/**
+ * Business-type read-out on the review form. Shows the detected type + confidence,
+ * a confirmation prompt when UNKNOWN, and two actions to mark the booking as a
+ * normal ("Đơn thường") or partner ("Đơn đối tác") order. A manual choice is
+ * persisted and overrides detection; the Admin can also override a confident
+ * result.
+ */
+function BusinessTypeCard({
+  type,
+  confidence,
+  manuallyConfirmed,
+  onConfirm,
+  confirming,
+}: {
+  type: BusinessType;
+  confidence: number | null;
+  manuallyConfirmed: boolean;
+  onConfirm: (t: 'DIRECT' | 'PARTNER') => void;
+  confirming: boolean;
+}) {
+  const meta = BUSINESS_TYPE_META[type];
+  return (
+    <Card className="p-4">
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+        <p className={`text-sm font-semibold ${meta.text}`}>
+          Loại đơn:{' '}
+          <span role="status">
+            {meta.emoji} {BUSINESS_TYPE_LABEL[type]}
+          </span>
+        </p>
+        {type !== 'UNKNOWN' && confidence != null ? (
+          <p className="text-sm text-slate-600">
+            Độ tin cậy loại đơn: <span className="font-semibold text-slate-900">{confidence}%</span>
+          </p>
+        ) : null}
+        {manuallyConfirmed ? <span className="text-xs text-slate-500">Admin đã xác nhận</span> : null}
+      </div>
+
+      {type === 'UNKNOWN' ? (
+        <p
+          role="alert"
+          className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700"
+        >
+          Không thể tự xác định loại đơn. Admin vui lòng xác nhận.
+        </p>
+      ) : null}
+
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button variant="secondary" onClick={() => onConfirm('DIRECT')} loading={confirming} disabled={confirming}>
+          Đánh dấu là Đơn thường
+        </Button>
+        <Button variant="secondary" onClick={() => onConfirm('PARTNER')} loading={confirming} disabled={confirming}>
+          Đánh dấu là Đơn đối tác
+        </Button>
+      </div>
     </Card>
   );
 }

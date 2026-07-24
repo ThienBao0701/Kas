@@ -80,6 +80,53 @@ normalized output) and stamps the booking's `sourcePlatform`. A `SourceBadge`
 chip labels each booking across the lists and detail view. Booking.com behaviour
 is unchanged.
 
+## Booking business type + branch address (review form)
+
+On the review form (`DispatchPage` stage 2):
+
+- The first field is **"Địa chỉ khách sạn"** — a **read-only** display of the
+  selected branch's address (data priority: selected branch → confidently
+  suggested branch → empty with the placeholder "Chọn chi nhánh để hiển thị địa
+  chỉ khách sạn"). It updates the instant the Admin changes the branch dropdown.
+  The original `hotelName` is kept internally (parser matching/audit) and the real
+  `branchId` is dispatched; the send preview reads the branch address.
+- A **business-type card** (`BusinessTypeCard`) shows the detected type
+  (🟢 Đơn thường / 🟠 Đơn đối tác / ⚪ Chưa xác định) and, when confident,
+  "Độ tin cậy loại đơn: X%". For `UNKNOWN` it prompts the Admin to confirm; two
+  actions — **Đánh dấu là Đơn thường** / **Đánh dấu là Đơn đối tác** — call the
+  admin-only `confirmBusinessType` endpoint. A manual choice persists, overrides
+  detection and shows "Admin đã xác nhận". Detection lives server-side; the
+  frontend only displays and confirms.
+
+A `BusinessTypeBadge` renders **ĐƠN ĐỐI TÁC** (partner) or **CHƯA XÁC ĐỊNH LOẠI
+ĐƠN** (unknown) on the booking detail header and history/completed rows; DIRECT
+shows no badge. Receptionists see only the final persisted type, never the
+detection debug.
+
+## Payment wording
+
+`paymentLabel` and `payStatusCopy` render exactly **PAY BEFORE CHECK-IN** /
+**PAY AFTER CHECK-IN** everywhere (detail, dispatch select, COPY ALL, history,
+completed, proof review); the PMS note's `paymentCode` matches. The DB enum
+`PAY_BEFORE` / `PAY_AFTER` is unchanged — this is display-only.
+
+## PMS note — partner + breakfast
+
+`buildPmsNote` line 2 replaces the contact label (`CÓ ZL` / `CÓ WA` / `NO
+CONTACT`) with **ĐƠN ĐỐI TÁC** when `businessType === 'PARTNER'`, keeping the
+breakfast prefix, date, arrival note and requests (and never the phone). Breakfast
+is keyed by the stable branch `code` set `BREAKFAST_BRANCH_CODES`
+(LY_TU_TRONG_260 / NGUYEN_TRAI_47A / NGUYEN_THAI_BINH_170), for both DIRECT and
+PARTNER.
+
+## History & completed columns
+
+Both history/completed tables add **Hạng phòng (SL)** (from the backend
+`roomSummary`, aggregated by persisted room type) and **Giá tổng** (booking-level
+`totalAmount`, "Chưa xác định" when null), plus the business-type badge. Tables
+scroll horizontally on mobile; booking code, room summary and total are never
+dropped.
+
 ## Proof verification — "Gửi Admin kiểm tra" → "Đúng / Sai"
 
 Confirmation is no longer a one-click action; it is a proof-reviewed workflow

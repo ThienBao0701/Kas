@@ -4,6 +4,7 @@ import type { Branch } from '../auth/types';
 export type BookingStatus = 'DRAFT' | 'READY' | 'NEW' | 'COMPLETED' | 'ARCHIVED';
 export type PaymentStatus = 'PAY_BEFORE' | 'PAY_AFTER';
 export type BookingSource = 'BOOKING_COM' | 'AGODA';
+export type BusinessType = 'DIRECT' | 'PARTNER' | 'UNKNOWN';
 export type VerificationStatus = 'NOT_SUBMITTED' | 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED';
 export type ProofStatus = 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED';
 export type ProofReviewReason =
@@ -108,6 +109,10 @@ export interface BookingDetail {
   status: BookingStatus;
   sourcePlatform: BookingSource;
   verificationStatus: VerificationStatus;
+  businessType: BusinessType;
+  businessTypeConfidence?: number | null;
+  businessTypeManuallyConfirmed: boolean;
+  businessTypeDetectionSource?: string | null;
   hotelName: string | null;
   branch: Branch | null;
   branchId: number | null;
@@ -148,10 +153,12 @@ export interface NewListItem {
   phone: string | null;
   branch: Branch | null;
   sourcePlatform: BookingSource;
+  businessType: BusinessType;
   verificationStatus: VerificationStatus;
   checkInDate: string | null;
   checkOutDate: string | null;
   numberOfRooms: number;
+  roomSummary: string;
   totalAmount: number | null;
   currency: string;
   paymentStatus: PaymentStatus;
@@ -173,8 +180,10 @@ export interface CompletedListItem {
   bookingCode: string | null;
   branch: Branch | null;
   sourcePlatform: BookingSource;
+  businessType: BusinessType;
   verificationStatus: VerificationStatus;
   checkInDate: string | null;
+  roomSummary: string;
   totalAmount: number | null;
   currency: string;
   isLastMinute: boolean;
@@ -192,11 +201,13 @@ export interface HistoryListItem {
   phone: string | null;
   branch: Branch | null;
   sourcePlatform: BookingSource;
+  businessType: BusinessType;
   status: BookingStatus;
   verificationStatus: VerificationStatus;
   paymentStatus: PaymentStatus;
   checkInDate: string | null;
   checkOutDate: string | null;
+  roomSummary: string;
   totalAmount: number | null;
   currency: string;
   isLastMinute: boolean;
@@ -229,8 +240,19 @@ export interface ExtractResponse {
   branchConfident: boolean;
   requiresManualConfirmation: boolean;
   parserQuality: ParserQuality;
+  businessType: BusinessType;
+  businessTypeConfidence: number;
+  businessTypeRequiresAdminConfirmation: boolean;
+  businessTypeMatchedRules: string[];
   warnings: WarningView[];
 }
+
+/** Vietnamese label + tone for a business type. */
+export const BUSINESS_TYPE_LABEL: Record<BusinessType, string> = {
+  DIRECT: 'Đơn thường',
+  PARTNER: 'Đơn đối tác',
+  UNKNOWN: 'Chưa xác định',
+};
 
 // --- Editing payloads ------------------------------------------------------
 export interface RoomEdit {
@@ -271,6 +293,8 @@ export const bookingsApi = {
 
   adminDetail: (id: string) => api.get<{ booking: BookingDetail }>(`/admin/bookings/${id}`),
   update: (id: string, edit: BookingEdit) => api.put<{ booking: BookingDetail }>(`/admin/bookings/${id}`, edit),
+  confirmBusinessType: (id: string, businessType: 'DIRECT' | 'PARTNER') =>
+    api.post<{ booking: BookingDetail }>(`/admin/bookings/${id}/business-type`, { businessType }),
   markReady: (id: string, note?: string) => api.post<{ booking: BookingDetail }>(`/admin/bookings/${id}/ready`, { note }),
   send: (id: string, branchId: number, acknowledgedWarningCodes: string[]) =>
     api.post<{ booking: BookingDetail }>(`/admin/bookings/${id}/send`, { branchId, acknowledgedWarningCodes }),

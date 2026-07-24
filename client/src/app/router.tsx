@@ -10,6 +10,7 @@ import { NewBookingsPage } from '../pages/NewBookingsPage';
 import { PendingReviewPage, RejectedPage } from '../pages/VerificationBookingsPage';
 import { CompletedBookingsPage } from '../pages/CompletedBookingsPage';
 import { HistoryPage } from '../pages/HistoryPage';
+import { IssuesPage } from '../pages/IssuesPage';
 import { BookingDetailPage } from '../pages/BookingDetailPage';
 import { SettingsPage } from '../pages/SettingsPage';
 import { NotFoundPage } from '../pages/NotFoundPage';
@@ -51,6 +52,7 @@ export function AppRoutes() {
           <Route path="rejected" element={<RejectedPage />} />
           <Route path="completed" element={<CompletedBookingsPage />} />
           <Route path="history" element={<HistoryPage />} />
+          <Route path="issues" element={<IssuesPage />} />
           <Route path="booking/:id" element={<BookingDetailPage />} />
           <Route path="settings" element={<RequireRole role="ADMIN"><SettingsPage /></RequireRole>} />
         </Route>

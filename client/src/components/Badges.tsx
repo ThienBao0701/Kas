@@ -1,7 +1,26 @@
 import { Flame } from 'lucide-react';
-import type { BookingSource, BookingStatus, VerificationStatus } from '../api/bookings';
+import type { BookingSource, BookingStatus, BusinessType, VerificationStatus } from '../api/bookings';
 import { SOURCE_LABEL } from '../api/bookings';
 import { statusLabel, verificationLabel } from '../lib/format';
+
+/**
+ * Business-type badge. PARTNER shows a prominent "ĐƠN ĐỐI TÁC" chip and UNKNOWN a
+ * "CHƯA XÁC ĐỊNH LOẠI ĐƠN" chip; an ordinary DIRECT booking shows nothing (no
+ * badge needed for the common case).
+ */
+export function BusinessTypeBadge({ type }: { type: BusinessType }) {
+  if (type === 'DIRECT') return null;
+  const styles =
+    type === 'PARTNER'
+      ? 'bg-orange-100 text-orange-800 ring-1 ring-inset ring-orange-200'
+      : 'bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-200';
+  const label = type === 'PARTNER' ? 'ĐƠN ĐỐI TÁC' : 'CHƯA XÁC ĐỊNH LOẠI ĐƠN';
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${styles}`}>
+      {label}
+    </span>
+  );
+}
 
 const STATUS_STYLES: Record<BookingStatus, string> = {
   DRAFT: 'bg-slate-100 text-slate-600',

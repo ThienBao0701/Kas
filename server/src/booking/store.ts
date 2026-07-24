@@ -1,6 +1,7 @@
 import type { BookingSource, PrismaClient } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db/prisma';
 import { isoToUtcDate } from './dates';
+import { detectBusinessType } from './businessType';
 import type { ParsedBooking } from './types';
 
 /** Prisma transaction client (the callback argument of `$transaction`). */
@@ -37,6 +38,13 @@ export async function persistDraftBooking(
   const branchId = parsed.branchConfident ? (parsed.suggestedBranch?.id ?? null) : null;
   const bookingCode = parsed.bookingCode ?? '';
 
+  // Deterministic business-type detection (never uses phone, OTA source or AI).
+  const detected = detectBusinessType({
+    rawText,
+    roomType: parsed.rooms[0]?.roomName ?? null,
+    specialRequest: parsed.specialRequest,
+  });
+
   return client.$transaction(async (tx: TxClient) => {
     if (bookingCode.length > 0) {
       await tx.booking.deleteMany({ where: { bookingCode, status: 'DRAFT' } });
@@ -48,6 +56,10 @@ export async function persistDraftBooking(
         hotelName: parsed.hotelName,
         branchId,
         sourcePlatform,
+        businessType: detected.type,
+        businessTypeConfidence: detected.confidence,
+        businessTypeDetectionSource: detected.detectionSource,
+        businessTypeManuallyConfirmed: false,
         customerName: parsed.guestName ?? '',
         phone: parsed.phone,
         checkInDate: parsed.checkIn ? isoToUtcDate(parsed.checkIn) : null,

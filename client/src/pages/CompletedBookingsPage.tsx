@@ -6,10 +6,10 @@ import { useAuth } from '../auth/AuthProvider';
 import { bookingsApi, branchesApi } from '../api/bookings';
 import { Card } from '../components/Card';
 import { EmptyState } from '../components/EmptyState';
-import { LastMinuteBadge } from '../components/Badges';
+import { BusinessTypeBadge, LastMinuteBadge } from '../components/Badges';
 import { Pagination } from '../components/Pagination';
 import { PageHeader, QueryState } from '../components/PageState';
-import { formatDate, formatDateTime } from '../lib/format';
+import { formatDate, formatDateTime, formatMoney } from '../lib/format';
 
 export function CompletedBookingsPage() {
   const { user } = useAuth();
@@ -80,6 +80,8 @@ export function CompletedBookingsPage() {
                     <th className="px-4 py-3">Khách</th>
                     <th className="px-4 py-3">Chi nhánh</th>
                     <th className="px-4 py-3">Nhận phòng</th>
+                    <th className="px-4 py-3">Hạng phòng (SL)</th>
+                    <th className="px-4 py-3">Giá tổng</th>
                     <th className="px-4 py-3">Admin duyệt</th>
                     <th className="px-4 py-3">Thời gian duyệt</th>
                     <th className="px-4 py-3">Ghi chú</th>
@@ -93,14 +95,19 @@ export function CompletedBookingsPage() {
                       className="cursor-pointer border-b border-slate-100 last:border-b-0 hover:bg-slate-50"
                     >
                       <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           {b.isLastMinute ? <LastMinuteBadge /> : null}
                           <span className="font-mono text-slate-900">{b.bookingCode ?? '—'}</span>
+                          <BusinessTypeBadge type={b.businessType} />
                         </div>
                       </td>
                       <td className="px-4 py-3 text-slate-800">{b.customerName ?? '—'}</td>
                       <td className="px-4 py-3 text-slate-600">{b.branch?.address ?? '—'}</td>
                       <td className="px-4 py-3 text-slate-600">{formatDate(b.checkInDate)}</td>
+                      <td className="px-4 py-3 text-slate-700">{b.roomSummary || '—'}</td>
+                      <td className="px-4 py-3 font-medium text-slate-900">
+                        {b.totalAmount != null ? formatMoney(b.totalAmount, b.currency) : 'Chưa xác định'}
+                      </td>
                       <td className="px-4 py-3 text-slate-600">{b.reviewedBy?.fullName ?? '—'}</td>
                       <td className="px-4 py-3 text-slate-500">{formatDateTime(b.reviewedAt ?? b.completedAt)}</td>
                       <td className="px-4 py-3 max-w-[16rem] truncate text-slate-500" title={b.completionNote ?? ''}>

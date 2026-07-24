@@ -250,6 +250,38 @@ money format and Agoda prepaid phrases, and returns the **identical** normalized
 structure. Booking.com behaviour is unchanged. Each booking stores its
 `sourcePlatform` (`BOOKING_COM` | `AGODA`), shown as a chip throughout the UI.
 
+### Booking business type (DIRECT / PARTNER / UNKNOWN)
+
+Every booking carries a **business type**, independent of the OTA source, branch,
+payment status or proof state:
+
+| Type | UI label | Meaning |
+| --- | --- | --- |
+| `DIRECT` | 🟢 Đơn thường | An ordinary retail reservation. |
+| `PARTNER` | 🟠 Đơn đối tác | A B2B / agency / corporate / partner-rate reservation. |
+| `UNKNOWN` | ⚪ Chưa xác định | No confident evidence — the Admin confirms. |
+
+**Automatic detection.** At extraction a deterministic `detectBusinessType`
+inspects the reservation text (rate plan, notes, configured partner keywords) —
+**never the phone number, never the OTA source, never AI/random**. It scores
+matched evidence 0–100; at or above the **confidence threshold (90)** it classifies
+`DIRECT` or `PARTNER` automatically, otherwise `UNKNOWN`. An ordinary
+Booking.com/Agoda booking is never `PARTNER` just because of the OTA source (the
+"Booking.com for Partners" extranet chrome is explicitly ignored). All keywords,
+aliases and weights live in one file, **`server/src/booking/partnerDetectionRules.ts`**
+— *the current limitation is that partner rules are configured in code*; add new
+partners there.
+
+**Manual override.** On the review form the Admin sees the detected type + a
+confidence read-out ("Độ tin cậy loại đơn: 96%"). For `UNKNOWN` a prompt appears
+("Không thể tự xác định loại đơn. Admin vui lòng xác nhận.") with two actions —
+**Đánh dấu là Đơn thường** / **Đánh dấu là Đơn đối tác**. A manual choice is
+persisted (`businessTypeManuallyConfirmed = true`), overrides detection and is
+never re-detected afterwards. Only an Admin may confirm/override
+(`POST /api/admin/bookings/:id/business-type`, admin-only); a receptionist cannot.
+A `ĐƠN ĐỐI TÁC` badge marks partner bookings on detail and list rows; `UNKNOWN`
+shows `CHƯA XÁC ĐỊNH LOẠI ĐƠN`.
+
 ### Vietnamese status labels (UI)
 
 | DB status | UI label | Verification | UI label |
@@ -258,6 +290,44 @@ structure. Booking.com behaviour is unchanged. Each booking stores its
 | `NEW` | Chờ chi nhánh tạo | `PENDING_REVIEW` | Chờ kiểm tra |
 | `COMPLETED` | Đã xác nhận đúng | `APPROVED` | Đã xác nhận đúng |
 | `ARCHIVED` | Đã lưu trữ | `REJECTED` | Cần tạo lại |
+
+### Payment wording (operational)
+
+Every operational screen (dispatch form, booking detail, PMS note, COPY ALL,
+history, completed lists, proof review) shows exactly **`PAY BEFORE CHECK-IN`**
+(prepaid) or **`PAY AFTER CHECK-IN`** (pay at the property) — never the old
+"Đã thanh toán" / "Thanh toán tại khách sạn". The internal DB enum
+(`PAY_BEFORE` / `PAY_AFTER`) is unchanged; the parser meaning is unchanged
+(prepayment required → `PAY_BEFORE`, no prepayment → `PAY_AFTER`).
+
+### Branch address on the review form
+
+The first field on the Admin review form is **"Địa chỉ khách sạn"** — a read-only
+display of the **selected branch's address** (e.g. `191 Lê Thánh Tôn`), not the raw
+Booking.com property name. It updates immediately when the Admin changes the branch
+dropdown. The original `hotelName` is kept internally for parser matching and audit,
+and the real `branchId` is what is stored/dispatched.
+
+### History & completed list columns
+
+Both the Admin and receptionist history/completed tables show a **Hạng phòng (SL)**
+column — a room-type summary aggregated by persisted type from the physical room
+records (e.g. `Superior Giường Đôi (2)`, or `Superior Giường Đôi (1) | Deluxe
+Giường Đôi (1)` for mixed types) — and a **Giá tổng** column using the booking-level
+`totalAmount` (`Chưa xác định` when unknown), via one shared `roomSummary` helper so
+both roles see the same result. Tables scroll horizontally on mobile; booking code,
+room summary and total are never hidden.
+
+### Breakfast branches (PMS note)
+
+Only three branches include breakfast, keyed by stable branch **code** (never DB id
+or array position): `LY_TU_TRONG_260` (260 Lý Tự Trọng), `NGUYEN_TRAI_47A`
+(47A Nguyễn Trãi), `NGUYEN_THAI_BINH_170` (170-172-174 Nguyễn Thái Bình). For these,
+line 2 of the PMS note begins with `ĂN SÁNG`; no other branch includes it. This
+applies to both DIRECT and PARTNER bookings. For a **PARTNER** booking the contact
+label (`CÓ ZL` / `CÓ WA` / `NO CONTACT`) is replaced by **`ĐƠN ĐỐI TÁC`**; breakfast,
+date, arrival note and requests are preserved, and the phone number never appears in
+the note.
 
 The receptionist action is **“Gửi Admin kiểm tra”** — meaning *“I have created this
 reservation in the hotel system; here is the screenshot.”* The Admin verdict is

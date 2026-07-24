@@ -14,9 +14,9 @@ describe('Vietnamese operational labels', () => {
     expect(labels).not.toMatch(/Kas đã tạo|Hoàn tất đặt phòng|Complete Booking/i);
   });
 
-  it('copies the exact PAY BEFORE / PAY AFTER token', () => {
-    expect(payStatusCopy('PAY_BEFORE')).toBe('PAY BEFORE');
-    expect(payStatusCopy('PAY_AFTER')).toBe('PAY AFTER');
+  it('copies the exact PAY BEFORE / AFTER CHECK-IN token', () => {
+    expect(payStatusCopy('PAY_BEFORE')).toBe('PAY BEFORE CHECK-IN');
+    expect(payStatusCopy('PAY_AFTER')).toBe('PAY AFTER CHECK-IN');
   });
 
   it('formats a short Vietnamese relative time', () => {

@@ -8,6 +8,8 @@ function booking(overrides: Partial<BookingDetail> = {}): BookingDetail {
     status: 'NEW',
     sourcePlatform: 'BOOKING_COM',
     verificationStatus: 'NOT_SUBMITTED',
+    businessType: 'DIRECT',
+    businessTypeManuallyConfirmed: false,
     hotelName: 'Saigon Hotel & Ben Thanh',
     branch: { id: 1, code: 'TRUONG_DINH_05', hotelName: 'Saigon Hotel & Ben Thanh', address: '05 Trương Định' },
     branchId: 1,
@@ -95,7 +97,7 @@ describe('buildCopyAll — exact format', () => {
       '* Đêm 19/07/2026: 850.000 ₫',
       '* Đêm 20/07/2026: 850.000 ₫',
       '',
-      'TRẠNG THÁI: PAY AFTER',
+      'TRẠNG THÁI: PAY AFTER CHECK-IN',
     ].join('\n');
     expect(buildCopyAll(booking())).toBe(expected);
   });

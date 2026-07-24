@@ -21,9 +21,9 @@ describe('money and payment formatting', () => {
     expect(formatMoney(null)).toBe('—');
   });
 
-  it('labels payment status in Vietnamese', () => {
-    expect(paymentLabel('PAY_BEFORE')).toBe('Đã thanh toán');
-    expect(paymentLabel('PAY_AFTER')).toBe('Thanh toán tại khách sạn');
+  it('labels payment status with the operational CHECK-IN wording', () => {
+    expect(paymentLabel('PAY_BEFORE')).toBe('PAY BEFORE CHECK-IN');
+    expect(paymentLabel('PAY_AFTER')).toBe('PAY AFTER CHECK-IN');
   });
 });
 

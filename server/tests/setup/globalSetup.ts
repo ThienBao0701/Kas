@@ -39,11 +39,13 @@ export default function setup(): void {
     if (fs.existsSync(file)) fs.rmSync(file);
   }
 
-  // Start each run with an empty proof-upload dir so uploaded fixtures never
-  // accumulate between runs (must match PROOF_UPLOAD_DIR in vitest.config.ts).
-  const proofDir = path.join(serverRoot, '.tmp', 'proof-uploads');
-  fs.rmSync(proofDir, { recursive: true, force: true });
-  fs.mkdirSync(proofDir, { recursive: true });
+  // Start each run with empty upload dirs so uploaded fixtures never accumulate
+  // between runs (must match PROOF_UPLOAD_DIR / ISSUE_UPLOAD_DIR in vitest.config).
+  for (const dir of ['proof-uploads', 'issue-photos']) {
+    const p = path.join(serverRoot, '.tmp', dir);
+    fs.rmSync(p, { recursive: true, force: true });
+    fs.mkdirSync(p, { recursive: true });
+  }
 
   const databaseUrl = `file:${testDbFile.split(path.sep).join('/')}`;
 

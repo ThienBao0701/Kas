@@ -9,6 +9,7 @@ import { requireAuth, requireAdmin, requirePasswordChanged } from '../middleware
 import { proofUpload } from '../middleware/upload';
 import { parseBooking } from '../booking/parser';
 import { parseAgodaBooking } from '../booking/agoda';
+import { detectBusinessType } from '../booking/businessType';
 import { persistDraftBooking } from '../booking/store';
 import { serializeBookingPreview } from '../booking/serialize';
 import {
@@ -124,6 +125,14 @@ export function createBookingsRouter(): Router {
       const parsed = source === 'AGODA' ? parseAgodaBooking(rawText, branches) : parseBooking(rawText, branches);
       const bookingId = await persistDraftBooking(parsed, rawText, req.currentUser?.id ?? null, source);
 
+      // The same deterministic detection persisted by the store, surfaced in the
+      // preview so the Admin sees the type + confidence and can confirm/override.
+      const business = detectBusinessType({
+        rawText,
+        roomType: parsed.rooms[0]?.roomName ?? null,
+        specialRequest: parsed.specialRequest,
+      });
+
       const stored = await prisma.booking.findUniqueOrThrow({
         where: { id: bookingId },
         include: { branch: true, rooms: { include: { nights: true } }, warnings: true },
@@ -150,6 +159,10 @@ export function createBookingsRouter(): Router {
         requiresManualConfirmation: parsed.requiresManualConfirmation,
         fieldConfidence: parsed.fieldConfidence,
         parserQuality: parsed.parserQuality,
+        businessType: business.type,
+        businessTypeConfidence: business.confidence,
+        businessTypeRequiresAdminConfirmation: business.requiresAdminConfirmation,
+        businessTypeMatchedRules: business.matchedRules,
       });
     })().catch(next);
   });

@@ -7,6 +7,7 @@ import {
   RotateCcw,
   ScanSearch,
   Users,
+  Wrench,
   type LucideIcon,
 } from 'lucide-react';
 import type { UserRole } from '../auth/types';
@@ -26,6 +27,7 @@ export const ADMIN_NAV: NavItem[] = [
   { to: '/app/rejected', label: 'Cần tạo lại', icon: RotateCcw },
   { to: '/app/completed', label: 'Đã xác nhận đúng', icon: CheckCircle2 },
   { to: '/app/history', label: 'Lịch sử', icon: History },
+  { to: '/app/issues', label: 'Sự cố khách sạn', icon: Wrench },
   { to: '/app/settings', label: 'Quản lý tài khoản', icon: Users },
 ];
 
@@ -36,6 +38,7 @@ export const RECEPTIONIST_NAV: NavItem[] = [
   { to: '/app/rejected', label: 'Cần tạo lại', icon: RotateCcw },
   { to: '/app/completed', label: 'Đã xác nhận đúng', icon: CheckCircle2 },
   { to: '/app/history', label: 'Lịch sử', icon: History },
+  { to: '/app/issues', label: 'Báo cáo sự cố', icon: Wrench },
 ];
 
 export function navForRole(role: UserRole | undefined): NavItem[] {

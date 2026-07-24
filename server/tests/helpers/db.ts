@@ -22,6 +22,8 @@ export async function resetBookingData(): Promise<void> {
 
 export async function resetAll(): Promise<void> {
   await resetBookingData();
+  // HotelIssue holds RESTRICT FKs to User/Branch, so it must be cleared first.
+  await testPrisma.hotelIssue.deleteMany();
   await testPrisma.user.deleteMany();
   await testPrisma.branch.deleteMany();
 }

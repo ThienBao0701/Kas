@@ -134,6 +134,10 @@ export function serializeAdminBookingDetail(booking: BookingDetail) {
     status: booking.status,
     sourcePlatform: booking.sourcePlatform,
     verificationStatus: booking.verificationStatus,
+    businessType: booking.businessType,
+    businessTypeConfidence: booking.businessTypeConfidence,
+    businessTypeManuallyConfirmed: booking.businessTypeManuallyConfirmed,
+    businessTypeDetectionSource: booking.businessTypeDetectionSource,
     hotelName: booking.hotelName,
     branch: branchView(booking.branch),
     branchId: booking.branchId,
@@ -176,7 +180,14 @@ export function serializeAdminBookingDetail(booking: BookingDetail) {
 export function serializeOpsBookingDetail(booking: BookingDetail, includeRawText: boolean) {
   const full = serializeAdminBookingDetail(booking);
   if (includeRawText) return full;
-  const { rawText: _omit, ...rest } = full;
+  // Receptionists see the final persisted business type only — never the raw
+  // text nor the internal detection debug (confidence / detection source).
+  const {
+    rawText: _omitRaw,
+    businessTypeConfidence: _omitConf,
+    businessTypeDetectionSource: _omitSource,
+    ...rest
+  } = full;
   return rest;
 }
 
@@ -184,6 +195,29 @@ function missingNightlyCount(rooms: BookingListItem['rooms']): number {
   let count = 0;
   for (const room of rooms) for (const night of room.nights) if (night.amount === null) count += 1;
   return count;
+}
+
+/**
+ * A compact "room type (count)" summary for a booking, aggregated by the
+ * persisted room type. Types differing only by whitespace/case are merged, the
+ * first-seen readable name is kept, and no type is ever listed twice, e.g.
+ * "Superior Giường Đôi (2)" or "Superior Giường Đôi (1) | Deluxe Giường Đôi (1)".
+ * Count comes from physical room records, never the guest count.
+ */
+export function roomSummary(rooms: BookingListItem['rooms']): string {
+  const order: string[] = [];
+  const counts = new Map<string, number>();
+  const display = new Map<string, string>();
+  for (const room of rooms) {
+    const readable = (room.roomType ?? '').trim().replace(/\s+/g, ' ') || 'Chưa rõ hạng phòng';
+    const key = readable.toLowerCase();
+    if (!counts.has(key)) {
+      order.push(key);
+      display.set(key, readable);
+    }
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return order.map((k) => `${display.get(k)} (${counts.get(k)})`).join(' | ');
 }
 
 function latestProof(booking: BookingListItem) {
@@ -200,10 +234,12 @@ export function serializeNewListItem(booking: BookingListItem) {
     phone: booking.phone,
     branch: branchView(booking.branch),
     sourcePlatform: booking.sourcePlatform,
+    businessType: booking.businessType,
     verificationStatus: booking.verificationStatus,
     checkInDate: isoDate(booking.checkInDate),
     checkOutDate: isoDate(booking.checkOutDate),
     numberOfRooms: booking.rooms.length,
+    roomSummary: roomSummary(booking.rooms),
     totalAmount: booking.totalAmount,
     currency: booking.currency,
     paymentStatus: booking.paymentStatus,
@@ -228,8 +264,10 @@ export function serializeCompletedListItem(booking: BookingListItem) {
     bookingCode: booking.bookingCode.length > 0 ? booking.bookingCode : null,
     branch: branchView(booking.branch),
     sourcePlatform: booking.sourcePlatform,
+    businessType: booking.businessType,
     verificationStatus: booking.verificationStatus,
     checkInDate: isoDate(booking.checkInDate),
+    roomSummary: roomSummary(booking.rooms),
     totalAmount: booking.totalAmount,
     currency: booking.currency,
     isLastMinute: booking.isLastMinute,
@@ -250,11 +288,13 @@ export function serializeHistoryListItem(booking: BookingListItem) {
     phone: booking.phone,
     branch: branchView(booking.branch),
     sourcePlatform: booking.sourcePlatform,
+    businessType: booking.businessType,
     status: booking.status,
     verificationStatus: booking.verificationStatus,
     paymentStatus: booking.paymentStatus,
     checkInDate: isoDate(booking.checkInDate),
     checkOutDate: isoDate(booking.checkOutDate),
+    roomSummary: roomSummary(booking.rooms),
     totalAmount: booking.totalAmount,
     currency: booking.currency,
     isLastMinute: booking.isLastMinute,

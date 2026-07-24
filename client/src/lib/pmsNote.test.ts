@@ -34,6 +34,8 @@ function booking(overrides: Partial<BookingDetail> = {}): BookingDetail {
     status: 'NEW',
     sourcePlatform: 'BOOKING_COM',
     verificationStatus: 'NOT_SUBMITTED',
+    businessType: 'DIRECT',
+    businessTypeManuallyConfirmed: false,
     hotelName: 'H',
     branch: { id: 1, code: 'TRUONG_DINH_05', hotelName: 'H', address: '05 Trương Định' },
     branchId: 1,
@@ -139,7 +141,7 @@ describe('buildPmsNote — exact output', () => {
   it('A — no breakfast, no phone', () => {
     const res = buildPmsNote(booking(), NOW);
     expect(res.ok).toBe(true);
-    expect(res.text).toBe('BK 6037224525_STAN_1 ĐÊM 609.120 PAY AFTER CI\n22/07 NO CONTACT');
+    expect(res.text).toBe('BK 6037224525_STAN_1 ĐÊM 609.120 PAY AFTER CHECK-IN CI\n22/07 NO CONTACT');
   });
 
   it('B — breakfast branch, Vietnamese phone', () => {
@@ -153,7 +155,7 @@ describe('buildPmsNote — exact output', () => {
       }),
       NOW,
     );
-    expect(res.text).toBe('BK 6339476198_STAN_1 ĐÊM 510.138 PAY BEFORE CI\nĂN SÁNG 22/07 CÓ ZL');
+    expect(res.text).toBe('BK 6339476198_STAN_1 ĐÊM 510.138 PAY BEFORE CHECK-IN CI\nĂN SÁNG 22/07 CÓ ZL');
   });
 
   it('C — breakfast branch, foreign phone and arrival note', () => {
@@ -169,7 +171,7 @@ describe('buildPmsNote — exact output', () => {
       NOW,
     );
     expect(res.text).toBe(
-      'BK 6339476198_STAN_1 ĐÊM 510.138 PAY BEFORE CI\nĂN SÁNG 22/07 CÓ WA KHÁCH ĐẾN KHOẢNG 13:00',
+      'BK 6339476198_STAN_1 ĐÊM 510.138 PAY BEFORE CHECK-IN CI\nĂN SÁNG 22/07 CÓ WA KHÁCH ĐẾN KHOẢNG 13:00',
     );
   });
 
@@ -185,7 +187,44 @@ describe('buildPmsNote — exact output', () => {
       }),
       NOW,
     );
-    expect(res.text).toBe('BK 6339476198_DLX_2 ĐÊM 1.200.000 PAY AFTER CI\n22/07 CÓ WA');
+    expect(res.text).toBe('BK 6339476198_DLX_2 ĐÊM 1.200.000 PAY AFTER CHECK-IN CI\n22/07 CÓ WA');
+  });
+
+  it('E — PARTNER booking replaces the contact label with ĐƠN ĐỐI TÁC (breakfast kept)', () => {
+    const res = buildPmsNote(
+      booking({
+        bookingCode: '6339476198',
+        branch: { id: 2, code: 'LY_TU_TRONG_260', hotelName: 'L', address: '260 Lý Tự Trọng' },
+        totalAmount: 510_138,
+        paymentStatus: 'PAY_AFTER',
+        phone: '+84 901 234 567',
+        businessType: 'PARTNER',
+      }),
+      NOW,
+    );
+    // No CÓ ZL / CÓ WA / NO CONTACT for a partner; breakfast + date preserved.
+    expect(res.text).toBe('BK 6339476198_STAN_1 ĐÊM 510.138 PAY AFTER CHECK-IN CI\nĂN SÁNG 22/07 ĐƠN ĐỐI TÁC');
+    expect(res.text).not.toContain('CÓ ZL');
+    expect(res.text).not.toContain('CÓ WA');
+    expect(res.text).not.toContain('NO CONTACT');
+  });
+
+  it('F — PARTNER booking keeps the arrival note after ĐƠN ĐỐI TÁC', () => {
+    const res = buildPmsNote(
+      booking({
+        bookingCode: '6339476198',
+        branch: { id: 3, code: 'NGUYEN_TRAI_47A', hotelName: 'L', address: '47A Nguyễn Trãi' },
+        totalAmount: 510_138,
+        paymentStatus: 'PAY_BEFORE',
+        phone: '+84 901 234 567',
+        businessType: 'PARTNER',
+        specialRequest: 'Khách dự kiến đến khoảng 13:00.',
+      }),
+      NOW,
+    );
+    expect(res.text).toBe(
+      'BK 6339476198_STAN_1 ĐÊM 510.138 PAY BEFORE CHECK-IN CI\nĂN SÁNG 22/07 ĐƠN ĐỐI TÁC KHÁCH ĐẾN KHOẢNG 13:00',
+    );
   });
 
   it('blocks generation when the booking code is missing', () => {

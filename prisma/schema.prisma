@@ -37,6 +37,16 @@ enum BookingSource {
   AGODA
 }
 
+/// Operational business type of a booking, independent of the OTA source.
+/// DIRECT  = an ordinary retail reservation.
+/// PARTNER = a B2B / agency / corporate / partner-rate reservation.
+/// UNKNOWN = the detector had no confident evidence; the Admin should confirm.
+enum BookingBusinessType {
+  DIRECT
+  PARTNER
+  UNKNOWN
+}
+
 /// Proof-of-creation lifecycle for a dispatched booking. A receptionist creates
 /// the reservation in the external hotel system, uploads a screenshot, and the
 /// Admin approves or rejects it.
@@ -74,6 +84,29 @@ enum WarningSeverity {
   ERROR
 }
 
+/// Category of a receptionist-reported hotel issue.
+enum IssueCategory {
+  DOOR
+  AIR_CONDITIONER
+  TOILET
+  TV
+  WIFI
+  ELECTRICITY
+  WATER
+  FURNITURE
+  HOUSEKEEPING
+  GUEST_REQUEST
+  OTHER
+}
+
+/// Lifecycle of a reported hotel issue. Deliberately minimal: no workflow beyond
+/// NEW → IN_PROGRESS → RESOLVED.
+enum IssueStatus {
+  NEW
+  IN_PROGRESS
+  RESOLVED
+}
+
 /// Application user: one administrator plus receptionists bound to a branch.
 model User {
   id                 Int      @id @default(autoincrement())
@@ -100,6 +133,9 @@ model User {
   statusChanges     BookingStatusHistory[]
   notifications     Notification[]
   sessions          Session[]
+  issuesReported    HotelIssue[]           @relation("IssueReportedBy")
+  issuesAccepted    HotelIssue[]           @relation("IssueAcceptedBy")
+  issuesResolved    HotelIssue[]           @relation("IssueResolvedBy")
 
   @@index([branchId])
   @@index([role])
@@ -143,6 +179,7 @@ model Branch {
 
   users    User[]
   bookings Booking[]
+  issues   HotelIssue[]
 }
 
 /// A Booking.com reservation extracted by the admin and dispatched to a branch.
@@ -161,6 +198,19 @@ model Booking {
   /// Which platform the reservation came from. Defaults to BOOKING_COM so every
   /// pre-existing row is safe without a data backfill surprise.
   sourcePlatform BookingSource @default(BOOKING_COM)
+
+  /// Operational business type, detected deterministically at extraction and
+  /// optionally confirmed/overridden by an Admin. Defaults to UNKNOWN so existing
+  /// rows migrate safely. Independent of sourcePlatform / branch / payment / proof.
+  businessType                  BookingBusinessType @default(UNKNOWN)
+  /// 0–100 confidence of the automatic detection (null when never detected).
+  businessTypeConfidence        Int?
+  /// A short machine tag for how the type was decided (e.g. "auto:partner-rate",
+  /// "manual"), for audit — never shown to receptionists.
+  businessTypeDetectionSource   String?
+  /// True once an Admin has explicitly confirmed/overridden the type. When true
+  /// the detector never runs again for this booking.
+  businessTypeManuallyConfirmed Boolean             @default(false)
 
   /// Date-only values stored at UTC midnight. Times are free-form strings
   /// ("14:00", "sau 15:00") because Booking.com text is not consistent.
@@ -225,6 +275,7 @@ model Booking {
   @@index([branchId, verificationStatus])
   @@index([verificationStatus])
   @@index([sourcePlatform])
+  @@index([businessType])
   @@index([sentAt])
   @@index([checkInDate])
   @@index([isLastMinute])
@@ -366,4 +417,41 @@ model Notification {
 
   @@index([userId, read])
   @@index([createdAt])
+}
+
+/// A hotel issue a receptionist reports to the Admin after receiving a booking
+/// (broken door, AC not cold, clogged toilet, guest request, …). Reports are kept
+/// permanently — never hard-deleted — and are scoped to the reporter's branch.
+model HotelIssue {
+  id          String        @id @default(cuid())
+  branchId    Int
+  /// Optional room number the issue relates to (free-form).
+  roomNumber  String?
+  category    IssueCategory
+  description String
+  /// Server-generated file name of the (optional, single) attached photo. Only
+  /// metadata + a safe relative path live here, never the image bytes.
+  photoStoredName String?
+  photoMimeType   String?
+
+  status IssueStatus @default(NEW)
+
+  reportedByUserId Int
+  /// The Admin who moved the issue to IN_PROGRESS / RESOLVED (audit).
+  acceptedByUserId Int?
+  resolvedByUserId Int?
+  resolvedAt       DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  branch     Branch @relation(fields: [branchId], references: [id])
+  reportedBy User   @relation("IssueReportedBy", fields: [reportedByUserId], references: [id])
+  acceptedBy User?  @relation("IssueAcceptedBy", fields: [acceptedByUserId], references: [id])
+  resolvedBy User?  @relation("IssueResolvedBy", fields: [resolvedByUserId], references: [id])
+
+  @@index([branchId, status])
+  @@index([status])
+  @@index([createdAt])
+  @@index([reportedByUserId])
 }

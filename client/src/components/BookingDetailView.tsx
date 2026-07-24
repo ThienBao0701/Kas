@@ -6,7 +6,7 @@ import { buildPmsNote } from '../lib/pmsNote';
 import { formatAmountCopy, formatDate, formatDateTime, formatMoney, paymentLabel } from '../lib/format';
 import { Card } from './Card';
 import { CopyButton, CopyField } from './CopyButton';
-import { LastMinuteBadge, SourceBadge, StatusBadge, VerificationBadge } from './Badges';
+import { BusinessTypeBadge, LastMinuteBadge, SourceBadge, StatusBadge, VerificationBadge } from './Badges';
 import { ProofSection } from './ProofSection';
 import { Toast } from './Toast';
 
@@ -69,6 +69,7 @@ export function BookingDetailView({
               <StatusBadge status={b.status} />
               <VerificationBadge status={b.verificationStatus} />
               <SourceBadge source={b.sourcePlatform} />
+              <BusinessTypeBadge type={b.businessType} />
             </div>
             <h1 className="mt-2 truncate text-xl font-semibold text-slate-900">
               {b.customerName ?? 'Khách chưa rõ'}

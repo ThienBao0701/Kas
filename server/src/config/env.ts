@@ -53,6 +53,8 @@ const envSchema = z
     // Only metadata + a safe relative path live in SQLite; never the image bytes.
     // Relative values are resolved against the repository root.
     PROOF_UPLOAD_DIR: z.string().min(1).default('server/uploads/booking-proofs'),
+    // Where receptionist issue-report photos are stored (same rules as proofs).
+    ISSUE_UPLOAD_DIR: z.string().min(1).default('server/uploads/issue-photos'),
   })
   .superRefine((value, ctx) => {
     // In production a missing initial-admin variable must never silently create
@@ -105,3 +107,6 @@ const repoRoot = path.resolve(__dirname, '../../..');
 export const PROOF_UPLOAD_DIR = path.isAbsolute(env.PROOF_UPLOAD_DIR)
   ? env.PROOF_UPLOAD_DIR
   : path.resolve(repoRoot, env.PROOF_UPLOAD_DIR);
+export const ISSUE_UPLOAD_DIR = path.isAbsolute(env.ISSUE_UPLOAD_DIR)
+  ? env.ISSUE_UPLOAD_DIR
+  : path.resolve(repoRoot, env.ISSUE_UPLOAD_DIR);

@@ -8,6 +8,7 @@ const testDbPath = path.join(__dirname, '.tmp', 'test.db');
 // Proof screenshots land in a throwaway dir so the suite never writes into the
 // real server/uploads tree.
 const testProofDir = path.join(__dirname, '.tmp', 'proof-uploads');
+const testIssueDir = path.join(__dirname, '.tmp', 'issue-photos');
 
 export default defineConfig({
   test: {
@@ -30,6 +31,7 @@ export default defineConfig({
       // Cheapest valid bcrypt cost so hashing does not dominate the suite.
       BCRYPT_COST: '4',
       PROOF_UPLOAD_DIR: testProofDir,
+      ISSUE_UPLOAD_DIR: testIssueDir,
     },
     include: ['tests/**/*.test.ts'],
   },
