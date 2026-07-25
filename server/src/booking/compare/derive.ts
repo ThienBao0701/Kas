@@ -6,6 +6,7 @@
 import type { BookingDetail } from '../bookingView';
 import type { ProofExtractedData } from '../ocr/types';
 import type { DetectedProof, ExpectedBooking } from './engine';
+import type { DetectedConfidences } from './enrich';
 
 /** Branches that serve breakfast (mirrors the client PMS-note config, by code). */
 const BREAKFAST_BRANCH_CODES: ReadonlySet<string> = new Set(['LY_TU_TRONG_260', 'NGUYEN_TRAI_47A', 'NGUYEN_THAI_BINH_170']);
@@ -84,5 +85,21 @@ export function deriveDetected(fields: ProofExtractedData, extractedText: string
       nights: fields.nights?.value ?? null,
       noteText: fields.note?.value ?? extractedText ?? null,
     },
+  };
+}
+
+/** Per-field OCR confidence (0–100), for the C.3.5 confidence explanation. */
+export function deriveConfidences(fields: ProofExtractedData): DetectedConfidences {
+  return {
+    bookingCode: fields.bookingCode?.confidence,
+    checkIn: fields.checkInDate?.confidence,
+    checkOut: fields.checkOutDate?.confidence,
+    total: fields.totalAmount?.confidence,
+    roomQuantity: fields.roomQuantity?.confidence,
+    customerName: fields.customerName?.confidence,
+    roomType: fields.roomTypes[0]?.confidence,
+    payment: fields.paymentStatus?.confidence,
+    nights: fields.nights?.confidence,
+    note: fields.note?.confidence,
   };
 }

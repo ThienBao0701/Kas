@@ -9,6 +9,7 @@ import { Button } from '../components/Button';
 import { ErrorAlert } from '../components/ErrorAlert';
 import { Modal } from '../components/Modal';
 import { PageHeader, QueryState } from '../components/PageState';
+import { DevToolsPanel } from '../components/DevToolsPanel';
 import { formatDateTime } from '../lib/format';
 
 const inputClass =
@@ -93,6 +94,9 @@ export function SettingsPage() {
           </div>
         </Card>
       </QueryState>
+
+      {/* Development-only demo data tools (hidden unless the server enables them). */}
+      <DevToolsPanel />
 
       <CreateUserModal
         open={createOpen}

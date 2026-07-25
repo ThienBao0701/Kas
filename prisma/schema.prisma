@@ -192,6 +192,19 @@ model Session {
   @@index([expiresAt])
 }
 
+/// A batch of generated development demo data (dev-test tools only). Records the
+/// generation parameters + summary so the whole batch can be deleted reliably.
+/// Never created in production; every business row it spawns is tagged isDemo.
+model DemoDataBatch {
+  id          String   @id @default(cuid())
+  /// The seed + counts used, serialised as JSON (for reproducibility/audit).
+  paramsJson  String
+  /// A JSON summary of how many of each entity were created.
+  summaryJson String
+  createdByUserId Int?
+  createdAt   DateTime @default(now())
+}
+
 /// One of the 8 hotel branches bookings are dispatched to.
 model Branch {
   id        Int      @id @default(autoincrement())
@@ -281,6 +294,11 @@ model Booking {
   /// The admin who ran the extraction that created this booking.
   createdByUserId Int?
 
+  /// Development demo marker (dev-test tools only). Real bookings are always false.
+  isDemo      Boolean @default(false)
+  /// The demo batch this row belongs to (null for real data).
+  demoBatchId String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -308,6 +326,8 @@ model Booking {
   @@index([isLastMinute])
   @@index([customerName])
   @@index([phone])
+  @@index([isDemo])
+  @@index([demoBatchId])
 }
 
 /// One immutable screenshot proof attempt that a receptionist created the
@@ -507,11 +527,16 @@ model Notification {
   createdAt DateTime @default(now())
   readAt    DateTime?
 
+  /// Development demo marker (dev-test tools only). Real notifications are false.
+  isDemo      Boolean @default(false)
+  demoBatchId String?
+
   user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   booking Booking? @relation(fields: [bookingId], references: [id], onDelete: Cascade)
 
   @@index([userId, read])
   @@index([createdAt])
+  @@index([isDemo])
 }
 
 /// A hotel issue a receptionist reports to the Admin after receiving a booking
@@ -537,6 +562,10 @@ model HotelIssue {
   resolvedByUserId Int?
   resolvedAt       DateTime?
 
+  /// Development demo marker (dev-test tools only). Real issues are always false.
+  isDemo      Boolean @default(false)
+  demoBatchId String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -549,4 +578,6 @@ model HotelIssue {
   @@index([status])
   @@index([createdAt])
   @@index([reportedByUserId])
+  @@index([isDemo])
+  @@index([demoBatchId])
 }

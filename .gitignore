@@ -38,3 +38,6 @@ npm-debug.log*
 
 # Proof-of-creation screenshot uploads (never committed).
 server/uploads/
+
+# Pre-official-launch backups (DB + uploads snapshots) — never committed.
+backups/

@@ -9,6 +9,37 @@ export type OverallStatus = 'MATCH' | 'WARNING' | 'MISMATCH' | 'UNAVAILABLE';
 export type FieldResult = 'MATCH' | 'MISMATCH' | 'WARNING' | 'NOT_FOUND' | 'NOT_APPLICABLE';
 export type FieldImportance = 'CRITICAL' | 'OPERATIONAL';
 
+export type ConfidenceLabel = 'HIGH' | 'MEDIUM' | 'LOW';
+
+/** A safe token/char diff segment (rendered as text, never as HTML). */
+export interface DiffSegment {
+  text: string;
+  op: 'unchanged' | 'added' | 'removed';
+}
+
+/** Structured difference detail (C.3.5). All fields optional/additive. */
+export interface FieldDetails {
+  differenceType?: string;
+  deltaAmount?: number;
+  expectedAmount?: number;
+  detectedAmount?: number;
+  deltaDays?: number;
+  deltaNights?: number;
+  deltaQuantity?: number;
+  changedPositions?: { index: number; expected: string; detected: string }[];
+  missingCount?: number;
+  extraCount?: number;
+  roomGroups?: { type: string; expectedCount: number; detectedCount: number; delta: number }[];
+  addedTypes?: { type: string; count: number }[];
+  direction?: string;
+}
+
+export interface NoteComponent {
+  key: string;
+  label: string;
+  result: FieldResult;
+}
+
 export interface FieldComparison {
   field: string;
   label: string;
@@ -17,6 +48,13 @@ export interface FieldComparison {
   expected: string | null;
   detected: string | null;
   message: string;
+  // --- Additive smart fields (C.3.5); absent on older stored rows ---
+  details?: FieldDetails;
+  explanation?: string;
+  suggestion?: string;
+  diffSegments?: DiffSegment[];
+  confidenceLabel?: ConfidenceLabel;
+  confidenceMessage?: string;
 }
 
 export interface ComparisonResult {
@@ -24,6 +62,10 @@ export interface ComparisonResult {
   version: string;
   summary: { matchCount: number; mismatchCount: number; warningCount: number; notFoundCount: number };
   fields: FieldComparison[];
+  // --- Additive smart fields (C.3.5) ---
+  headline?: string;
+  suggestions?: string[];
+  noteComponents?: NoteComponent[];
 }
 
 export interface ProofComparison {

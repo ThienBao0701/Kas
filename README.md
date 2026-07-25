@@ -278,6 +278,33 @@ POST /api/admin/bookings/:bookingId/proofs/:proofId/compare              # compa
                                                                          #   already compared)
 ```
 
+#### Smart compare assistant (C.3.5) — deterministic explanations
+
+The comparison result is **additively enriched** (still `proof-compare-v1`, no new
+migration) with deterministic, local explanations — never AI, never a status
+change. Each field may carry:
+
+- **`details`** — structured diff: booking-code `changedPositions`/`missingCount`/
+  `extraCount`; money `deltaAmount` + `direction`; date `deltaDays`; night
+  `deltaNights`; room `deltaQuantity` + per-type `roomGroups` + `addedTypes`.
+- **`explanation`** — one Vietnamese sentence (e.g. *"Ảnh thấp hơn dữ liệu Admin
+  450.000 đ."*, *"Ngày trong ảnh trễ hơn 1 ngày."*, *"Thiếu 1 phòng."*, *"Khớp sau
+  khi bỏ dấu tiếng Việt."*).
+- **`suggestion`** — a fixed per-field "what to check" hint (stable lookup, no
+  free-form text).
+- **`diffSegments`** — a safe token diff (`unchanged`/`added`/`removed`) for name,
+  room type, etc., rendered as **text only** (never `dangerouslySetInnerHTML`).
+- **`confidenceLabel`/`confidenceMessage`** — the field's OCR confidence bucketed
+  as HIGH (≥90) / MEDIUM (70–89) / LOW (<70). Confidence is *not* correctness.
+
+The result also gains a **`headline`**, a de-duplicated **`suggestions`** list
+("Admin nên kiểm tra …"), and a **`noteComponents`** checklist for the PMS note
+(Mã Booking / Hạng phòng / Số đêm / Giá tổng / Thanh toán / CI, plus Ăn sáng for
+breakfast branches, Đơn đối tác for partner bookings, Giờ đến when expected).
+Helpers live in `server/src/booking/compare/{smartDiff,suggest,enrich}.ts`.
+**Enrichment is strictly additive** — it never changes a field `result` or the
+`overall` status, and older stored C.3 rows (without these fields) remain readable.
+
 ### Send-to-branch flow
 
 `POST /api/admin/bookings/:id/send` (Admin) assigns one branch, re-runs full
@@ -519,7 +546,31 @@ allowed. **Back up the server's `data.db` regularly.** No Docker required.
 > Accounting / finance / PMS integration and real-time SSE are **future
 > extensions**, intentionally not built in this milestone.
 
+## Developer test tools (DEVELOPMENT ONLY)
+
+For testing the 8 branches locally there is an optional, **development-only**
+toolset — demo-data generation, a `reception_test` branch switcher, and safe
+cleanup — gated by `ENABLE_DEV_TEST_TOOLS=true` **and** a non-production `NODE_ENV`.
+In production every `/api/dev-test/*` endpoint returns `404` and no dev UI appears,
+even if the flag is mistakenly set. Demo rows are tagged `isDemo` + a `demoBatchId`
+(a new additive migration; existing rows default to non-demo) so they can never be
+confused with real data and are deleted reliably. Admin-only APIs:
+
+```
+POST   /api/dev-test/demo/generate   # deterministic demo data for all 8 branches (seeded)
+DELETE /api/dev-test/demo            # clear ONLY demo-tagged data (typed-phrase confirm)
+POST   /api/dev-test/active-branch   # reception_test only: switch effective branch (session)
+```
+
+A separate **official-launch reset** (`npm run data:prepare-production`, CLI-only,
+interactive phrase `PREPARE KAS FOR OFFICIAL USE`) backs up the DB + uploads, then
+wipes ALL operational data (demo **and** real) while preserving the schema, the 8
+branches, the Admin account and configuration, and disables `reception_test`. Full
+guide: [`docs/testing-8-branches.md`](docs/testing-8-branches.md). **Never enable
+`ENABLE_DEV_TEST_TOOLS` in production.**
+
 ## Documentation
 
+- [`docs/testing-8-branches.md`](docs/testing-8-branches.md) — developer 8-branch test env, demo data, safe cleanup, official reset.
 - [`docs/deployment.md`](docs/deployment.md) — LAN deployment on Windows + SQLite backup.
 - [`docs/pwa-install.md`](docs/pwa-install.md) — installing Kas as a Windows PWA and pinning to the taskbar.

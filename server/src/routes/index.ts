@@ -8,6 +8,7 @@ import { createAdminBookingsRouter } from './adminBookings';
 import { createAdminDashboardRouter } from './adminDashboard';
 import { createNotificationsRouter } from './notifications';
 import { createIssuesRouter } from './issues';
+import { createDevTestRouter } from './devTest';
 
 /**
  * Builds a fresh API router. A factory (rather than a shared singleton) so each
@@ -25,6 +26,7 @@ export function createApiRouter(): Router {
   router.use(createBookingsRouter());
   router.use(createNotificationsRouter());
   router.use(createIssuesRouter());
+  router.use(createDevTestRouter());
 
   return router;
 }

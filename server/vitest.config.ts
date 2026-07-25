@@ -32,6 +32,9 @@ export default defineConfig({
       BCRYPT_COST: '4',
       PROOF_UPLOAD_DIR: testProofDir,
       ISSUE_UPLOAD_DIR: testIssueDir,
+      // Developer test tools are exercised by the dev-test suites; the disabled
+      // gate is verified via setDevToolsOverride(false) within those tests.
+      ENABLE_DEV_TEST_TOOLS: 'true',
     },
     include: ['tests/**/*.test.ts'],
   },

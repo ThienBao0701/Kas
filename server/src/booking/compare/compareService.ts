@@ -13,7 +13,7 @@ import { loadBookingDetail } from '../bookingRepo';
 import type { ProofExtractedData } from '../ocr/types';
 import type { ComparisonResult } from './types';
 import { COMPARISON_VERSION, buildComparisonResult } from './engine';
-import { deriveDetected, deriveExpected } from './derive';
+import { deriveConfidences, deriveDetected, deriveExpected } from './derive';
 
 const GENERIC_COMPARE_ERROR = 'Không thể đối chiếu. Vui lòng kiểm tra thủ công.';
 
@@ -91,7 +91,7 @@ export async function runComparisonForAnalysis(analysisId: string, opts: RunOpti
   try {
     const booking = await loadBookingDetail(bookingId);
     const fields = JSON.parse(analysis.extractedDataJson) as ProofExtractedData;
-    const result = buildComparisonResult(deriveExpected(booking), deriveDetected(fields, analysis.extractedText));
+    const result = buildComparisonResult(deriveExpected(booking), deriveDetected(fields, analysis.extractedText), deriveConfidences(fields));
     overallStatus = result.overall;
     resultJson = JSON.stringify(result);
   } catch {

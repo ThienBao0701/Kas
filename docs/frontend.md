@@ -215,9 +215,22 @@ The manual **Đúng — xác nhận** / **Sai — yêu cầu tạo lại** butto
 disabled or auto-clicked** by the comparison. As a safety net, if the overall
 result is **CÓ SAI KHÁC** and the Admin clicks approve, one extra confirmation
 appears — *"Hệ thống phát hiện thông tin không khớp. Bạn vẫn muốn xác nhận đúng?"* —
-which the Admin can proceed through. A permanent disclaimer reads *"Kết quả đối
-chiếu chỉ mang tính hỗ trợ. Admin phải kiểm tra ảnh trước khi xác nhận."*
-Receptionists never see the comparison card or its data.
+which the Admin can proceed through. Receptionists never see the comparison card or
+its data.
+
+**Smart explanations (C.3.5).** The card now also shows: a summary counter row
+(*Khớp / Cần kiểm tra / Sai khác / Không tìm thấy*) and an operational headline;
+per non-matching field a plain-Vietnamese explanation (money/date/night/room-count
+deltas, changed booking-code digit), a **Khuyến nghị** hint, an OCR-confidence
+label (*Độ tin cậy cao/trung bình/thấp*), and a safe **token diff** for name/room
+type where the added/removed words are shown with underline/strike **plus**
+screen-reader wording (*"(thêm)" / "(bỏ)"* — colour is never the only signal, and
+nothing is rendered as raw HTML). The PMS note is shown as a compact **✓/✕
+checklist** (`noteComponents`) instead of two long strings, and a **"Admin nên
+kiểm tra"** list collects the de-duplicated checks. MATCH rows stay compact. The
+disclaimer is *"Các giải thích và khuyến nghị chỉ mang tính hỗ trợ. Admin phải kiểm
+tra ảnh trước khi xác nhận."* All of this is additive and degrades gracefully for
+older C.3 comparison rows that lack the smart fields.
 
 ## Hotel issue counters (branch command center)
 
@@ -327,3 +340,17 @@ The front end uses only the APIs that exist. Notable deferrals (intentional):
 - **No external PMS integration.** Kas never creates the reservation itself.
 - **Filtered navigation from dashboard counts** relies on `?branchId=` query
   params that the waiting/pending-review/rejected/completed lists read on mount.
+
+## Developer test tools (development only)
+
+When the server enables the dev tools (`ENABLE_DEV_TEST_TOOLS=true`, non-production),
+`DevToolsBar` (`client/src/layout/DevToolsBar.tsx`, in the shell under the top bar)
+shows a yellow **“CHẾ ĐỘ DỮ LIỆU TEST ĐANG BẬT”** banner for everyone, plus a
+**“Chi nhánh đang test”** branch switcher **only** for the `reception_test` account —
+changing it invalidates every branch-scoped query so all lists/counters/notifications
+refresh with no logout. `useDevTools` reads `GET /api/dev-test/status`, which resolves
+to *disabled* (the endpoint 404s) when the tools are off, so no dev UI ever appears by
+accident. Admins additionally get a **“Công cụ dữ liệu test”** panel in Settings
+(`DevToolsPanel`) to generate demo data and clear it (two-step, typed-phrase
+`XOA DU LIEU DEMO`). Ordinary receptionists see none of this. See
+[`testing-8-branches.md`](testing-8-branches.md).

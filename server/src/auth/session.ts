@@ -13,6 +13,13 @@ declare module 'express-session' {
     userId?: number;
     role?: UserRole;
     branchId?: number | null;
+    /**
+     * Dev-test only: the branch the `reception_test` account is currently testing.
+     * Lives only in the session (never in the user's permanent DB branch) and is
+     * honoured solely when the developer tools are enabled and the user is the
+     * dedicated test receptionist. Cleared on logout.
+     */
+    activeTestBranchId?: number | null;
   }
 }
 

@@ -87,11 +87,16 @@ describe('Proof OCR — analysis lifecycle', () => {
     const { provider, resolve } = deferredProvider();
     setOcrProvider(provider);
     const run = startProofAnalysis(proofId); // not awaited — held at recognition
-    await new Promise((r) => setTimeout(r, 15));
 
-    const active = await testPrisma.bookingProofAnalysis.findFirst({
-      where: { proofId, status: { in: ['PENDING', 'PROCESSING'] } },
-    });
+    // Poll (instead of a fixed sleep) so the assertion is not timing-sensitive
+    // under load: the run is held open at recognition, so an active row must appear.
+    let active = null as Awaited<ReturnType<typeof testPrisma.bookingProofAnalysis.findFirst>>;
+    for (let i = 0; i < 100 && !active; i++) {
+      active = await testPrisma.bookingProofAnalysis.findFirst({
+        where: { proofId, status: { in: ['PENDING', 'PROCESSING'] } },
+      });
+      if (!active) await new Promise((r) => setTimeout(r, 20));
+    }
     expect(active).not.toBeNull();
     expect(active!.startedAt).not.toBeNull();
 

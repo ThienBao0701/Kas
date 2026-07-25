@@ -19,6 +19,7 @@ import {
   type ExpectedNote,
   type NightPrice,
 } from './comparators';
+import { enrichComparisonResult, type DetectedConfidences } from './enrich';
 
 /** Bump this (and keep the old modules) whenever the rules change. */
 export const COMPARISON_VERSION = 'proof-compare-v1';
@@ -76,8 +77,16 @@ function summarize(fields: FieldComparison[]) {
   };
 }
 
-/** Builds the full comparison result from expected (booking) + detected (OCR). */
-export function buildComparisonResult(expected: ExpectedBooking, detected: DetectedProof): ComparisonResult {
+/**
+ * Builds the full comparison result from expected (booking) + detected (OCR).
+ * The base field results/aggregate are C.3; `enrichComparisonResult` then appends
+ * C.3.5 smart explanations additively (never changing any result or the overall).
+ */
+export function buildComparisonResult(
+  expected: ExpectedBooking,
+  detected: DetectedProof,
+  confidences: DetectedConfidences = {},
+): ComparisonResult {
   const fields: FieldComparison[] = [
     compareBookingCode(expected.bookingCode, detected.bookingCode),
     compareDate('CHECK_IN', 'Check-in', expected.checkInDate, detected.checkInDate),
@@ -91,7 +100,8 @@ export function buildComparisonResult(expected: ExpectedBooking, detected: Detec
     compareNightlyPrices(expected.nightlyPrices, detected.nightlyPrices),
     comparePmsNote(expected.note, detected.note),
   ];
-  return { overall: aggregateOverallStatus(fields), version: COMPARISON_VERSION, summary: summarize(fields), fields };
+  const base: ComparisonResult = { overall: aggregateOverallStatus(fields), version: COMPARISON_VERSION, summary: summarize(fields), fields };
+  return enrichComparisonResult(base, expected, detected, confidences);
 }
 
 /** The result shown when OCR is disabled/pending/failed or has no completed run. */

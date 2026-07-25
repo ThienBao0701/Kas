@@ -79,6 +79,30 @@ npm run dev        # backend :3001 + client dev :5173 (client proxy /api sang ba
 - Mỗi lần phân tích OCR mới tạo một bản đối chiếu mới; các bản cũ được giữ lại. Kết
   quả lưu dưới dạng **chữ (JSON)** trong SQLite, sao lưu cùng `data.db`. Chỉ Admin
   đọc được; lễ tân không thấy.
+- Bản C.3.5 bổ sung **giải thích thông minh** (chênh lệch tiền/ngày/đêm/số phòng, ký
+  tự sai trong mã Booking, checklist ghi chú, mức độ tin cậy OCR, gợi ý kiểm tra) —
+  tất cả đều là **logic cục bộ, xác định**, cộng thêm vào JSON hiện có. **Không** đổi
+  schema, **không** thêm migration, và các bản đối chiếu C.3 cũ vẫn đọc được. Vẫn chỉ
+  hỗ trợ, không tự duyệt/từ chối.
+
+## Công cụ dữ liệu test (CHỈ dành cho phát triển)
+
+- Bộ công cụ demo/reset chỉ bật khi `ENABLE_DEV_TEST_TOOLS=true` **và** `NODE_ENV`
+  không phải production. **Tuyệt đối không bật trong production** — ngay cả khi lỡ đặt
+  cờ, mọi endpoint `/api/dev-test/*` vẫn trả `404` và không hiện UI test.
+- Trước khi bàn giao vận hành thật, chạy **một lần** (thủ công, không phải nút bấm):
+
+  ```bash
+  npm run data:prepare-production
+  ```
+
+  Lệnh này yêu cầu gõ cụm từ `PREPARE KAS FOR OFFICIAL USE`, **sao lưu** `data.db` +
+  thư mục upload + `manifest.json` vào `backups/pre-official-<thời gian>/` trước khi
+  xóa, rồi xóa toàn bộ dữ liệu vận hành (demo lẫn thật), giữ nguyên 8 chi nhánh, tài
+  khoản Admin và cấu hình, và vô hiệu hóa `reception_test`. Nếu sao lưu thất bại,
+  lệnh **hủy** và không xóa gì.
+- Thư mục `backups/` đã được `.gitignore`; hãy sao chép ra ổ khác và không commit.
+- Chi tiết: xem `docs/testing-8-branches.md`.
 
 ## Tường lửa Windows
 

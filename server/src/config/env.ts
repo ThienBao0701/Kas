@@ -56,6 +56,11 @@ const envSchema = z
     // Where receptionist issue-report photos are stored (same rules as proofs).
     ISSUE_UPLOAD_DIR: z.string().min(1).default('server/uploads/issue-photos'),
 
+    // --- Developer test tools (demo data + branch switch + reset) ---
+    // Gates every /api/dev-test endpoint and the demo/reset UI. MUST stay false in
+    // production; even when true the tools additionally refuse to run in production.
+    ENABLE_DEV_TEST_TOOLS: booleanFromEnv.default(false),
+
     // --- Proof OCR (advisory extraction only) ---
     // When false (the safe default), proof upload still works and the Admin reads
     // the screenshot manually; every analysis is recorded as DISABLED. When true,
@@ -109,6 +114,20 @@ export const env = loadEnv();
 export const isProduction = env.NODE_ENV === 'production';
 export const isTest = env.NODE_ENV === 'test';
 export const isDevelopment = env.NODE_ENV === 'development';
+
+/**
+ * Pure gate: the developer test tools require the explicit flag AND a
+ * non-production environment. Exposed for unit testing the production refusal.
+ */
+export function computeDevToolsEnabled(flag: boolean, nodeEnv: string): boolean {
+  return flag && nodeEnv !== 'production';
+}
+
+/**
+ * Whether the developer test tools (demo data, branch switch, reset) are active.
+ * They can never be reached in production even if the flag is mistakenly set.
+ */
+export const devToolsEnabled = computeDevToolsEnabled(env.ENABLE_DEV_TEST_TOOLS, env.NODE_ENV);
 
 // Absolute proof-upload directory. A relative PROOF_UPLOAD_DIR is resolved from
 // the repository root (this file lives at server/src/config, so up three levels).
