@@ -80,6 +80,20 @@ normalized output) and stamps the booking's `sourcePlatform`. A `SourceBadge`
 chip labels each booking across the lists and detail view. Booking.com behaviour
 is unchanged.
 
+**Agoda hotel-partner emails.** When the pasted Agoda text is a hotel-partner (YCS)
+booking email, the extract response also carries an `agoda` object and
+`AgodaPartnerCard` appears in the preview (no new page). It shows the detected
+source, **Khách sạn = the resolved branch address** (never the public "KAS …" name,
+and never a Property ID), Booking ID, check-in/out, nights, room type + internal
+code, room count, occupancy, **Tổng công nợ** with the per-night **Giá công nợ từng
+đêm** schedule, the **guest booking price** and payment, then the exact two-line PMS
+note in a monospace block with a **Sao chép ghi chú** button. When the hotel name
+cannot be resolved the card warns *"Không xác định được địa chỉ chi nhánh từ tên
+khách sạn Agoda"* and asks the Admin to pick the branch manually.
+Unreadable fields render as *"Không đọc được"* rather than a guess; an unmapped room
+type shows a manual-review warning and the note is withheld with the reason. The
+card is hidden for Booking.com and for the Agoda guest-confirmation format.
+
 ## Booking business type + branch address (review form)
 
 On the review form (`DispatchPage` stage 2):

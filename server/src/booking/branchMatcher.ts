@@ -19,6 +19,10 @@ export const BRANCH_CONFIDENT_THRESHOLD = 0.85;
  * Extra strings that should map to a branch on top of its seeded hotel name.
  * Booking.com truncates and drops accents inconsistently ("Ben Than" vs the full
  * "Ben Thanh"), so a few conservative aliases keep confident matches confident.
+ *
+ * Agoda's public "KAS …" property names live in {@link AGODA_HOTEL_NAMES} below —
+ * the same module, branch config and normalisation, but resolved by EXACT name
+ * rather than similarity (see the note there).
  */
 const BRANCH_ALIASES: Record<string, readonly string[]> = {
   TRUONG_DINH_05: ['Saigon Hotel Ben Thanh', 'Saigon Ben Thanh Hotel'],
@@ -26,6 +30,52 @@ const BRANCH_ALIASES: Record<string, readonly string[]> = {
   LE_THANH_TON_278: ['Boutique Zody Hotel Ben Thanh'],
   BUI_THI_XUAN_40: ['Ben Thanh Market Luxury Hotel', 'Ben Thanh Market Luxury'],
 };
+
+/**
+ * The eight Agoda public property names → the existing stable branch codes.
+ * All eight pairings are operator-confirmed; the codes come from the branch seed.
+ *
+ * These are resolved by an **exact** (case/whitespace/accent-normalised) lookup,
+ * never by similarity scoring. Every KAS name shares the tokens "KAS" and "Hotel",
+ * so fuzzy matching would rate different properties alike (e.g. *KAS Passion
+ * Boutique Hotel* vs *KAS Zody Boutique Hotel*) and could silently dispatch a
+ * booking to the wrong branch. Exact matching is also what keeps incomplete names
+ * such as "KAS Passion Hotel", "Milestone Premium" or "KAS Luxury Hotel"
+ * unresolved rather than guessed.
+ *
+ * A `branchCode: null` entry would mean the pairing is not established: such a
+ * name is never assigned to a default branch — the Admin picks it manually until
+ * the operator confirms the mapping here.
+ */
+export const AGODA_HOTEL_NAMES: ReadonlyArray<{ name: string; branchCode: string | null }> = [
+  { name: 'KAS Passion Boutique Hotel', branchCode: 'TRUONG_DINH_05' },
+  { name: 'KAS Elegance Hotel', branchCode: 'LY_TU_TRONG_260' },
+  { name: 'KAS Ancient Boutique Hotel', branchCode: 'NGUYEN_TRAI_47A' },
+  { name: 'KAS Milestone Premium Hotel', branchCode: 'NGUYEN_THAI_BINH_170' },
+  { name: 'KAS Zody Boutique Hotel', branchCode: 'LE_THANH_TON_278' },
+  { name: 'KAS Sonata Luxury Hotel', branchCode: 'BUI_THI_XUAN_40' },
+  { name: 'KAS Eliana Luxury Hotel', branchCode: 'BUI_THI_XUAN_13' },
+  { name: 'KAS Dilly Hotel', branchCode: 'LE_THANH_TON_191' },
+];
+
+/**
+ * Resolves an Agoda public hotel name to a configured branch, or null when the
+ * name is unknown/incomplete or its pairing still needs operator confirmation.
+ * Normalisation is limited to case, accents and whitespace — no meaningful word
+ * (Passion, Elegance, Ancient, Milestone, Zody, Sonata, Eliana, Dilly, Boutique,
+ * Luxury, Premium) is ever dropped.
+ */
+export function resolveAgodaBranch(
+  hotelName: string | null | undefined,
+  branches: readonly MatchableBranch[],
+): MatchableBranch | null {
+  if (!hotelName) return null;
+  const key = normalizeText(hotelName);
+  if (key.length === 0) return null;
+  const entry = AGODA_HOTEL_NAMES.find((h) => normalizeText(h.name) === key);
+  if (!entry?.branchCode) return null;
+  return branches.find((b) => b.code === entry.branchCode) ?? null;
+}
 
 function tokenList(text: string): string[] {
   return normalizeText(text).split(' ').filter(Boolean);

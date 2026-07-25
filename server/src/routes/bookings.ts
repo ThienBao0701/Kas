@@ -165,6 +165,9 @@ export function createBookingsRouter(): Router {
         businessTypeConfidence: business.confidence,
         businessTypeRequiresAdminConfirmation: business.requiresAdminConfirmation,
         businessTypeMatchedRules: business.matchedRules,
+        // Present only for an Agoda hotel-partner email: structured partner fields
+        // plus the exact two-line PMS note the receptionist copies.
+        agoda: parsed.agoda ?? null,
       });
     })().catch(next);
   });

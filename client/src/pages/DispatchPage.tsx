@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { FilePlus2, Send, Sparkles } from 'lucide-react';
-import { bookingsApi, branchesApi, BUSINESS_TYPE_LABEL, SOURCE_LABEL, type BookingDetail, type BookingEdit, type BookingSource, type BusinessType, type ParserQuality, type WarningView } from '../api/bookings';
+import { bookingsApi, branchesApi, BUSINESS_TYPE_LABEL, SOURCE_LABEL, type AgodaPartnerExtras, type BookingDetail, type BookingEdit, type BookingSource, type BusinessType, type ParserQuality, type WarningView } from '../api/bookings';
 import { ApiError, toUserMessage } from '../api/errors';
+import { AgodaPartnerCard } from '../components/AgodaPartnerCard';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
 import { ErrorAlert } from '../components/ErrorAlert';
@@ -101,6 +102,7 @@ export function DispatchPage() {
   const [branchId, setBranchId] = useState<number | undefined>(undefined);
   const [warnings, setWarnings] = useState<WarningView[]>([]);
   const [quality, setQuality] = useState<ParserQuality | null>(null);
+  const [agoda, setAgoda] = useState<AgodaPartnerExtras | null>(null);
   const [branchConfidence, setBranchConfidence] = useState<number | null>(null);
   const [businessType, setBusinessType] = useState<BusinessType | null>(null);
   const [businessTypeConfidence, setBusinessTypeConfidence] = useState<number | null>(null);
@@ -118,6 +120,7 @@ export function DispatchPage() {
       setDraftId(res.booking.id);
       setBranchId(res.branchConfident && res.suggestedBranch ? res.suggestedBranch.id : undefined);
       setQuality(res.parserQuality);
+      setAgoda(res.agoda ?? null);
       setBranchConfidence(res.suggestedBranch ? res.branchConfidence : null);
       setBusinessType(res.businessType);
       setBusinessTypeConfidence(res.businessTypeConfidence);
@@ -281,6 +284,7 @@ export function DispatchPage() {
               setForm(null);
               setRawText('');
               setQuality(null);
+              setAgoda(null);
               setBranchConfidence(null);
               setBusinessType(null);
               setBusinessTypeConfidence(null);
@@ -294,6 +298,9 @@ export function DispatchPage() {
       />
 
       {quality ? <DataQualityCard quality={quality} branchConfidence={branchConfidence} /> : null}
+
+      {/* Agoda hotel-partner email: structured fields + the exact two-line note. */}
+      {agoda ? <AgodaPartnerCard agoda={agoda} /> : null}
 
       {businessType ? (
         <BusinessTypeCard

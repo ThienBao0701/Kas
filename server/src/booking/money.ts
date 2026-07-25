@@ -77,6 +77,25 @@ function toWholeVnd(token: string): number | null {
   return Number.isSafeInteger(value) ? value : null;
 }
 
+/**
+ * Splits a whole-VND total into `parts` integer amounts that sum EXACTLY to the
+ * total. VND has no minor unit, so an indivisible remainder is distributed one
+ * đồng at a time to the EARLIEST parts (deterministic largest-remainder):
+ *
+ *   allocateEvenly(1_016_710, 2) -> [508_355, 508_355]
+ *   allocateEvenly(1_000_001, 2) -> [500_001, 500_000]
+ *
+ * The total is never rounded, never changed and the remainder is never lost.
+ * Returns [] for a non-positive part count.
+ */
+export function allocateEvenly(total: number, parts: number): number[] {
+  if (!Number.isFinite(total) || !Number.isFinite(parts) || parts <= 0) return [];
+  const whole = Math.trunc(total);
+  const base = Math.trunc(whole / parts);
+  const remainder = whole - base * parts;
+  return Array.from({ length: parts }, (_, i) => base + (i < remainder ? 1 : 0));
+}
+
 /** Detects an explicit currency token in a value, defaulting to null. */
 export function detectCurrency(raw: string | undefined | null): string | null {
   if (!raw) return null;

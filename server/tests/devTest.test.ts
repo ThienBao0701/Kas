@@ -35,6 +35,15 @@ afterAll(async () => testPrisma.$disconnect());
 
 const gen = (over: Record<string, unknown> = {}) => ({ bookingsPerBranch: 6, issuesPerBranch: 3, includeProofs: true, includeOcr: true, includeComparisons: true, seed: 123, ...over });
 
+/**
+ * Demo generation writes ~400 rows (48 bookings × rooms/nights/proof/OCR/
+ * comparison + 24 issues) one at a time to SQLite, and some cases generate twice.
+ * That legitimately exceeds the suite's default 20s budget on a contended machine,
+ * so the bulk cases get their own generous timeout — the work is inherently slow,
+ * not stuck.
+ */
+const BULK_TIMEOUT = 120_000;
+
 describe('dev-test — security guards', () => {
   it('gate logic: disabled flag or production is off', () => {
     expect(computeDevToolsEnabled(false, 'development')).toBe(false);
@@ -112,14 +121,14 @@ describe('dev-test — demo generation', () => {
     const proof = await testPrisma.bookingCreationProof.findFirst();
     expect(proof).not.toBeNull();
     expect(fs.existsSync(path.join(PROOF_UPLOAD_DIR, proof!.storedFileName))).toBe(true);
-  });
+  }, BULK_TIMEOUT);
 
   it('is deterministic for the same seed', async () => {
     const a = (await adminAgent.post('/api/dev-test/demo/generate').send(gen({ seed: 42 }))).body.summary;
     await adminAgent.delete('/api/dev-test/demo').send({ confirmPhrase: CLEAR_DEMO_PHRASE });
     const b = (await adminAgent.post('/api/dev-test/demo/generate').send(gen({ seed: 42 }))).body.summary;
     expect({ ...a, batchId: null }).toEqual({ ...b, batchId: null });
-  });
+  }, BULK_TIMEOUT);
 
   it('enforces safe count limits', async () => {
     const res = await adminAgent.post('/api/dev-test/demo/generate').send(gen({ bookingsPerBranch: 5000 }));
@@ -131,7 +140,7 @@ describe('dev-test — demo generation', () => {
     const analyses = await testPrisma.bookingProofAnalysis.findMany({ take: 5 });
     expect(analyses.length).toBeGreaterThan(0);
     for (const a of analyses) expect(a.provider).toBe('demo');
-  });
+  }, BULK_TIMEOUT);
 });
 
 describe('dev-test — clear demo', () => {
@@ -139,7 +148,7 @@ describe('dev-test — clear demo', () => {
     await adminAgent.post('/api/dev-test/demo/generate').send(gen());
     const wrong = await adminAgent.delete('/api/dev-test/demo').send({ confirmPhrase: 'xoa du lieu demo' });
     expect(wrong.status).toBe(422);
-  });
+  }, BULK_TIMEOUT);
 
   it('removes all demo data + files but preserves real data', async () => {
     // A real booking + real issue that must survive.
@@ -165,7 +174,7 @@ describe('dev-test — clear demo', () => {
     // Branches + users preserved.
     expect(await testPrisma.branch.count()).toBe(BRANCH_COUNT);
     expect(await testPrisma.user.count({ where: { role: 'ADMIN' } })).toBe(1);
-  });
+  }, BULK_TIMEOUT);
 
   it('is safe to run twice', async () => {
     await adminAgent.post('/api/dev-test/demo/generate').send(gen());
@@ -173,5 +182,5 @@ describe('dev-test — clear demo', () => {
     const second = await adminAgent.delete('/api/dev-test/demo').send({ confirmPhrase: CLEAR_DEMO_PHRASE });
     expect(second.status).toBe(200);
     expect(second.body.summary.bookingsDeleted).toBe(0);
-  });
+  }, BULK_TIMEOUT);
 });

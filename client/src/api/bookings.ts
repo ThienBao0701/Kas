@@ -233,6 +233,46 @@ export interface ParserQuality {
   warningCount: number;
 }
 
+/**
+ * Structured Agoda **hotel-partner** details, present only when the pasted text
+ * was an Agoda partner (YCS) booking email. `pmsNote` is the exact two-line note
+ * the receptionist copies.
+ */
+export interface AgodaPartnerExtras {
+  bookingId: string | null;
+  /** The OTA's public property name — a branch-lookup value, kept for review. */
+  sourceHotelName: string | null;
+  /** The resolved branch's exact stored address (the operational "Khách sạn"). */
+  branchAddress: string | null;
+  branchCode: string | null;
+  branchId: number | null;
+  /** Primary customer (First + Last), for the Admin preview. */
+  customerFullName: string | null;
+  checkIn: string | null;
+  checkOut: string | null;
+  nights: number | null;
+  roomTypeOriginal: string | null;
+  roomCode: string | null;
+  roomTypeKnown: boolean;
+  roomQuantity: number | null;
+  occupancy: string | null;
+  extraBeds: number | null;
+  netRate: number | null;
+  referenceSellRate: number | null;
+  payment: string | null;
+  ratePlan: string | null;
+  cancellationPolicy: string | null;
+  countryOfResidence: string | null;
+  /** Agoda's own per-night rows (diagnostics only). */
+  nightlyRates: { stayDate: string; amount: number | null }[];
+  /** Total hotel receivable = the Agoda Net rate. */
+  totalDebtAmount: number | null;
+  /** Net rate split evenly per stay night; sums exactly to totalDebtAmount. */
+  nightlyDebt: { stayDate: string; amount: number | null }[];
+  pmsNote: string | null;
+  pmsNoteError: string | null;
+}
+
 export interface ExtractResponse {
   booking: { id: string; status: BookingStatus };
   suggestedBranch: Branch | null;
@@ -245,6 +285,8 @@ export interface ExtractResponse {
   businessTypeRequiresAdminConfirmation: boolean;
   businessTypeMatchedRules: string[];
   warnings: WarningView[];
+  /** Null unless the source was an Agoda hotel-partner email. */
+  agoda: AgodaPartnerExtras | null;
 }
 
 /** Vietnamese label + tone for a business type. */

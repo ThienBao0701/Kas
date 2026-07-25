@@ -85,4 +85,48 @@ export interface ParsedBooking {
   parserQuality: ParserQuality;
   warnings: ExtractWarning[];
   parserVersion: string;
+  /**
+   * Present only for an Agoda **hotel-partner** email: the structured partner
+   * fields plus the operator's exact two-line PMS note. Optional and additive —
+   * Booking.com and the Agoda guest-confirmation path leave it undefined.
+   */
+  agoda?: AgodaPartnerExtras;
+}
+
+/** Structured Agoda partner details surfaced alongside a parsed booking. */
+export interface AgodaPartnerExtras {
+  bookingId: string | null;
+  /** The OTA's public property name — a branch-lookup value kept for review only. */
+  sourceHotelName: string | null;
+  /** The resolved branch's exact stored address (the operational "Khách sạn"). */
+  branchAddress: string | null;
+  /** The resolved branch's stable code / id, or null when unresolved. */
+  branchCode: string | null;
+  branchId: number | null;
+  /** Primary customer (First + Last), for the Admin preview. */
+  customerFullName: string | null;
+  checkIn: string | null;
+  checkOut: string | null;
+  nights: number | null;
+  roomTypeOriginal: string | null;
+  roomCode: string | null;
+  roomTypeKnown: boolean;
+  roomQuantity: number | null;
+  occupancy: string | null;
+  extraBeds: number | null;
+  netRate: number | null;
+  referenceSellRate: number | null;
+  payment: string | null;
+  ratePlan: string | null;
+  cancellationPolicy: string | null;
+  countryOfResidence: string | null;
+  /** Agoda's own per-night rows (diagnostics only — not the debt schedule). */
+  nightlyRates: { stayDate: string; amount: number | null }[];
+  /** Total hotel receivable = the Agoda Net rate. */
+  totalDebtAmount: number | null;
+  /** Net rate split evenly per stay night; sums exactly to totalDebtAmount. */
+  nightlyDebt: { stayDate: string; amount: number | null }[];
+  /** The exact two-line note, or null when required data is missing. */
+  pmsNote: string | null;
+  pmsNoteError: string | null;
 }
