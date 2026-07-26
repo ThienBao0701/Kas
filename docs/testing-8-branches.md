@@ -1,4 +1,10 @@
-# Developer test environment — 8 branches, demo data & safe cleanup
+# Developer test environment — all branches, demo data & safe cleanup
+
+> Since Milestone C.3.7 the branch count is **not fixed at 8**: the Admin can add,
+> renumber and disable branches at runtime (see
+> [`branch-management.md`](branch-management.md)). Everything below derives the
+> branch set from the database — the "8" in this document is simply the number the
+> system currently ships with.
 
 > **DEVELOPMENT ONLY.** Everything below is gated by `ENABLE_DEV_TEST_TOOLS` **and**
 > a non-production `NODE_ENV`. In production every dev-test endpoint responds `404`
@@ -23,7 +29,8 @@ To disable again: set `ENABLE_DEV_TEST_TOOLS=false` (or remove it) and restart.
 
 ## 2. The test receptionist account
 
-A single dedicated account is used to test all 8 branches:
+A single dedicated account is used to test every branch (its switcher lists all
+active branches, including any the Admin has just added):
 
 | | |
 | --- | --- |
@@ -63,10 +70,12 @@ Admin → Settings → **Công cụ dữ liệu test**. Configure:
 - **Bao gồm proof / OCR / comparison**
 - **Seed** (same seed ⇒ identical data — deterministic)
 
-Press **“Tạo dữ liệu demo cho 8 chi nhánh”** and confirm. API:
-`POST /api/dev-test/demo/generate`.
+Press **“Tạo dữ liệu demo cho *N* chi nhánh”** (the count comes from the server,
+never a hardcoded 8) and confirm. API: `POST /api/dev-test/demo/generate`.
 
-The generator spreads data across all 8 branches and across booking statuses
+The generator spreads data across **every ACTIVE branch** — a ninth branch added by
+the Admin is included automatically, and a disabled branch is skipped — and across
+booking statuses
 (`DRAFT/READY/NEW/PENDING_REVIEW/REJECTED/COMPLETED`), payment (`PAY_BEFORE/PAY_AFTER`),
 business type (`DIRECT/PARTNER/UNKNOWN`), single/multi-room, single/multi-night,
 last-minute and future dates, with/without phone, arrival notes, and breakfast per
@@ -91,8 +100,9 @@ API: `DELETE /api/dev-test/demo` (body `{ "confirmPhrase": "XOA DU LIEU DEMO" }`
 **Demo clear deletes only demo-tagged data** (bookings + their rooms/nights/proofs/
 OCR/comparisons/history, demo issues, demo notifications, demo batches, and the demo
 proof/issue image files). It **preserves**: real bookings/issues/proofs/
-notifications, all users, the 8 branches + their settings (breakfast, addresses,
-codes), configuration, parser/business-type rules and migrations.
+notifications, all users, **every branch** + its settings (branch number, breakfast,
+address, code) **and its platform hotel names**, configuration, parser/business-type
+rules and migrations.
 
 ## 6. Demo clear vs official-launch reset
 
@@ -127,8 +137,9 @@ and (in production only) an explicit `--allow-production` flag. It:
    files, OCR analyses, comparisons, notifications, hotel issues, issue photos,
    sessions and demo batches.
 3. **Disables** `reception_test` (never auto-creates production receptionists).
-4. **Preserves**: schema + all migrations, the 8 branches (codes/addresses/breakfast
-   config), the Admin account, roles/permissions and configuration.
+4. **Preserves**: schema + all migrations, **every configured branch** (branch
+   numbers / codes / addresses / breakfast / contact) **and every
+   `BranchSourceAlias`**, the Admin account, roles/permissions and configuration.
 
 It is **idempotent** — running it twice leaves the system safely empty.
 

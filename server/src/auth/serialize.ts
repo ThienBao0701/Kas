@@ -8,6 +8,9 @@ export interface PublicBranch {
   code: string;
   hotelName: string;
   address: string;
+  /** Human-readable "Chi nhánh N" label. Never an authorization key. */
+  branchNumber: number;
+  breakfastIncluded: boolean;
 }
 
 export interface PublicUser {
@@ -34,6 +37,8 @@ export function serializeBranch(branch: Branch | null): PublicBranch | null {
     code: branch.code,
     hotelName: branch.hotelName,
     address: branch.address,
+    branchNumber: branch.branchNumber,
+    breakfastIncluded: branch.breakfastIncluded,
   };
 }
 

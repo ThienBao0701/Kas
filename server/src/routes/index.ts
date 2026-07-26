@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { healthRouter } from './health';
 import { createAuthRouter } from './auth';
 import { createBranchesRouter } from './branches';
+import { createAdminBranchesRouter } from './adminBranches';
 import { createAdminUsersRouter } from './adminUsers';
 import { createBookingsRouter } from './bookings';
 import { createAdminBookingsRouter } from './adminBookings';
@@ -20,6 +21,8 @@ export function createApiRouter(): Router {
   router.use(healthRouter);
   router.use(createAuthRouter());
   router.use(createBranchesRouter());
+  // Mounted before the generic /admin router so branch management owns its paths.
+  router.use(createAdminBranchesRouter());
   router.use(createAdminUsersRouter());
   router.use(createAdminBookingsRouter());
   router.use(createAdminDashboardRouter());

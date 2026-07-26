@@ -61,7 +61,7 @@ npm run start
 | `npm run lint` | Lint all workspaces |
 | `npm run typecheck` | TypeScript checks |
 | `npm run db:migrate` | Apply database migrations |
-| `npm run db:seed` | Seed the 8 branches |
+| `npm run db:seed` | Seed the initial branches + backfill their platform hotel names |
 
 ## Authentication & accounts
 
@@ -107,7 +107,8 @@ access on its next request even if it still holds a session cookie.
 
 ### Branch isolation
 
-Every receptionist is bound to exactly one of the 8 branches. The backend
+Every receptionist is bound to exactly one branch (8 initially; the Admin can add
+more — see [docs/branch-management.md](docs/branch-management.md)). The backend
 enforces this on every request from the authenticated session — a receptionist
 can never reach another branch by changing a URL id, a query parameter, or a
 JSON `branchId`. The admin can see and act across all branches.
@@ -396,11 +397,16 @@ structure. Booking.com behaviour is unchanged. Each booking stores its
 
 A property is listed under **different public names on different platforms**, and a
 listing can be **renamed over time**. Routing always uses the stable branch `code`,
-never a display name, a numeric id or a position in a list. Booking.com names
-resolve through `branchMatcher.BRANCH_ALIASES` (similarity + aliases, unchanged
-behaviour); Agoda names resolve through `AGODA_HOTEL_NAMES` by exact match. Earlier
-public names are **kept** as aliases so historical emails still parse, and every
-alias must resolve to exactly one branch (asserted by a no-ambiguity test).
+never a display name, a numeric id or a position in a list. Earlier public names are
+**kept** as aliases so historical emails still parse, and every alias must resolve to
+exactly one branch (asserted by a no-ambiguity test).
+
+Since Milestone C.3.7 these names live in the database (`BranchSourceAlias`) and are
+managed by the Admin — see **[docs/branch-management.md](docs/branch-management.md)**.
+`npm run db:seed` backfills every name below from the legacy in-code tables
+(`branchMatcher.BRANCH_ALIASES`, `AGODA_HOTEL_NAMES`), which remain only as defaults
+for fixtures and as a post-migration fallback. Matching behaviour is unchanged:
+Booking.com prefers an exact alias then similarity, Agoda is exact-only.
 
 Current Booking.com names for the two renamed properties:
 
@@ -647,7 +653,7 @@ allowed. **Back up the server's `data.db` regularly.** No Docker required.
 
 ## Developer test tools (DEVELOPMENT ONLY)
 
-For testing the 8 branches locally there is an optional, **development-only**
+For testing every branch locally there is an optional, **development-only**
 toolset — demo-data generation, a `reception_test` branch switcher, and safe
 cleanup — gated by `ENABLE_DEV_TEST_TOOLS=true` **and** a non-production `NODE_ENV`.
 In production every `/api/dev-test/*` endpoint returns `404` and no dev UI appears,
@@ -656,20 +662,22 @@ even if the flag is mistakenly set. Demo rows are tagged `isDemo` + a `demoBatch
 confused with real data and are deleted reliably. Admin-only APIs:
 
 ```
-POST   /api/dev-test/demo/generate   # deterministic demo data for all 8 branches (seeded)
+POST   /api/dev-test/demo/generate   # deterministic demo data for every ACTIVE branch (seeded)
 DELETE /api/dev-test/demo            # clear ONLY demo-tagged data (typed-phrase confirm)
 POST   /api/dev-test/active-branch   # reception_test only: switch effective branch (session)
 ```
 
 A separate **official-launch reset** (`npm run data:prepare-production`, CLI-only,
 interactive phrase `PREPARE KAS FOR OFFICIAL USE`) backs up the DB + uploads, then
-wipes ALL operational data (demo **and** real) while preserving the schema, the 8
-branches, the Admin account and configuration, and disables `reception_test`. Full
+wipes ALL operational data (demo **and** real) while preserving the schema, every
+configured branch **and its platform hotel names**, the Admin account and
+configuration, and disables `reception_test`. Full
 guide: [`docs/testing-8-branches.md`](docs/testing-8-branches.md). **Never enable
 `ENABLE_DEV_TEST_TOOLS` in production.**
 
 ## Documentation
 
-- [`docs/testing-8-branches.md`](docs/testing-8-branches.md) — developer 8-branch test env, demo data, safe cleanup, official reset.
+- [`docs/branch-management.md`](docs/branch-management.md) — Admin hotel & branch management: branch number vs stable code, internal name vs platform aliases, add/rename/re-address, Booking.com & Agoda names, exact vs similarity matching, disabling a branch.
+- [`docs/testing-8-branches.md`](docs/testing-8-branches.md) — developer branch test env, demo data, safe cleanup, official reset.
 - [`docs/deployment.md`](docs/deployment.md) — LAN deployment on Windows + SQLite backup.
 - [`docs/pwa-install.md`](docs/pwa-install.md) — installing Kas as a Windows PWA and pinning to the taskbar.

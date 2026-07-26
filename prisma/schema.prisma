@@ -103,6 +103,40 @@ enum ProofReviewReason {
   OTHER
 }
 
+/// Which external platform a branch alias belongs to. MANUAL/OTHER exist so a
+/// future source can be configured without another schema redesign.
+enum BranchAliasSource {
+  BOOKING_COM
+  AGODA
+  MANUAL
+  OTHER
+}
+
+/// How an alias is compared against the hotel name found in pasted text.
+/// EXACT      = only a case/accent/whitespace-normalised equality resolves it.
+/// SIMILARITY = the Booking.com prefix-tolerant token score may also resolve it.
+enum BranchAliasMatchMode {
+  EXACT
+  SIMILARITY
+}
+
+/// What changed on a branch (audit trail for Admin branch management).
+enum BranchChangeAction {
+  BRANCH_CREATED
+  BRANCH_NUMBER_CHANGED
+  BRANCH_NAME_CHANGED
+  BRANCH_ADDRESS_CHANGED
+  BRANCH_BREAKFAST_CHANGED
+  BRANCH_CONTACT_CHANGED
+  BRANCH_ACTIVATED
+  BRANCH_DEACTIVATED
+  ALIAS_ADDED
+  ALIAS_RENAMED
+  ALIAS_ENABLED
+  ALIAS_DISABLED
+  ALIAS_REMOVED
+}
+
 /// Severity of an extraction warning surfaced to the admin during preview.
 enum WarningSeverity {
   INFO
@@ -135,19 +169,19 @@ enum IssueStatus {
 
 /// Application user: one administrator plus receptionists bound to a branch.
 model User {
-  id                 Int      @id @default(autoincrement())
-  username           String   @unique
+  id                 Int       @id @default(autoincrement())
+  username           String    @unique
   passwordHash       String
   fullName           String
   role               UserRole
   /// Required for RECEPTIONIST, always null for ADMIN (admin sees all branches).
   branchId           Int?
-  active             Boolean  @default(true)
-  mustChangePassword Boolean  @default(false)
+  active             Boolean   @default(true)
+  mustChangePassword Boolean   @default(false)
   /// Set on every successful login; null until the account logs in for the first time.
   lastLoginAt        DateTime?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
   branch            Branch?                @relation(fields: [branchId], references: [id])
   bookingsSent      Booking[]              @relation("BookingSentBy")
@@ -162,6 +196,7 @@ model User {
   issuesReported    HotelIssue[]           @relation("IssueReportedBy")
   issuesAccepted    HotelIssue[]           @relation("IssueAcceptedBy")
   issuesResolved    HotelIssue[]           @relation("IssueResolvedBy")
+  branchChanges     BranchChangeLog[]
 
   @@index([branchId])
   @@index([role])
@@ -196,29 +231,100 @@ model Session {
 /// generation parameters + summary so the whole batch can be deleted reliably.
 /// Never created in production; every business row it spawns is tagged isDemo.
 model DemoDataBatch {
-  id          String   @id @default(cuid())
+  id              String   @id @default(cuid())
   /// The seed + counts used, serialised as JSON (for reproducibility/audit).
-  paramsJson  String
+  paramsJson      String
   /// A JSON summary of how many of each entity were created.
-  summaryJson String
+  summaryJson     String
   createdByUserId Int?
-  createdAt   DateTime @default(now())
+  createdAt       DateTime @default(now())
 }
 
-/// One of the 8 hotel branches bookings are dispatched to.
+/// A hotel branch bookings are dispatched to. Admin-managed at runtime: branch
+/// count is NOT fixed at 8, and platform hotel names live in BranchSourceAlias
+/// rather than in source code.
 model Branch {
-  id        Int      @id @default(autoincrement())
-  code      String   @unique
-  /// Name as it appears in Booking.com text, used for fuzzy matching.
-  hotelName String
-  address   String
-  active    Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id                Int      @id @default(autoincrement())
+  /// Immutable stable code (A–Z, 0–9, underscore), e.g. "BUI_THI_XUAN_40".
+  /// Parser routing and authorization key off this, never off branchNumber.
+  code              String   @unique
+  /// Internal display name. Also the legacy Booking.com matching name for the
+  /// originally seeded branches — every platform name now lives in
+  /// BranchSourceAlias, so renaming this never moves a booking.
+  hotelName         String
+  address           String
+  /// Human-readable branch number shown as "Chi nhánh N". Editable, unique among
+  /// ACTIVE branches, never derived from `id` or from list order, and never an
+  /// authorization key. 0 only until the additive migration backfills it.
+  branchNumber      Int      @default(0)
+  /// Whether this branch serves breakfast (operator configuration only — an
+  /// extracted booking's own text still decides its PMS note wording).
+  breakfastIncluded Boolean  @default(false)
+  /// Optional operational contact details, shown to the Admin only.
+  phone             String?
+  email             String?
+  contactName       String?
+  note              String?
+  active            Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
-  users    User[]
-  bookings Booking[]
-  issues   HotelIssue[]
+  users      User[]
+  bookings   Booking[]
+  issues     HotelIssue[]
+  aliases    BranchSourceAlias[]
+  changeLogs BranchChangeLog[]
+}
+
+/// One external platform hotel name that resolves to a branch. Replaces the
+/// hardcoded Booking.com/Agoda name tables for normal operation: renaming a
+/// property on an OTA is an Admin action, not a code change.
+///
+/// `normalizedAlias` is the case/accent/whitespace-folded form used for lookup.
+/// At most one ACTIVE alias may exist per (source, normalizedAlias) across all
+/// branches — enforced by the branch service so a name can never route to two
+/// branches. Old names stay as additional (optionally inactive) rows so
+/// historical text keeps resolving until the Admin deactivates them explicitly.
+model BranchSourceAlias {
+  id              Int                  @id @default(autoincrement())
+  branchId        Int
+  source          BranchAliasSource
+  alias           String
+  normalizedAlias String
+  matchMode       BranchAliasMatchMode @default(EXACT)
+  active          Boolean              @default(true)
+  /// Higher wins when several aliases of one branch could apply (display order).
+  priority        Int                  @default(0)
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  /// The same normalized name may never be stored twice for one branch+source.
+  @@unique([branchId, source, normalizedAlias])
+  @@index([source, normalizedAlias])
+  @@index([source, active])
+  @@index([branchId])
+}
+
+/// Immutable audit trail of Admin branch/alias configuration changes. Values are
+/// plain configuration strings only — never passwords or session data.
+model BranchChangeLog {
+  id              String             @id @default(cuid())
+  branchId        Int
+  action          BranchChangeAction
+  /// Which field changed, for the value-level actions (e.g. "address").
+  field           String?
+  oldValue        String?
+  newValue        String?
+  changedByUserId Int?
+  changedAt       DateTime           @default(now())
+
+  branch    Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  changedBy User?  @relation(fields: [changedByUserId], references: [id])
+
+  @@index([branchId, changedAt])
+  @@index([changedAt])
 }
 
 /// A Booking.com reservation extracted by the admin and dispatched to a branch.
@@ -255,10 +361,10 @@ model Booking {
   /// ("14:00", "sau 15:00") because Booking.com text is not consistent.
   /// Nullable so a partial extraction can still be stored as a DRAFT while a
   /// "missing dates" warning flags it for the admin to complete.
-  checkInDate   DateTime?
-  checkInTime   String?
-  checkOutDate  DateTime?
-  checkOutTime  String?
+  checkInDate  DateTime?
+  checkInTime  String?
+  checkOutDate DateTime?
+  checkOutTime String?
 
   /// Whole VND. Null when the total could not be extracted.
   totalAmount   Int?
@@ -290,7 +396,7 @@ model Booking {
   reviewedAt         DateTime?
 
   /// Which extraction-engine version produced this draft.
-  parserVersion  String?
+  parserVersion   String?
   /// The admin who ran the extraction that created this booking.
   createdByUserId Int?
 
@@ -302,16 +408,16 @@ model Booking {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  branch        Branch?                 @relation(fields: [branchId], references: [id])
-  sentBy        User?                   @relation("BookingSentBy", fields: [sentByUserId], references: [id])
-  completedBy   User?                   @relation("BookingCompletedBy", fields: [completedByUserId], references: [id])
-  reviewedBy    User?                   @relation("BookingReviewedBy", fields: [reviewedByUserId], references: [id])
-  createdBy     User?                   @relation("BookingCreatedBy", fields: [createdByUserId], references: [id])
-  rooms         BookingRoom[]
-  statusHistory BookingStatusHistory[]
-  notifications Notification[]
-  warnings      BookingExtractWarning[]
-  proofs        BookingCreationProof[]
+  branch           Branch?                  @relation(fields: [branchId], references: [id])
+  sentBy           User?                    @relation("BookingSentBy", fields: [sentByUserId], references: [id])
+  completedBy      User?                    @relation("BookingCompletedBy", fields: [completedByUserId], references: [id])
+  reviewedBy       User?                    @relation("BookingReviewedBy", fields: [reviewedByUserId], references: [id])
+  createdBy        User?                    @relation("BookingCreatedBy", fields: [createdByUserId], references: [id])
+  rooms            BookingRoom[]
+  statusHistory    BookingStatusHistory[]
+  notifications    Notification[]
+  warnings         BookingExtractWarning[]
+  proofs           BookingCreationProof[]
   proofComparisons BookingProofComparison[]
 
   @@index([bookingCode])
@@ -334,31 +440,31 @@ model Booking {
 /// reservation in the external hotel system. Attempts are never overwritten or
 /// hard-deleted; a resubmission creates a new attempt with the next number.
 model BookingCreationProof {
-  id             String             @id @default(cuid())
-  bookingId      String
+  id                String   @id @default(cuid())
+  bookingId         String
   /// 1-based attempt sequence for this booking (unique per booking).
-  attemptNumber  Int
+  attemptNumber     Int
   /// Server-generated file name on disk (never the client's original name).
-  storedFileName String
+  storedFileName    String
   /// The client's original name, kept only for display/audit — never trusted.
-  originalFileName String
-  mimeType       String
-  fileSize       Int
-  submissionNote String?
+  originalFileName  String
+  mimeType          String
+  fileSize          Int
+  submissionNote    String?
   submittedByUserId Int?
-  submittedAt    DateTime           @default(now())
+  submittedAt       DateTime @default(now())
 
-  status         ProofStatus        @default(PENDING_REVIEW)
+  status           ProofStatus        @default(PENDING_REVIEW)
   reviewedByUserId Int?
-  reviewedAt     DateTime?
+  reviewedAt       DateTime?
   reviewReasonCode ProofReviewReason?
-  reviewNote     String?
+  reviewNote       String?
 
-  createdAt      DateTime           @default(now())
+  createdAt DateTime @default(now())
 
-  booking     Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  submittedBy User?   @relation("ProofSubmittedBy", fields: [submittedByUserId], references: [id])
-  reviewedBy  User?   @relation("ProofReviewedBy", fields: [reviewedByUserId], references: [id])
+  booking     Booking                  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  submittedBy User?                    @relation("ProofSubmittedBy", fields: [submittedByUserId], references: [id])
+  reviewedBy  User?                    @relation("ProofReviewedBy", fields: [reviewedByUserId], references: [id])
   analyses    BookingProofAnalysis[]
   comparisons BookingProofComparison[]
 
@@ -374,26 +480,26 @@ model BookingCreationProof {
 /// This record is advisory extraction only: it carries no MATCH/MISMATCH verdict
 /// and no approval recommendation.
 model BookingProofAnalysis {
-  id             String              @id @default(cuid())
-  proofId        String
-  status         ProofAnalysisStatus @default(PENDING)
+  id                String              @id @default(cuid())
+  proofId           String
+  status            ProofAnalysisStatus @default(PENDING)
   /// Which provider produced the run, e.g. "tesseract", "disabled", "mock".
-  provider       String
+  provider          String
   /// A version stamp for the extraction logic, so old runs remain interpretable.
-  analysisVersion String
+  analysisVersion   String
   /// Raw OCR text, length-capped by the service before it is stored (never bytes).
-  extractedText  String?
+  extractedText     String?
   /// Structured fields serialised as a JSON string (validated before storage).
   extractedDataJson String?
   /// Sanitised, user-safe error message when status is FAILED (never a stack/path).
-  errorMessage   String?
-  startedAt      DateTime?
-  completedAt    DateTime?
+  errorMessage      String?
+  startedAt         DateTime?
+  completedAt       DateTime?
 
-  createdAt      DateTime            @default(now())
-  updatedAt      DateTime            @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  proof       BookingCreationProof   @relation(fields: [proofId], references: [id], onDelete: Cascade)
+  proof       BookingCreationProof     @relation(fields: [proofId], references: [id], onDelete: Cascade)
   comparisons BookingProofComparison[]
 
   @@index([proofId])
@@ -408,20 +514,20 @@ model BookingProofAnalysis {
 /// changes booking or proof status. Re-analysis creates a new comparison; earlier
 /// runs are preserved. Only one comparison per (analysis, comparisonVersion).
 model BookingProofComparison {
-  id               String                       @id @default(cuid())
-  bookingId        String
-  proofId          String
-  analysisId       String
-  overallStatus    ProofComparisonOverallStatus
+  id                String                       @id @default(cuid())
+  bookingId         String
+  proofId           String
+  analysisId        String
+  overallStatus     ProofComparisonOverallStatus
   /// Stable version tag for the comparison ruleset (e.g. "proof-compare-v1").
   comparisonVersion String
   /// Field-by-field result serialised as a validated JSON string (no BLOB/path).
-  resultJson       String
+  resultJson        String
   /// Sanitised, user-safe error message when a run failed (never a stack/path).
-  errorMessage     String?
+  errorMessage      String?
   /// The Admin who triggered a manual re-comparison; null for a system run.
-  createdByUserId  Int?
-  createdAt        DateTime                     @default(now())
+  createdByUserId   Int?
+  createdAt         DateTime                     @default(now())
 
   booking  Booking              @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   proof    BookingCreationProof @relation(fields: [proofId], references: [id], onDelete: Cascade)
@@ -435,11 +541,11 @@ model BookingProofComparison {
 
 /// One room within a booking. Rooms are never merged; each keeps its own prices.
 model BookingRoom {
-  id        String   @id @default(cuid())
-  bookingId String
+  id           String   @id @default(cuid())
+  bookingId    String
   /// 1-based position as shown in the UI ("Phòng 1", "Phòng 2").
-  roomIndex Int
-  roomType  String?
+  roomIndex    Int
+  roomType     String?
   /// Whole VND, null when not stated in the source text.
   roomSubtotal Int?
   taxAmount    Int?
@@ -457,14 +563,14 @@ model BookingRoom {
 /// The price of one individual stay night of one individual room.
 /// One row per expected night: check-in inclusive to check-out exclusive.
 model BookingNightPrice {
-  id            String   @id @default(cuid())
-  bookingRoomId String
+  id                String   @id @default(cuid())
+  bookingRoomId     String
   /// Date-only at UTC midnight. Never the check-out date.
-  stayDate      DateTime
+  stayDate          DateTime
   /// Whole VND. Null means "Chưa xác định" — never guessed, averaged or
   /// derived by dividing a total.
-  amount        Int?
-  currency      String   @default("VND")
+  amount            Int?
+  currency          String   @default("VND")
   /// True when the admin typed or corrected this amount by hand.
   manuallyCorrected Boolean  @default(false)
   /// True when the amount is a system estimate rather than a value Booking.com
@@ -518,13 +624,13 @@ model BookingStatusHistory {
 
 /// In-app notification delivered to a user (new booking / completion).
 model Notification {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   userId    Int
   bookingId String?
   title     String
   body      String
-  read      Boolean  @default(false)
-  createdAt DateTime @default(now())
+  read      Boolean   @default(false)
+  createdAt DateTime  @default(now())
   readAt    DateTime?
 
   /// Development demo marker (dev-test tools only). Real notifications are false.
@@ -543,12 +649,12 @@ model Notification {
 /// (broken door, AC not cold, clogged toilet, guest request, …). Reports are kept
 /// permanently — never hard-deleted — and are scoped to the reporter's branch.
 model HotelIssue {
-  id          String        @id @default(cuid())
-  branchId    Int
+  id              String        @id @default(cuid())
+  branchId        Int
   /// Optional room number the issue relates to (free-form).
-  roomNumber  String?
-  category    IssueCategory
-  description String
+  roomNumber      String?
+  category        IssueCategory
+  description     String
   /// Server-generated file name of the (optional, single) attached photo. Only
   /// metadata + a safe relative path live here, never the image bytes.
   photoStoredName String?

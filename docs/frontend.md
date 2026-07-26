@@ -313,6 +313,39 @@ background refresh fails, the last good data stays on screen with a warning
 ("Không thể kết nối đến máy chủ…") and a retry — data is never blanked to a fake
 empty state.
 
+## Hotel & branch management (admin-only)
+
+**Khách sạn & chi nhánh** (`/app/branches`, `client/src/pages/BranchesPage.tsx`) is
+the Admin screen for the whole branch configuration. A receptionist neither sees the
+nav entry nor reaches the route (`RequireRole` renders *Không có quyền truy cập*),
+and every `/api/admin/branches/*` call returns 403 for them.
+
+The table lists **Số CN · Tên nội bộ · Địa chỉ · Mã chi nhánh · Tên trên nền tảng ·
+Ăn sáng · Lễ tân · Trạng thái**, with per-row *Chỉnh sửa*, *Quản lý tên trên nền
+tảng* and *Vô hiệu hóa* / *Kích hoạt lại*.
+
+- **Thêm khách sạn / chi nhánh** — number, internal name, address, stable code
+  (auto-suggested from the address, editable **before** creation only), breakfast,
+  active, optional contact fields, and any number of Booking.com / Agoda names. An
+  unsaved name can be removed again; a live **Xem trước** shows *Chi nhánh N /
+  address / code*. Nothing is created until the Admin confirms.
+- **Chỉnh sửa** — the stable code field is rendered read-only/disabled with the note
+  *"Mã chi nhánh không thể thay đổi sau khi tạo."*, and the update payload never
+  carries `code` (the API rejects it with 422 anyway).
+- **Quản lý tên trên nền tảng** — add, rename, disable and re-enable names. The
+  dialog states that Agoda matches exactly, and that an old name keeps receiving
+  bookings until it is switched off deliberately.
+- **Vô hiệu hóa** is a confirmation step that first loads the branch's receptionist
+  accounts and **warns** about them; the app never reassigns or disables an account
+  on its own.
+
+Branch selects elsewhere show `Chi nhánh N — address` via `branchLabel()`
+(`client/src/auth/types.ts`) and are fed by `GET /api/branches`, which returns
+**active branches only** — so a disabled branch cannot be picked for dispatch or for
+a new receptionist. The dev-tools panel derives its branch count from the same
+endpoint instead of hardcoding eight. Full guide:
+[`branch-management.md`](branch-management.md).
+
 ## Admin account management — delete not available
 
 There is **no delete endpoint** for user accounts at the current backend

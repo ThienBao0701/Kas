@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { UserPlus } from 'lucide-react';
 import { adminUsersApi, type CreateUserInput } from '../api/adminUsers';
 import { branchesApi } from '../api/bookings';
+import { branchLabel, type Branch } from '../auth/types';
 import { toUserMessage } from '../api/errors';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
@@ -118,7 +119,7 @@ function CreateUserModal({
   onCreated,
 }: {
   open: boolean;
-  branches: { id: number; address: string; hotelName: string }[];
+  branches: Branch[];
   onClose: () => void;
   onCreated: () => void;
 }) {
@@ -165,7 +166,8 @@ function CreateUserModal({
           <select className={`${inputClass} mt-1`} value={form.branchId || ''} onChange={(e) => setForm({ ...form, branchId: Number(e.target.value) })}>
             <option value="">— Chọn chi nhánh —</option>
             {branches.map((b) => (
-              <option key={b.id} value={b.id}>{b.address} — {b.hotelName}</option>
+              // Only ACTIVE branches reach here: /api/branches filters them out.
+              <option key={b.id} value={b.id}>{branchLabel(b)}</option>
             ))}
           </select>
         </label>

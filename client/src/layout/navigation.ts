@@ -1,4 +1,5 @@
 import {
+  Building2,
   CheckCircle2,
   ClipboardPaste,
   History,
@@ -28,6 +29,7 @@ export const ADMIN_NAV: NavItem[] = [
   { to: '/app/completed', label: 'Đã xác nhận đúng', icon: CheckCircle2 },
   { to: '/app/history', label: 'Lịch sử', icon: History },
   { to: '/app/issues', label: 'Sự cố khách sạn', icon: Wrench },
+  { to: '/app/branches', label: 'Khách sạn & chi nhánh', icon: Building2 },
   { to: '/app/settings', label: 'Quản lý tài khoản', icon: Users },
 ];
 

@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { FlaskConical, Loader2, Trash2, TriangleAlert } from 'lucide-react';
 import { devTestApi, type GenerateSummary } from '../api/devTest';
+import { branchesApi } from '../api/bookings';
 import { useDevTools } from '../hooks/useDevTools';
 import { toUserMessage } from '../api/errors';
 import { Card } from './Card';
@@ -19,6 +20,10 @@ const CLEAR_PHRASE = 'XOA DU LIEU DEMO';
 export function DevToolsPanel() {
   const status = useDevTools();
   const queryClient = useQueryClient();
+  // The branch count is read from the server, never hardcoded: a ninth branch
+  // added by the Admin is generated for automatically.
+  const branches = useQuery({ queryKey: ['branches'], queryFn: () => branchesApi.list(), staleTime: 5 * 60_000 });
+  const branchCount = branches.data ? branches.data.branches.length : null;
   const [form, setForm] = useState({ bookingsPerBranch: 10, issuesPerBranch: 3, includeProofs: true, includeOcr: true, includeComparisons: true, seed: 12345 });
   const [confirmGen, setConfirmGen] = useState(false);
   const [clearStep, setClearStep] = useState<0 | 1 | 2>(0);
@@ -83,7 +88,7 @@ export function DevToolsPanel() {
       <div className="mt-4 flex flex-wrap gap-2">
         <Button onClick={() => setConfirmGen(true)} disabled={generate.isPending}>
           {generate.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <FlaskConical className="h-4 w-4" aria-hidden="true" />}
-          Tạo dữ liệu demo cho 8 chi nhánh
+          {branchCount === null ? 'Tạo dữ liệu demo cho các chi nhánh' : `Tạo dữ liệu demo cho ${branchCount} chi nhánh`}
         </Button>
         <Button variant="danger" onClick={() => setClearStep(1)} disabled={clear.isPending}>
           <Trash2 className="h-4 w-4" aria-hidden="true" />
@@ -120,7 +125,9 @@ export function DevToolsPanel() {
           </>
         }
       >
-        <p className="text-sm text-slate-600">Hệ thống sẽ tạo dữ liệu giả cho toàn bộ 8 chi nhánh. Tiếp tục?</p>
+        <p className="text-sm text-slate-600">
+          Hệ thống sẽ tạo dữ liệu giả cho toàn bộ {branchCount ?? ''} chi nhánh đang hoạt động. Tiếp tục?
+        </p>
       </Modal>
 
       {/* Clear: two-step confirmation */}
@@ -135,8 +142,10 @@ export function DevToolsPanel() {
           </>
         }
       >
-        <p className="text-sm text-slate-600">Bạn sắp xóa toàn bộ dữ liệu demo của 8 chi nhánh.</p>
-        <p className="mt-2 text-xs text-slate-500">Sẽ được giữ lại: 8 chi nhánh · Tài khoản Admin · Tài khoản lễ tân test · Cấu hình hệ thống.</p>
+        <p className="text-sm text-slate-600">Bạn sắp xóa toàn bộ dữ liệu demo của {branchCount ?? ''} chi nhánh.</p>
+        <p className="mt-2 text-xs text-slate-500">
+          Sẽ được giữ lại: toàn bộ chi nhánh và cấu hình tên nền tảng · Tài khoản Admin · Tài khoản lễ tân test · Cấu hình hệ thống.
+        </p>
       </Modal>
       <Modal
         open={clearStep === 2}

@@ -63,6 +63,7 @@ export function serializeBookingPreview(booking: BookingWithExtractRelations) {
           code: booking.branch.code,
           hotelName: booking.branch.hotelName,
           address: booking.branch.address,
+          branchNumber: booking.branch.branchNumber,
         }
       : null,
     rooms,

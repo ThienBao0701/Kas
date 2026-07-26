@@ -9,6 +9,7 @@ import { requireAuth, requireAdmin, requirePasswordChanged } from '../middleware
 import { proofUpload } from '../middleware/upload';
 import { parseBooking } from '../booking/parser';
 import { parseAgodaBooking } from '../booking/agoda';
+import { loadBranchConfigs } from '../booking/branchConfig';
 import { detectBusinessType } from '../booking/businessType';
 import { persistDraftBooking } from '../booking/store';
 import { serializeBookingPreview } from '../booking/serialize';
@@ -120,7 +121,9 @@ export function createBookingsRouter(): Router {
   router.post('/bookings/extract', requireAuth, requirePasswordChanged, requireAdmin, (req, res, next) => {
     (async () => {
       const { rawText, source } = extractSchema.parse(req.body);
-      const branches = await prisma.branch.findMany({ where: { active: true }, orderBy: { id: 'asc' } });
+      // One load of the routing configuration (active branches + their active
+      // platform aliases); the parsers stay pure and never query the database.
+      const branches = await loadBranchConfigs();
 
       // Both adapters return the identical normalized structure; only the source
       // platform stamp and a few label/prepaid variants differ.
@@ -149,6 +152,8 @@ export function createBookingsRouter(): Router {
               code: parsed.suggestedBranch.code,
               hotelName: parsed.suggestedBranch.hotelName,
               address: parsed.suggestedBranch.address,
+              branchNumber:
+                branches.find((b) => b.id === parsed.suggestedBranch?.id)?.branchNumber ?? 0,
             }
           : null;
 

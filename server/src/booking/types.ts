@@ -5,12 +5,57 @@ export type WarningSeverity = 'INFO' | 'WARNING' | 'ERROR';
 /** How confidently a scalar field was extracted, for the admin preview. */
 export type FieldConfidence = 'CONFIDENT' | 'AMBIGUOUS' | 'MISSING';
 
-/** A branch as needed by the matcher (shape shared by the DB row and fixtures). */
+/** Which external platform a configured hotel-name alias belongs to. */
+export type BranchAliasSourceKey = 'BOOKING_COM' | 'AGODA' | 'MANUAL' | 'OTHER';
+
+/** How an alias is compared against the hotel name found in pasted text. */
+export type BranchAliasMatchModeKey = 'EXACT' | 'SIMILARITY';
+
+/** One configured platform hotel name, as the resolver needs it. */
+export interface BranchAliasConfig {
+  source: BranchAliasSourceKey;
+  alias: string;
+  matchMode: BranchAliasMatchModeKey;
+  priority?: number;
+}
+
+/**
+ * A branch as needed by the matcher (shape shared by the DB row and fixtures).
+ *
+ * `aliases` carries the Admin-configured platform names. When it is present the
+ * resolver uses ONLY those; when it is absent (pure fixtures, or a branch whose
+ * aliases have not been backfilled yet) the legacy in-code tables are used, so
+ * behaviour is identical before and after the alias migration.
+ */
 export interface MatchableBranch {
   id: number;
   code: string;
   hotelName: string;
   address: string;
+  /** Absent means "assume active" — only an explicit false blocks routing. */
+  active?: boolean;
+  aliases?: readonly BranchAliasConfig[];
+}
+
+/** How a hotel name found in pasted text was (or was not) resolved to a branch. */
+export type BranchResolutionReason =
+  | 'EXACT_ALIAS'
+  | 'SIMILARITY'
+  | 'AMBIGUOUS'
+  | 'UNKNOWN'
+  | 'NO_INPUT';
+
+/** The resolver's full answer: identity, the alias that won, and why. */
+export interface BranchResolution {
+  branch: MatchableBranch | null;
+  branchId: number | null;
+  branchCode: string | null;
+  address: string | null;
+  /** The configured alias that matched, or null when unresolved. */
+  sourceAlias: string | null;
+  /** 0–100. */
+  confidence: number;
+  reason: BranchResolutionReason;
 }
 
 export interface ExtractWarning {

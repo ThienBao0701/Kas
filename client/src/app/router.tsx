@@ -13,6 +13,7 @@ import { HistoryPage } from '../pages/HistoryPage';
 import { IssuesPage } from '../pages/IssuesPage';
 import { BookingDetailPage } from '../pages/BookingDetailPage';
 import { SettingsPage } from '../pages/SettingsPage';
+import { BranchesPage } from '../pages/BranchesPage';
 import { NotFoundPage } from '../pages/NotFoundPage';
 
 /** Sends each role to its natural landing page. */
@@ -54,6 +55,7 @@ export function AppRoutes() {
           <Route path="history" element={<HistoryPage />} />
           <Route path="issues" element={<IssuesPage />} />
           <Route path="booking/:id" element={<BookingDetailPage />} />
+          <Route path="branches" element={<RequireRole role="ADMIN"><BranchesPage /></RequireRole>} />
           <Route path="settings" element={<RequireRole role="ADMIN"><SettingsPage /></RequireRole>} />
         </Route>
       </Route>

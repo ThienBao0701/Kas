@@ -98,11 +98,26 @@ npm run dev        # backend :3001 + client dev :5173 (client proxy /api sang ba
 
   Lệnh này yêu cầu gõ cụm từ `PREPARE KAS FOR OFFICIAL USE`, **sao lưu** `data.db` +
   thư mục upload + `manifest.json` vào `backups/pre-official-<thời gian>/` trước khi
-  xóa, rồi xóa toàn bộ dữ liệu vận hành (demo lẫn thật), giữ nguyên 8 chi nhánh, tài
+  xóa, rồi xóa toàn bộ dữ liệu vận hành (demo lẫn thật), giữ nguyên **toàn bộ chi
+  nhánh đã cấu hình cùng tên khách sạn trên các nền tảng** (`BranchSourceAlias`), tài
   khoản Admin và cấu hình, và vô hiệu hóa `reception_test`. Nếu sao lưu thất bại,
   lệnh **hủy** và không xóa gì.
 - Thư mục `backups/` đã được `.gitignore`; hãy sao chép ra ổ khác và không commit.
 - Chi tiết: xem `docs/testing-8-branches.md`.
+
+## Quản lý chi nhánh khi đã chạy thật (C.3.7)
+
+- Thêm chi nhánh, đổi số/tên/địa chỉ chi nhánh và đổi tên khách sạn trên
+  Booking.com / Agoda đều làm **trong giao diện Admin** (*Khách sạn & chi nhánh*) —
+  không cần sửa mã nguồn, không cần deploy lại.
+- `npm run db:migrate` thêm `Branch.branchNumber` (điền sẵn cho các chi nhánh có
+  sẵn), `BranchSourceAlias` và `BranchChangeLog`. Đây là migration **cộng thêm**:
+  ứng dụng chạy đúng ngay sau khi migrate.
+- Chạy `npm run db:seed` **một lần** sau khi migrate để nạp toàn bộ tên khách sạn
+  Booking.com/Agoda hiện có vào bảng alias. Seed là **idempotent** và không bao giờ
+  ghi đè tên hay số chi nhánh mà Admin đã sửa.
+- Không xóa chi nhánh — dùng **Vô hiệu hóa** để giữ nguyên lịch sử.
+- Chi tiết: xem `docs/branch-management.md`.
 
 ## Tường lửa Windows
 

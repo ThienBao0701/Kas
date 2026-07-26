@@ -4,6 +4,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { FilePlus2, Send, Sparkles } from 'lucide-react';
 import { bookingsApi, branchesApi, BUSINESS_TYPE_LABEL, SOURCE_LABEL, type AgodaPartnerExtras, type BookingDetail, type BookingEdit, type BookingSource, type BusinessType, type ParserQuality, type WarningView } from '../api/bookings';
 import { ApiError, toUserMessage } from '../api/errors';
+import { branchLabel } from '../auth/types';
 import { AgodaPartnerCard } from '../components/AgodaPartnerCard';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
@@ -402,9 +403,10 @@ export function DispatchPage() {
             onChange={(e) => setBranchId(e.target.value ? Number(e.target.value) : undefined)}
           >
             <option value="">— Chọn chi nhánh —</option>
+            {/* Only ACTIVE branches: /api/branches never lists a disabled one. */}
             {branches.data?.branches.map((b) => (
               <option key={b.id} value={b.id}>
-                {b.address} — {b.hotelName}
+                {branchLabel(b)}
               </option>
             ))}
           </select>

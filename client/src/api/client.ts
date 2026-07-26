@@ -3,7 +3,7 @@ import { ApiError, NetworkError, type ApiErrorPayload } from './errors';
 const API_BASE = '/api';
 
 interface RequestOptions {
-  method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
   signal?: AbortSignal;
 }
@@ -76,5 +76,6 @@ export const api = {
   post: <T>(path: string, body?: unknown) => apiRequest<T>(path, { method: 'POST', body }),
   postForm: <T>(path: string, form: FormData) => apiRequest<T>(path, { method: 'POST', body: form }),
   put: <T>(path: string, body?: unknown) => apiRequest<T>(path, { method: 'PUT', body }),
+  patch: <T>(path: string, body?: unknown) => apiRequest<T>(path, { method: 'PATCH', body }),
   del: <T>(path: string, body?: unknown) => apiRequest<T>(path, { method: 'DELETE', body }),
 };
