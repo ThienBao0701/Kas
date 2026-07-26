@@ -41,7 +41,9 @@ const EXTRAS: AgodaPartnerExtras = {
 describe('AgodaPartnerCard', () => {
   it('shows the operator-facing Agoda fields', () => {
     render(<AgodaPartnerCard agoda={EXTRAS} />);
-    expect(screen.getByText('Đơn Agoda (email đối tác)')).toBeInTheDocument();
+    expect(screen.getByText('Đơn Agoda')).toBeInTheDocument();
+    // No email framing: the operator only pastes text, there is no mail integration.
+    expect(screen.queryByText(/email đối tác|Loại email/)).not.toBeInTheDocument();
     expect(screen.getByText('AGODA')).toBeInTheDocument();
     // "Khách sạn" is the configured branch ADDRESS, never the public KAS name.
     expect(screen.getByText('40-42 Bùi Thị Xuân')).toBeInTheDocument();

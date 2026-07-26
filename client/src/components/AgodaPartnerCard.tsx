@@ -14,7 +14,7 @@ export function AgodaPartnerCard({ agoda }: { agoda: AgodaPartnerExtras }) {
     <Card className="border-brand-200 bg-brand-50/30 p-5">
       <p className="flex items-center gap-2 text-sm font-semibold text-slate-800">
         <Plane className="h-4 w-4 text-brand-600" aria-hidden="true" />
-        Đơn Agoda (email đối tác)
+        Đơn Agoda
       </p>
 
       <dl className="mt-3 grid gap-x-6 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">

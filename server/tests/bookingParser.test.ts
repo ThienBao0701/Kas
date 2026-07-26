@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseBooking, PARSER_VERSION } from '../src/booking/parser';
-import { matchBranch } from '../src/booking/branchMatcher';
+import { BRANCH_ALIASES, matchBranch, scoreHotel } from '../src/booking/branchMatcher';
 import { generateStayDates } from '../src/booking/dates';
 import { BRANCHES } from '../src/db/branches';
 import type { MatchableBranch } from '../src/booking/types';
@@ -220,6 +220,74 @@ describe('branch mapping', () => {
       const match = matchBranch(hotel, branches);
       expect(match?.score).toBe(1);
       expect(match?.branch.address).toBe(address);
+    }
+  });
+
+  /**
+   * A property can be renamed on Booking.com; the stable branch CODE is what the
+   * system routes on. The current public name and the earlier ones all resolve to
+   * the same branch, so historical emails keep parsing.
+   */
+  const renamedMap: Array<[name: string, code: string, address: string]> = [
+    ['Bamboo Water Hotel', 'LY_TU_TRONG_260', '260 Lý Tự Trọng'],
+    ['Kaliee Nata Hotel', 'NGUYEN_THAI_BINH_170', '170-172-174 Nguyễn Thái Bình'],
+  ];
+
+  it('resolves the current Booking.com public names to their branch', () => {
+    for (const [name, code, address] of renamedMap) {
+      const match = matchBranch(name, branches);
+      expect(match?.branch.code, name).toBe(code);
+      expect(match?.branch.address, name).toBe(address);
+      expect(match?.score, name).toBe(1); // exact alias ⇒ confidently auto-assigned
+    }
+  });
+
+  it('a booking carrying the new name normalises to the stored branch address', () => {
+    for (const [name, code, address] of renamedMap) {
+      const text = `${name}
+Mã đặt phòng: 777888999
+Khách: Test Guest
+Nhận phòng: 2026-09-01
+Trả phòng: 2026-09-02
+Phòng 1: Standard Room
+2026-09-01: 500.000 VND
+Thanh toán: Thanh toán tại chỗ`;
+      const result = parseBooking(text, branches);
+      expect(result.suggestedBranch?.code, name).toBe(code);
+      expect(result.suggestedBranch?.address, name).toBe(address);
+      expect(result.branchConfident, name).toBe(true);
+      // The source hotel name stays available for audit / parser review.
+      expect(result.hotelName, name).toBe(name);
+      expect(warningCodes(result)).not.toContain('UNKNOWN_HOTEL');
+    }
+  });
+
+  it('resolution does not depend on branch-array order', () => {
+    const reversed = [...branches].reverse();
+    for (const [name, code, address] of renamedMap) {
+      const match = matchBranch(name, reversed);
+      expect(match?.branch.code, name).toBe(code);
+      expect(match?.branch.address, name).toBe(address);
+    }
+  });
+
+  it('earlier public names remain valid (historical emails still resolve)', () => {
+    for (const old of ['Luxury Elegance Hotel Ben Than', 'Luxury Elegance Hotel Ben Thanh', 'Luxury Elegance Ben Thanh']) {
+      expect(matchBranch(old, branches)?.branch.code, old).toBe('LY_TU_TRONG_260');
+    }
+    expect(matchBranch('INDOCHINA Premium', branches)?.branch.code).toBe('NGUYEN_THAI_BINH_170');
+  });
+
+  it('every configured alias resolves to exactly one branch (no ambiguity)', () => {
+    for (const [code, aliases] of Object.entries(BRANCH_ALIASES)) {
+      for (const alias of aliases) {
+        const scored = branches
+          .map((b) => ({ code: b.code, score: scoreHotel(alias, b) }))
+          .sort((a, b) => b.score - a.score);
+        expect(scored[0]!.code, alias).toBe(code);
+        // The runner-up must be strictly worse, so the alias is unambiguous.
+        expect(scored[1]!.score, alias).toBeLessThan(scored[0]!.score);
+      }
     }
   });
 

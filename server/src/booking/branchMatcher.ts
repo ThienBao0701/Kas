@@ -20,13 +20,30 @@ export const BRANCH_CONFIDENT_THRESHOLD = 0.85;
  * Booking.com truncates and drops accents inconsistently ("Ben Than" vs the full
  * "Ben Thanh"), so a few conservative aliases keep confident matches confident.
  *
+ * This is also where a branch's **current** Booking.com public name lives when it
+ * differs from the seeded `hotelName`. A property can be listed under different
+ * public names on different platforms, and it can be renamed over time — every
+ * name simply resolves to the same stable branch code. Earlier names are kept as
+ * backward-compatible aliases so historical emails still parse; each alias must
+ * resolve to exactly one branch (asserted in the branch-matcher tests).
+ *
  * Agoda's public "KAS …" property names live in {@link AGODA_HOTEL_NAMES} below —
  * the same module, branch config and normalisation, but resolved by EXACT name
  * rather than similarity (see the note there).
  */
-const BRANCH_ALIASES: Record<string, readonly string[]> = {
+export const BRANCH_ALIASES: Record<string, readonly string[]> = {
   TRUONG_DINH_05: ['Saigon Hotel Ben Thanh', 'Saigon Ben Thanh Hotel'],
-  LY_TU_TRONG_260: ['Luxury Elegance Hotel Ben Thanh', 'Luxury Elegance Ben Thanh'],
+  LY_TU_TRONG_260: [
+    // Current Booking.com public name (operator-confirmed).
+    'Bamboo Water Hotel',
+    // Earlier public names, retained so historical emails still resolve.
+    'Luxury Elegance Hotel Ben Thanh',
+    'Luxury Elegance Ben Thanh',
+  ],
+  NGUYEN_THAI_BINH_170: [
+    // Current Booking.com public name (operator-confirmed).
+    'Kaliee Nata Hotel',
+  ],
   LE_THANH_TON_278: ['Boutique Zody Hotel Ben Thanh'],
   BUI_THI_XUAN_40: ['Ben Thanh Market Luxury Hotel', 'Ben Thanh Market Luxury'],
 };

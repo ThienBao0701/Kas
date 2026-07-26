@@ -392,6 +392,26 @@ money format and Agoda prepaid phrases, and returns the **identical** normalized
 structure. Booking.com behaviour is unchanged. Each booking stores its
 `sourcePlatform` (`BOOKING_COM` | `AGODA`), shown as a chip throughout the UI.
 
+#### Public hotel names → stable branch codes
+
+A property is listed under **different public names on different platforms**, and a
+listing can be **renamed over time**. Routing always uses the stable branch `code`,
+never a display name, a numeric id or a position in a list. Booking.com names
+resolve through `branchMatcher.BRANCH_ALIASES` (similarity + aliases, unchanged
+behaviour); Agoda names resolve through `AGODA_HOTEL_NAMES` by exact match. Earlier
+public names are **kept** as aliases so historical emails still parse, and every
+alias must resolve to exactly one branch (asserted by a no-ambiguity test).
+
+Current Booking.com names for the two renamed properties:
+
+| Booking.com public name | Branch code | Stored address |
+| --- | --- | --- |
+| Bamboo Water Hotel *(was Luxury Elegance Hotel Ben Thanh)* | `LY_TU_TRONG_260` | 260 Lý Tự Trọng |
+| Kaliee Nata Hotel *(was INDOCHINA Premium)* | `NGUYEN_THAI_BINH_170` | 170-172-174 Nguyễn Thái Bình |
+
+The normalized booking still shows the **stored branch address** as the operational
+hotel; the source name is retained for audit/parser review.
+
 #### Agoda hotel-partner (YCS) booking emails
 
 `parseAgodaBooking` recognises a **second** Agoda document — the hotel-partner

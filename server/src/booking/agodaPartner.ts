@@ -38,28 +38,121 @@ export function fold(s: string | null | undefined): string {
 }
 
 function lines(rawText: string): string[] {
-  return rawText.split(/\r?\n/).map((l) => l.trim());
+  return rawText.split(/\r?\n/).map((l) => l.replace(/\s+$/, ''));
 }
 
 /**
- * Reads a labelled value. Handles both "Label: value" on one line and a "Label:"
- * line whose value sits on the following non-empty line (the common table
- * rendering). Returns null when the label is absent or carries no value.
+ * Splits a pasted line into logical table cells. Copying an Agoda table out of a
+ * mail client flattens it to one line per row whose columns are separated by tabs
+ * or a run of spaces — so "Customer First Name\tTEST" and
+ * "Standard (0)    1    2 Adults    0" both become proper cells. A single space is
+ * NOT a separator, so values such as "2 Adults" stay intact.
+ */
+function cells(line: string): string[] {
+  return line
+    .split(/\t+| {2,}/)
+    .map((c) => c.trim())
+    .filter((c) => c.length > 0);
+}
+
+/**
+ * Labels that may appear as their own cell. They are the BOUNDARIES of a value:
+ * a field never absorbs the next label, its value, or a following table row —
+ * which is exactly how the flattened paste used to corrupt every field.
+ */
+const KNOWN_LABELS: readonly RegExp[] = [
+  /^(agoda )?booking id$/,
+  /^reservation information$/,
+  /^booking confirmation$/,
+  /^customer first name$/,
+  /^customer last name$/,
+  /^country of residence$/,
+  /^check[- ]?in$/,
+  /^check[- ]?out$/,
+  /^other guests$/,
+  /^room ?type$/,
+  /^no\.? of rooms$/,
+  /^occupancy$/,
+  /^no\.? of extra bed$/,
+  /^rate ?plan( name)?$/,
+  /^benefits included$/,
+  /^cancellation policy$/,
+  /^reference sell rate.*$/,
+  /^net rate.*$/,
+  /^commission$/,
+  /^compensation$/,
+  /^other programs$/,
+  /^customer notes?$/,
+  /^card (type|number|holder name)$/,
+  /^website language$/,
+  /^booked and payable by$/,
+  /^marsha code$/,
+  /^city$/,
+  /^from - to$/,
+  /^rates$/,
+  /^property name$/,
+  /^hotel name$/,
+];
+
+function isKnownLabel(cell: string): boolean {
+  const f = fold(cell).replace(/\s*:\s*$/, '');
+  return KNOWN_LABELS.some((p) => p.test(f));
+}
+
+/** The next non-empty line index at or after `from`, or -1. */
+function nextNonEmpty(all: string[], from: number): number {
+  for (let j = from; j < all.length; j++) {
+    if (all[j]!.trim().length > 0) return j;
+  }
+  return -1;
+}
+
+/**
+ * Reads a labelled value, column-aware. Supported shapes, in order:
+ *   "Label<TAB|2+ spaces>Value"   (flattened table paste)
+ *   "Label: Value"                (inline, single cell)
+ *   "Label:" / "Label" then the value on the next non-empty line
+ *
+ * `labelPattern` is matched against a whole CELL (anchor it with ^…$), so a long
+ * subject line or a table header can never be mistaken for the field, and the
+ * value is rejected when it is itself a known label.
  */
 function labelValue(all: string[], labelPattern: RegExp): string | null {
   for (let i = 0; i < all.length; i++) {
-    const line = all[i]!;
-    if (!labelPattern.test(fold(line))) continue;
-    // Same-line value after the first ":".
-    const colon = line.indexOf(':');
-    if (colon >= 0) {
-      const inline = line.slice(colon + 1).trim();
-      if (inline.length > 0) return inline;
-    }
-    // Otherwise the next non-empty line.
-    for (let j = i + 1; j < all.length && j <= i + 3; j++) {
-      const next = all[j]!;
-      if (next.length > 0) return next;
+    const row = cells(all[i]!);
+    for (let c = 0; c < row.length; c++) {
+      const cell = row[c]!;
+
+      // "Label: value" inside one cell.
+      const inline = /^([^:]{1,60}):\s*(.*)$/.exec(cell);
+      if (inline && labelPattern.test(fold(inline[1]))) {
+        const value = inline[2]!.trim();
+        if (value.length > 0) return value;
+        // "Label:" with the value on the next line.
+        const j = nextNonEmpty(all, i + 1);
+        if (j >= 0) {
+          const first = cells(all[j]!)[0];
+          if (first && !isKnownLabel(first)) return first;
+        }
+        return null;
+      }
+
+      if (!labelPattern.test(fold(cell))) continue;
+
+      // "Label<TAB>Value" — the value is the neighbouring cell, unless that cell
+      // is itself a label (a header row such as "Room Type | No. of Rooms | …").
+      const neighbour = row[c + 1];
+      if (neighbour && !isKnownLabel(neighbour)) return neighbour;
+
+      // A lone label line: the value is the next non-empty line's first cell.
+      if (row.length === 1) {
+        const j = nextNonEmpty(all, i + 1);
+        if (j >= 0) {
+          const first = cells(all[j]!)[0];
+          if (first && !isKnownLabel(first)) return first;
+        }
+      }
+      return null;
     }
   }
   return null;
@@ -241,6 +334,8 @@ export interface AgodaPartnerBooking {
   roomQuantity: number | null;
   occupancy: string | null;
   extraBeds: number | null;
+  /** True only when breakfast is genuinely included (drinks are not breakfast). */
+  breakfastIncluded: boolean;
   payment: string | null;
   ratePlan: string | null;
   cancellationPolicy: string | null;
@@ -332,16 +427,16 @@ export function parseAgodaPartnerBooking(rawText: string): AgodaPartnerBooking {
   const all = lines(rawText);
   const warnings: ExtractWarning[] = [];
 
-  const bookingId = (labelValue(all, /(?:agoda )?booking id/) ?? '').replace(/[^\d A-Za-z-]/g, '').trim() || null;
+  const bookingId = extractBookingId(all, rawText);
   if (!bookingId) warnings.push(warn('AGODA_MISSING_BOOKING_ID', 'Không đọc được Booking ID của Agoda.', 'ERROR'));
 
-  const first = labelValue(all, /customer first name/);
-  const last = labelValue(all, /customer last name/);
+  const first = labelValue(all, /^customer first name$/);
+  const last = labelValue(all, /^customer last name$/);
   const fullName = [first, last].filter((p) => p && p.length > 0).join(' ').trim() || null;
   if (!fullName) warnings.push(warn('AGODA_MISSING_CUSTOMER', 'Không đọc được tên khách chính.'));
 
-  const checkIn = findDate(labelValue(all, /check[- ]?in/) ?? '');
-  const checkOut = findDate(labelValue(all, /check[- ]?out/) ?? '');
+  const checkIn = findDate(labelValue(all, /^check[- ]?in$/) ?? '');
+  const checkOut = findDate(labelValue(all, /^check[- ]?out$/) ?? '');
   if (!checkIn) warnings.push(warn('AGODA_MISSING_CHECK_IN', 'Không đọc được ngày nhận phòng.', 'ERROR'));
   if (!checkOut) warnings.push(warn('AGODA_MISSING_CHECK_OUT', 'Không đọc được ngày trả phòng.', 'ERROR'));
   const nights = nightsBetween(checkIn, checkOut);
@@ -349,7 +444,10 @@ export function parseAgodaPartnerBooking(rawText: string): AgodaPartnerBooking {
     warnings.push(warn('AGODA_INVALID_DATE_RANGE', 'Ngày trả phòng phải sau ngày nhận phòng.', 'ERROR'));
   }
 
-  const roomTypeRaw = labelValue(all, /room ?type/);
+  // The room table is read as a table first; the labelled form is the fallback for
+  // layouts that print "Room Type:" / "No. of Rooms:" on their own lines.
+  const table = parseRoomTable(all);
+  const roomTypeRaw = table?.roomType ?? labelValue(all, /^room ?type$/);
   const room = mapAgodaRoomCode(roomTypeRaw);
   if (!room.original) {
     warnings.push(warn('AGODA_MISSING_ROOM_TYPE', 'Không đọc được hạng phòng.', 'ERROR'));
@@ -359,13 +457,20 @@ export function parseAgodaPartnerBooking(rawText: string): AgodaPartnerBooking {
     );
   }
 
-  const roomsRaw = labelValue(all, /no\.? of rooms/);
-  const roomQuantity = roomsRaw ? Number.parseInt(roomsRaw.replace(/[^\d]/g, ''), 10) : NaN;
-  const roomQty = Number.isFinite(roomQuantity) && roomQuantity > 0 ? roomQuantity : null;
+  /** A count cell must be a plain integer — never a concatenation of columns. */
+  const countOf = (raw: string | null | undefined): number | null => {
+    const m = raw ? /^\s*(\d{1,3})\b/.exec(raw) : null;
+    if (!m) return null;
+    const n = Number.parseInt(m[1]!, 10);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  const roomsRaw = table?.rooms ?? labelValue(all, /^no\.? of rooms$/);
+  const parsedRooms = countOf(roomsRaw);
+  const roomQty = parsedRooms != null && parsedRooms > 0 ? parsedRooms : null;
   if (roomQty == null) warnings.push(warn('AGODA_MISSING_ROOM_QUANTITY', 'Không đọc được số lượng phòng.', 'ERROR'));
 
-  const extraBedRaw = labelValue(all, /no\.? of extra bed/);
-  const extraParsed = extraBedRaw ? Number.parseInt(extraBedRaw.replace(/[^\d]/g, ''), 10) : NaN;
+  const extraParsed = countOf(table?.extraBeds ?? labelValue(all, /^no\.? of extra bed$/));
 
   const referenceSellRate = findRate(all, /reference sell rate/);
   if (referenceSellRate == null) {
@@ -404,7 +509,7 @@ export function parseAgodaPartnerBooking(rawText: string): AgodaPartnerBooking {
     customerFirstName: first,
     customerLastName: last,
     customerFullName: fullName,
-    countryOfResidence: labelValue(all, /country of residence/),
+    countryOfResidence: labelValue(all, /^country of residence$/),
     checkIn,
     checkOut,
     nights,
@@ -412,13 +517,14 @@ export function parseAgodaPartnerBooking(rawText: string): AgodaPartnerBooking {
     roomCode: room.code,
     roomTypeKnown: room.known,
     roomQuantity: roomQty,
-    occupancy: labelValue(all, /occupancy/),
-    extraBeds: Number.isFinite(extraParsed) ? extraParsed : null,
+    occupancy: table?.occupancy ?? labelValue(all, /^occupancy$/),
+    extraBeds: extraParsed,
+    breakfastIncluded: hasBreakfast(rawText),
     payment,
-    ratePlan: labelValue(all, /rate ?plan(?: name)?/),
-    cancellationPolicy: labelValue(all, /cancellation policy/),
-    customerPhone: labelValue(all, /(?:customer )?(?:phone|mobile|contact number)/),
-    customerNotes: labelValue(all, /customer notes?|special request|remarks?/),
+    ratePlan: cleanRatePlan(labelValue(all, /^rate ?plan(?: name)?$/)),
+    cancellationPolicy: labelValue(all, /^cancellation policy$/),
+    customerPhone: extractPhone(rawText),
+    customerNotes: guestRequestNote(labelValue(all, /^(customer notes?|special requests?|remarks?)$/)),
     nightlyRates,
     referenceSellRate,
     netRate,
@@ -426,6 +532,33 @@ export function parseAgodaPartnerBooking(rawText: string): AgodaPartnerBooking {
     warnings,
     parserVersion: AGODA_PARTNER_PARSER_VERSION,
   };
+}
+
+/**
+ * Whether breakfast is actually included. Agoda's "Benefits Included" often lists
+ * coffee/tea, drinking water or a welcome drink — none of those is breakfast, and
+ * the operator's Agoda note is fixed to "KHONG AN SANG" regardless.
+ */
+function hasBreakfast(rawText: string): boolean {
+  return /\bbreakfast\b|\ban sang\b/.test(fold(rawText));
+}
+
+/** "Non-Refundable ()" → "Non-Refundable". */
+function cleanRatePlan(raw: string | null): string | null {
+  if (!raw) return null;
+  const value = raw.replace(/\(\s*\)/g, ' ').replace(/\s{2,}/g, ' ').trim();
+  return value.length > 0 ? value : null;
+}
+
+/**
+ * Keeps only a genuine guest request. Agoda repeats the guest's own contact block
+ * ("Customer Info - Name: …, Phone: …") under "Customer Notes"; that is contact
+ * metadata, not a request, and it must not end up in the booking's note field.
+ */
+function guestRequestNote(raw: string | null): string | null {
+  if (!raw) return null;
+  if (/^customer info\b/i.test(raw.trim())) return null;
+  return raw;
 }
 
 /** Stay dates: check-in inclusive → check-out exclusive. */
@@ -442,6 +575,87 @@ function differsFromAgodaRows(debt: AgodaNightlyRate[], rows: AgodaNightlyRate[]
     const stated = byDate.get(d.stayDate);
     return stated != null && stated !== d.amount;
   });
+}
+
+interface RoomTableRow {
+  roomType: string | null;
+  rooms: string | null;
+  occupancy: string | null;
+  extraBeds: string | null;
+}
+
+/**
+ * Parses the room table as a TABLE: it locates the header row (which must carry at
+ * least "Room Type" and "No. of Rooms" as separate cells), remembers each column's
+ * position, then maps the data row's cells onto those columns.
+ *
+ * This is what stops the flattened paste from collapsing
+ * "Standard (0) | 1 | 2 Adults | 0" into a single value (room type absorbing the
+ * other columns) or into the digit-soup "0120" that produced a 120-room booking.
+ * When the values were copied as separate logical lines, the following one-cell
+ * lines are collected as the row instead.
+ */
+function parseRoomTable(all: string[]): RoomTableRow | null {
+  const find = (header: string[], p: RegExp) => header.findIndex((h) => p.test(fold(h)));
+
+  for (let i = 0; i < all.length; i++) {
+    const header = cells(all[i]!);
+    const iType = find(header, /^room ?type$/);
+    const iRooms = find(header, /^no\.? of rooms$/);
+    if (iType < 0 || iRooms < 0) continue;
+    const iOcc = find(header, /^occupancy$/);
+    const iBed = find(header, /^no\.? of extra bed$/);
+
+    const j = nextNonEmpty(all, i + 1);
+    if (j < 0) return null;
+    let row = cells(all[j]!);
+
+    // Values copied as separate logical lines: gather one cell per column.
+    if (row.length === 1) {
+      const collected: string[] = [];
+      for (let k = j; k < all.length && collected.length < header.length; k++) {
+        const line = all[k]!.trim();
+        if (line.length === 0) continue;
+        const c = cells(line);
+        if (c.length !== 1 || isKnownLabel(c[0]!)) break;
+        collected.push(c[0]!);
+      }
+      if (collected.length === header.length) row = collected;
+    }
+
+    const at = (idx: number) => (idx >= 0 && idx < row.length ? row[idx]! : null);
+    return { roomType: at(iType), rooms: at(iRooms), occupancy: at(iOcc), extraBeds: at(iBed) };
+  }
+  return null;
+}
+
+/**
+ * The booking id, as a BOUNDED numeric token. The labelled body field wins; a
+ * copied subject line ("Agoda Booking ID 1753026280 - CONFIRMED …") is only a
+ * fallback and still yields just the digits — never the trailing prose that used
+ * to leak in ("Vietnam Check-in July 27 2026 LanguageEnglish").
+ */
+function extractBookingId(all: string[], rawText: string): string | null {
+  const labelled = labelValue(all, /^(agoda )?booking id$/);
+  if (labelled) {
+    const m = /^\s*(\d{6,15})\b/.exec(labelled);
+    if (m) return m[1]!;
+  }
+  const subject = /agoda booking id\s*[:#]?\s*(\d{6,15})\b/i.exec(rawText);
+  if (subject) return subject[1]!;
+  const anyLabel = /\bbooking id\s*[:#]?\s*(\d{6,15})\b/i.exec(rawText);
+  return anyLabel ? anyLabel[1]! : null;
+}
+
+/**
+ * The guest phone, bounded so the surrounding "Customer Info - Name: …, Phone: …"
+ * prose never leaks in. Returns only the number.
+ */
+function extractPhone(rawText: string): string | null {
+  const m = /\bphone\s*[:#]?\s*(\+?\d[\d\s().-]{4,24})/i.exec(rawText);
+  if (!m) return null;
+  const value = m[1]!.replace(/[.,;]+$/, '').trim();
+  return value.length > 0 ? value : null;
 }
 
 /**
