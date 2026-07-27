@@ -20,11 +20,17 @@
     "db:migrate:dev": "prisma migrate dev --schema prisma/schema.prisma",
     "db:studio": "prisma studio --schema prisma/schema.prisma",
     "db:seed": "tsx server/src/db/seed.ts",
-    "data:prepare-production": "tsx server/src/scripts/prepareProduction.ts"
+    "data:prepare-production": "tsx server/src/scripts/prepareProduction.ts",
+    "prod:seed": "node server/dist/scripts/productionSeed.js",
+    "prod:create-admin": "node server/dist/scripts/createAdmin.js",
+    "prod:backup": "node server/dist/scripts/backup.js",
+    "prod:restore": "node server/dist/scripts/restore.js"
+  },
+  "dependencies": {
+    "prisma": "^6.3.1"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",
-    "prisma": "^6.3.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
   },

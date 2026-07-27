@@ -678,6 +678,10 @@ guide: [`docs/testing-8-branches.md`](docs/testing-8-branches.md). **Never enabl
 ## Documentation
 
 - [`docs/branch-management.md`](docs/branch-management.md) — Admin hotel & branch management: branch number vs stable code, internal name vs platform aliases, add/rename/re-address, Booking.com & Agoda names, exact vs similarity matching, disabling a branch.
+- [`docs/production-deployment.md`](docs/production-deployment.md) — **Ubuntu VPS production deployment**: Docker image, Compose stack, Caddy/HTTPS, secrets, `migrate deploy`, production bootstrap, initial Admin.
+- [`docs/production-runbook.md`](docs/production-runbook.md) — day-to-day operation: status, logs, update, rollback, accounts, certificates, routine checks.
+- [`docs/backup-restore.md`](docs/backup-restore.md) — backup contents, consistency guarantees, retention, restore drill and real restore.
+- [`docs/incident-response.md`](docs/incident-response.md) — triage by symptom, rollback decision tree, disk full, suspected corruption.
 - [`docs/testing-8-branches.md`](docs/testing-8-branches.md) — developer branch test env, demo data, safe cleanup, official reset.
 - [`docs/deployment.md`](docs/deployment.md) — LAN deployment on Windows + SQLite backup.
 - [`docs/pwa-install.md`](docs/pwa-install.md) — installing Kas as a Windows PWA and pinning to the taskbar.
