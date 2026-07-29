@@ -4,6 +4,9 @@ Documentation for hotel-booking-dispatch.
 
 - `branch-management.md` — Admin hotel & branch management: branch number vs stable
   code, internal name vs platform aliases, Booking.com/Agoda names, disabling
+- `room-class-mapping.md` — branch-specific room classes and PMS codes, the 48
+  confirmed mappings, aliases, versioned drafts, immutable booking snapshots,
+  guest updates
 - `production-deployment.md` — Ubuntu VPS deployment: Docker, Caddy/HTTPS,
   secrets, migrations, production bootstrap, initial Admin
 - `production-runbook.md` — day-to-day operation: status, logs, update, rollback,

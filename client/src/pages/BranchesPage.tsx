@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Building2, Plus, Tags, Trash2 } from 'lucide-react';
+import { BedDouble, Building2, Plus, Tags, Trash2 } from 'lucide-react';
 import {
   ALIAS_SOURCE_LABEL,
   adminBranchesApi,
@@ -15,6 +15,7 @@ import { Button } from '../components/Button';
 import { ErrorAlert } from '../components/ErrorAlert';
 import { Modal } from '../components/Modal';
 import { PageHeader, QueryState } from '../components/PageState';
+import { RoomClassManager } from '../components/RoomClassManager';
 import { Toast } from '../components/Toast';
 
 const inputClass =
@@ -57,6 +58,7 @@ export function BranchesPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<AdminBranch | null>(null);
   const [managingAliases, setManagingAliases] = useState<AdminBranch | null>(null);
+  const [managingRooms, setManagingRooms] = useState<AdminBranch | null>(null);
   const [confirming, setConfirming] = useState<AdminBranch | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -135,6 +137,10 @@ export function BranchesPage() {
                           <Tags className="h-4 w-4" aria-hidden="true" />
                           Quản lý tên trên nền tảng
                         </Button>
+                        <Button variant="secondary" onClick={() => setManagingRooms(b)}>
+                          <BedDouble className="h-4 w-4" aria-hidden="true" />
+                          Hạng phòng
+                        </Button>
                         <Button
                           variant={b.active ? 'danger' : 'primary'}
                           onClick={() => setConfirming(b)}
@@ -183,6 +189,13 @@ export function BranchesPage() {
         onClose={() => setManagingAliases(null)}
         onChanged={invalidate}
       />
+      {managingRooms ? (
+        <RoomClassManager
+          branchId={managingRooms.id}
+          branchLabel={`Chi nhánh ${managingRooms.branchNumber} — ${managingRooms.address}`}
+          onClose={() => setManagingRooms(null)}
+        />
+      ) : null}
       <ActivationModal
         branch={confirming}
         onClose={() => setConfirming(null)}

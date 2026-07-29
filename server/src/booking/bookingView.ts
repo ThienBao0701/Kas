@@ -66,6 +66,16 @@ function roomsView(rooms: BookingDetail['rooms']) {
       roomSubtotal: room.roomSubtotal,
       taxAmount: room.taxAmount,
       feeAmount: room.feeAmount,
+      // Immutable branch room-class snapshot (C.3.8). The note builders use
+      // `roomClassPmsCode` when present and fall back to the legacy keyword
+      // abbreviation only for rooms that predate the mapping or are still
+      // unresolved — so a historical note can never change.
+      roomClassId: room.roomClassId,
+      roomClassVersionId: room.roomClassVersionId,
+      roomClassDisplayName: room.roomClassDisplayName,
+      roomClassPmsCode: room.roomClassPmsCode,
+      roomClassSourceText: room.roomClassSourceText,
+      roomClassStatus: room.roomClassStatus,
       nights: [...room.nights]
         .sort((a, b) => a.stayDate.getTime() - b.stayDate.getTime())
         .map((night) => ({

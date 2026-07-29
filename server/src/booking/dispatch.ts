@@ -4,6 +4,7 @@ import { ApiError } from '../lib/errors';
 import { getClock, isLastMinute, type Clock } from '../lib/clock';
 import { loadBookingDetail } from './bookingRepo';
 import { validateBooking, type ValidationResult } from './validation';
+import { snapshotRoomClasses } from './store';
 import type { BookingDetail } from './bookingView';
 
 /**
@@ -165,6 +166,12 @@ export async function sendBooking(
 
     await createSendNotifications(tx, bookingId, input.branchId, booking, lastMinute);
   });
+
+  // Dispatch is the moment the branch becomes final, so it is the moment the
+  // branch-specific room codes can be resolved. Rooms that already carry a
+  // resolved snapshot are left untouched; this only fills in the blanks.
+  // Outside the transaction: a resolver problem must never undo a dispatch.
+  await snapshotRoomClasses(bookingId);
 
   return loadBookingDetail(bookingId);
 }

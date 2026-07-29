@@ -3,6 +3,7 @@ import { prisma as defaultPrisma } from './prisma';
 import { BRANCHES } from './branches';
 import { AGODA_HOTEL_NAMES, BRANCH_ALIASES } from '../booking/branchMatcher';
 import { normalizeText } from '../booking/text';
+import { seedBranchRoomClasses } from '../room/roomClassSeed';
 
 /**
  * Seeds the initial branches. Upserts by `code`, so running it repeatedly updates
@@ -36,6 +37,9 @@ export async function seedBranches(client: PrismaClient = defaultPrisma): Promis
   }
 
   await backfillBranchAliases(client);
+  // Version 1 of each branch's room classes. Skips any branch that already has
+  // a mapping, so an Admin-edited configuration is never disturbed.
+  await seedBranchRoomClasses(client);
 
   return client.branch.count();
 }

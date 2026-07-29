@@ -34,9 +34,16 @@ function fold(s: string): string {
 }
 
 /**
- * Room-type abbreviations, most-specific first. Room *class* keywords
+ * LEGACY room-type abbreviations, most-specific first. Room *class* keywords
  * (standard/superior/deluxe/suite/family) are checked before *bed* keywords
  * (twin/double) so "Phòng Tiêu Chuẩn Giường Đôi" resolves to STAN, not DBL.
+ *
+ * Since C.3.8 this table is only the FALLBACK. A room whose branch room class
+ * was resolved carries an immutable `roomClassPmsCode` snapshot, and that code
+ * always wins — see {@link roomAbbreviation}. This global, branch-agnostic
+ * table is kept solely so bookings that predate the mapping (or whose room name
+ * could not be resolved deterministically) keep producing exactly the note they
+ * produced before, rather than losing their code.
  */
 const ROOM_ABBREVIATIONS: ReadonlyArray<{ keys: string[]; abbr: string }> = [
   { keys: ['standard', 'tieu chuan'], abbr: 'STAN' },
@@ -61,6 +68,24 @@ export function abbreviateRoomType(roomType: string | null | undefined): string 
 }
 
 /**
+ * The PMS code for ONE room.
+ *
+ * The branch-specific snapshot taken when the booking was created always wins.
+ * That is what makes a note stable: the code was resolved against the booking's
+ * own branch at the time, stored on the row, and is never recomputed — so an
+ * Admin activating a new room-class mapping cannot change what an existing
+ * booking prints.
+ *
+ * Only a room with no snapshot (pre-C.3.8, or a name that could not be resolved
+ * deterministically) falls back to the legacy keyword table.
+ */
+export function roomAbbreviation(room: RoomView): string {
+  const snapshot = room.roomClassPmsCode?.trim();
+  if (snapshot) return snapshot;
+  return abbreviateRoomType(room.roomType);
+}
+
+/**
  * The room-abbreviation segment for a whole booking.
  * - one type → "STAN" (or "STANx2" for 2 rooms of that type)
  * - mixed types → each group joined with "+", e.g. "STAN+DLX" / "STANx2+DLX".
@@ -72,7 +97,7 @@ export function roomsAbbreviation(rooms: RoomView[]): string {
   const order: string[] = [];
   const counts = new Map<string, number>();
   for (const room of rooms) {
-    const abbr = abbreviateRoomType(room.roomType);
+    const abbr = roomAbbreviation(room);
     if (!counts.has(abbr)) order.push(abbr);
     counts.set(abbr, (counts.get(abbr) ?? 0) + 1);
   }

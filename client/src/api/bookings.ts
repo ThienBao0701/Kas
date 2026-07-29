@@ -78,6 +78,8 @@ export interface NightPrice {
   isEstimated: boolean;
 }
 
+export type RoomClassResolutionStatus = 'RESOLVED' | 'MANUAL' | 'UNRESOLVED' | 'LEGACY';
+
 export interface RoomView {
   id: string;
   roomIndex: number;
@@ -85,6 +87,18 @@ export interface RoomView {
   roomSubtotal: number | null;
   taxAmount: number | null;
   feeAmount: number | null;
+  /**
+   * Immutable branch room-class snapshot taken when the booking was created
+   * (C.3.8). Optional because bookings created before that phase have none.
+   * `roomClassPmsCode` is what the note prints — it is never recomputed, so
+   * activating a new room-class mapping cannot change an existing booking.
+   */
+  roomClassId?: string | null;
+  roomClassVersionId?: string | null;
+  roomClassDisplayName?: string | null;
+  roomClassPmsCode?: string | null;
+  roomClassSourceText?: string | null;
+  roomClassStatus?: RoomClassResolutionStatus | null;
   nights: NightPrice[];
 }
 

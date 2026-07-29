@@ -678,6 +678,7 @@ guide: [`docs/testing-8-branches.md`](docs/testing-8-branches.md). **Never enabl
 ## Documentation
 
 - [`docs/branch-management.md`](docs/branch-management.md) — Admin hotel & branch management: branch number vs stable code, internal name vs platform aliases, add/rename/re-address, Booking.com & Agoda names, exact vs similarity matching, disabling a branch.
+- [`docs/room-class-mapping.md`](docs/room-class-mapping.md) — **branch-specific room classes**: the 48 confirmed CN1–CN8 mappings and PMS codes, alias/normalisation rules, versioned draft → activate workflow, immutable per-booking snapshots, safe guest updates, audit and migration behaviour.
 - [`docs/production-deployment.md`](docs/production-deployment.md) — **Ubuntu VPS production deployment**: Docker image, Compose stack, Caddy/HTTPS, secrets, `migrate deploy`, production bootstrap, initial Admin.
 - [`docs/production-runbook.md`](docs/production-runbook.md) — day-to-day operation: status, logs, update, rollback, accounts, certificates, routine checks.
 - [`docs/backup-restore.md`](docs/backup-restore.md) — backup contents, consistency guarantees, retention, restore drill and real restore.

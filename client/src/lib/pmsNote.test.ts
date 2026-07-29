@@ -70,6 +70,47 @@ function booking(overrides: Partial<BookingDetail> = {}): BookingDetail {
   };
 }
 
+describe('room-class snapshot (C.3.8)', () => {
+  /** A room carrying the immutable branch room-class snapshot. */
+  function snapshotRoom(sourceText: string, pmsCode: string): RoomView {
+    return {
+      ...room(sourceText),
+      roomClassPmsCode: pmsCode,
+      roomClassDisplayName: sourceText,
+      roomClassStatus: 'RESOLVED',
+    };
+  }
+
+  it('uses the stored branch-specific code instead of the global keyword table', () => {
+    // "Premium" is not in the legacy table at all — only the snapshot knows it.
+    expect(roomsAbbreviation([snapshotRoom('Premium', 'LUXDEL')])).toBe('LUXDEL');
+    // Where the two disagree the snapshot wins: the legacy table maps any
+    // "deluxe" to DLX, but this branch's configured code is DEBAL.
+    expect(roomsAbbreviation([snapshotRoom('Deluxe-Bal', 'DEBAL')])).toBe('DEBAL');
+    expect(abbreviateRoomType('Deluxe-Bal')).toBe('DLX');
+  });
+
+  it('keeps the legacy abbreviation for a room with no snapshot', () => {
+    // Pre-C.3.8 bookings must produce exactly the note they always produced.
+    expect(roomsAbbreviation([room('Phòng Tiêu Chuẩn Giường Đôi')])).toBe('STAN');
+    expect(roomsAbbreviation([room('Superior Twin')])).toBe('SUP');
+  });
+
+  it('groups and counts snapshot codes like any other', () => {
+    expect(roomsAbbreviation([snapshotRoom('Premium', 'LUXDEL'), snapshotRoom('Premium', 'LUXDEL')]))
+      .toBe('LUXDELx2');
+    expect(roomsAbbreviation([snapshotRoom('King Bal', 'KINGBAL'), room('Standard')]))
+      .toBe('KINGBAL+STAN');
+  });
+
+  it('an existing note is unaffected by a later mapping change', () => {
+    // The booking stores LUXDEL; whatever the branch mapping says today, the
+    // note still prints LUXDEL because nothing ever recomputes it.
+    const b = booking({ rooms: [snapshotRoom('Premium', 'LUXDEL')] });
+    expect(buildPmsNote(b, NOW).text).toContain('_LUXDEL_');
+  });
+});
+
 describe('abbreviateRoomType — most-specific wins', () => {
   it('resolves a Standard Double to STAN, not DBL', () => {
     expect(abbreviateRoomType('Phòng Tiêu Chuẩn Giường Đôi')).toBe('STAN');

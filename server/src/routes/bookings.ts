@@ -11,7 +11,7 @@ import { parseBooking } from '../booking/parser';
 import { parseAgodaBooking } from '../booking/agoda';
 import { loadBranchConfigs } from '../booking/branchConfig';
 import { detectBusinessType } from '../booking/businessType';
-import { persistDraftBooking } from '../booking/store';
+import { persistDraftBooking, snapshotRoomClasses } from '../booking/store';
 import { serializeBookingPreview } from '../booking/serialize';
 import {
   BOOKING_LIST_INCLUDE,
@@ -129,6 +129,8 @@ export function createBookingsRouter(): Router {
       // platform stamp and a few label/prepaid variants differ.
       const parsed = source === 'AGODA' ? parseAgodaBooking(rawText, branches) : parseBooking(rawText, branches);
       const bookingId = await persistDraftBooking(parsed, rawText, req.currentUser?.id ?? null, source);
+      // Branch-specific room codes, captured as an immutable snapshot.
+      await snapshotRoomClasses(bookingId);
 
       // The same deterministic detection persisted by the store, surfaced in the
       // preview so the Admin sees the type + confidence and can confirm/override.

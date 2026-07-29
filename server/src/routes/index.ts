@@ -3,6 +3,8 @@ import { healthRouter } from './health';
 import { createAuthRouter } from './auth';
 import { createBranchesRouter } from './branches';
 import { createAdminBranchesRouter } from './adminBranches';
+import { createAdminRoomMappingRouter } from './adminRoomMapping';
+import { createBookingGuestsRouter } from './bookingGuests';
 import { createAdminUsersRouter } from './adminUsers';
 import { createBookingsRouter } from './bookings';
 import { createAdminBookingsRouter } from './adminBookings';
@@ -22,10 +24,15 @@ export function createApiRouter(): Router {
   router.use(createAuthRouter());
   router.use(createBranchesRouter());
   // Mounted before the generic /admin router so branch management owns its paths.
+  // Room mapping comes first: its paths are nested under a branch id, and the
+  // branch router's own /admin/branches/:id handler would otherwise match them.
+  router.use(createAdminRoomMappingRouter());
   router.use(createAdminBranchesRouter());
   router.use(createAdminUsersRouter());
   router.use(createAdminBookingsRouter());
   router.use(createAdminDashboardRouter());
+  // Guest routes are more specific than /bookings/:id, so they mount first.
+  router.use(createBookingGuestsRouter());
   router.use(createBookingsRouter());
   router.use(createNotificationsRouter());
   router.use(createIssuesRouter());

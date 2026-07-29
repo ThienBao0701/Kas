@@ -121,6 +121,9 @@ enum BranchAliasMatchMode {
 }
 
 /// What changed on a branch (audit trail for Admin branch management).
+/// The ROOM_MAPPING_* / ROOM_CLASS_* members extend the SAME audit trail to
+/// branch room-class configuration — room classes are branch configuration, so
+/// they belong in BranchChangeLog rather than in a second audit system.
 enum BranchChangeAction {
   BRANCH_CREATED
   BRANCH_NUMBER_CHANGED
@@ -135,6 +138,58 @@ enum BranchChangeAction {
   ALIAS_ENABLED
   ALIAS_DISABLED
   ALIAS_REMOVED
+  ROOM_MAPPING_DRAFT_CREATED
+  ROOM_MAPPING_DRAFT_CANCELLED
+  ROOM_CLASS_ADDED
+  ROOM_CLASS_UPDATED
+  ROOM_CLASS_DEACTIVATED
+  ROOM_CLASS_REORDERED
+  ROOM_CLASS_ALIAS_ADDED
+  ROOM_CLASS_ALIAS_REMOVED
+  ROOM_MAPPING_VALIDATED
+  ROOM_MAPPING_ACTIVATED
+  ROOM_MAPPING_ACTIVATION_FAILED
+}
+
+/// Lifecycle of one branch room-class mapping version.
+/// DRAFT    = being prepared; never used to resolve a booking.
+/// ACTIVE   = the single version new bookings resolve against (one per branch).
+/// ARCHIVED = superseded, kept forever so historical snapshots stay explainable.
+enum RoomMappingVersionStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+/// Where a room-class alias came from.
+enum RoomClassAliasSource {
+  SEED
+  ADMIN
+  PARSER
+}
+
+/// How a room name was resolved to a branch room class for a booking room.
+/// RESOLVED   = matched a configured name/alias of the booking's own branch.
+/// MANUAL     = an authorized user selected the class explicitly.
+/// UNRESOLVED = no deterministic match; the source text is preserved verbatim
+///              and the room is flagged for manual review. Never guessed.
+/// LEGACY     = pre-C.3.8 row backfilled from its stored room text; the note
+///              keeps using the legacy abbreviation until a human resolves it.
+enum RoomClassResolutionStatus {
+  RESOLVED
+  MANUAL
+  UNRESOLVED
+  LEGACY
+}
+
+/// Booking-scoped audit trail (guests, room-mapping re-application). Mirrors the
+/// shape of BranchChangeLog so both trails read the same way.
+enum BookingAuditAction {
+  BOOKING_GUEST_ADDED
+  BOOKING_GUEST_UPDATED
+  BOOKING_GUEST_REMOVED
+  BOOKING_PRIMARY_GUEST_CHANGED
+  BOOKING_ROOM_MAPPING_REAPPLIED
 }
 
 /// Severity of an extraction warning surfaced to the admin during preview.
@@ -183,20 +238,23 @@ model User {
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
-  branch            Branch?                @relation(fields: [branchId], references: [id])
-  bookingsSent      Booking[]              @relation("BookingSentBy")
-  bookingsCompleted Booking[]              @relation("BookingCompletedBy")
-  bookingsReviewed  Booking[]              @relation("BookingReviewedBy")
-  bookingsCreated   Booking[]              @relation("BookingCreatedBy")
-  proofsSubmitted   BookingCreationProof[] @relation("ProofSubmittedBy")
-  proofsReviewed    BookingCreationProof[] @relation("ProofReviewedBy")
-  statusChanges     BookingStatusHistory[]
-  notifications     Notification[]
-  sessions          Session[]
-  issuesReported    HotelIssue[]           @relation("IssueReportedBy")
-  issuesAccepted    HotelIssue[]           @relation("IssueAcceptedBy")
-  issuesResolved    HotelIssue[]           @relation("IssueResolvedBy")
-  branchChanges     BranchChangeLog[]
+  branch                Branch?                    @relation(fields: [branchId], references: [id])
+  bookingsSent          Booking[]                  @relation("BookingSentBy")
+  bookingsCompleted     Booking[]                  @relation("BookingCompletedBy")
+  bookingsReviewed      Booking[]                  @relation("BookingReviewedBy")
+  bookingsCreated       Booking[]                  @relation("BookingCreatedBy")
+  proofsSubmitted       BookingCreationProof[]     @relation("ProofSubmittedBy")
+  proofsReviewed        BookingCreationProof[]     @relation("ProofReviewedBy")
+  statusChanges         BookingStatusHistory[]
+  notifications         Notification[]
+  sessions              Session[]
+  issuesReported        HotelIssue[]               @relation("IssueReportedBy")
+  issuesAccepted        HotelIssue[]               @relation("IssueAcceptedBy")
+  issuesResolved        HotelIssue[]               @relation("IssueResolvedBy")
+  branchChanges         BranchChangeLog[]
+  roomMappingsCreated   BranchRoomMappingVersion[] @relation("RoomMappingCreatedBy")
+  roomMappingsActivated BranchRoomMappingVersion[] @relation("RoomMappingActivatedBy")
+  bookingAuditEvents    BookingAuditEvent[]
 
   @@index([branchId])
   @@index([role])
@@ -269,11 +327,156 @@ model Branch {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
-  users      User[]
-  bookings   Booking[]
-  issues     HotelIssue[]
-  aliases    BranchSourceAlias[]
-  changeLogs BranchChangeLog[]
+  users               User[]
+  bookings            Booking[]
+  issues              HotelIssue[]
+  aliases             BranchSourceAlias[]
+  changeLogs          BranchChangeLog[]
+  roomMappingVersions BranchRoomMappingVersion[]
+  roomClasses         BranchRoomClass[]
+}
+
+/// One immutable-once-activated version of a branch's room-class mapping.
+///
+/// Exactly one ACTIVE version per branch at any time (enforced by the activation
+/// transaction plus a partial unique index created in the migration). A new
+/// configuration is prepared as a DRAFT copy, so the live mapping keeps serving
+/// reception while an Admin edits — and activation is a single atomic swap.
+model BranchRoomMappingVersion {
+  id                String                   @id @default(cuid())
+  branchId          Int
+  /// 1-based, monotonically increasing per branch. Shown to operators.
+  versionNumber     Int
+  status            RoomMappingVersionStatus @default(DRAFT)
+  createdByUserId   Int?
+  activatedByUserId Int?
+  createdAt         DateTime                 @default(now())
+  activatedAt       DateTime?
+  archivedAt        DateTime?
+  /// Operator-supplied reason, shown in the version history.
+  changeReason      String?
+
+  branch      Branch            @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  createdBy   User?             @relation("RoomMappingCreatedBy", fields: [createdByUserId], references: [id])
+  activatedBy User?             @relation("RoomMappingActivatedBy", fields: [activatedByUserId], references: [id])
+  roomClasses BranchRoomClass[]
+
+  @@unique([branchId, versionNumber])
+  @@index([branchId, status])
+}
+
+/// One room class of one branch, within one mapping version.
+///
+/// Room classes are BUSINESS-MANAGED data, never a code enum: each branch has
+/// its own display names and PMS codes, and the same code (e.g. STAN) legitimately
+/// exists in several branches. `stableKey` is what identifies "the same room
+/// class" across versions of a branch, so a booking snapshot stays explainable
+/// after a rename.
+model BranchRoomClass {
+  id             String  @id @default(cuid())
+  branchId       Int
+  versionId      String
+  /// Stable across versions of this branch, e.g. "standard", "deluxe-bal".
+  stableKey      String
+  displayName    String
+  /// Case/diacritic/punctuation-folded form used for deterministic lookup.
+  normalizedName String
+  /// The exact PMS note code, e.g. STAN, LUXDEL, PRE_DD.
+  pmsCode        String
+  active         Boolean @default(true)
+  sortOrder      Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  branch  Branch                   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  version BranchRoomMappingVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  aliases BranchRoomClassAlias[]
+
+  /// Within one version: no duplicate normalized name, PMS code or stable key.
+  @@unique([versionId, normalizedName])
+  @@unique([versionId, pmsCode])
+  @@unique([versionId, stableKey])
+  @@index([branchId])
+  @@index([versionId, active])
+}
+
+/// A recognised spelling of a room class, scoped to its branch AND version.
+///
+/// `versionId` is denormalised so the database itself can guarantee an alias is
+/// unambiguous within a version — two room classes of the same branch may never
+/// claim the same normalized alias.
+model BranchRoomClassAlias {
+  id              String               @id @default(cuid())
+  roomClassId     String
+  versionId       String
+  branchId        Int
+  alias           String
+  normalizedAlias String
+  source          RoomClassAliasSource @default(SEED)
+  active          Boolean              @default(true)
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  roomClass BranchRoomClass @relation(fields: [roomClassId], references: [id], onDelete: Cascade)
+
+  @@unique([versionId, normalizedAlias])
+  @@index([roomClassId])
+  @@index([branchId])
+}
+
+/// One guest on a booking.
+///
+/// Introduced in C.3.8. `Booking.customerName` / `Booking.phone` remain the
+/// denormalised mirror of the PRIMARY guest so every existing read path, note
+/// builder, export and comparison keeps working unchanged; the service layer
+/// keeps the two in step inside one transaction.
+model BookingGuest {
+  id             String  @id @default(cuid())
+  bookingId      String
+  fullName       String
+  phone          String?
+  email          String?
+  nationality    String?
+  /// Passport / national id number, and which kind it is.
+  identityNumber String?
+  identityType   String?
+  note           String?
+  /// Exactly one primary guest per booking (enforced by the service).
+  isPrimary      Boolean @default(false)
+  sortOrder      Int     @default(0)
+
+  createdByUserId Int?
+  updatedByUserId Int?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+  @@index([bookingId, isPrimary])
+}
+
+/// Immutable booking-scoped audit trail (guest edits, mapping re-application).
+model BookingAuditEvent {
+  id            String             @id @default(cuid())
+  bookingId     String
+  action        BookingAuditAction
+  field         String?
+  oldValue      String?
+  newValue      String?
+  reason        String?
+  actorUserId   Int?
+  actorRole     UserRole?
+  /// Request correlation id, when the caller supplied one.
+  correlationId String?
+  createdAt     DateTime           @default(now())
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  actor   User?   @relation(fields: [actorUserId], references: [id])
+
+  @@index([bookingId, createdAt])
+  @@index([action])
 }
 
 /// One external platform hotel name that resolves to a branch. Replaces the
@@ -400,6 +603,11 @@ model Booking {
   /// The admin who ran the extraction that created this booking.
   createdByUserId Int?
 
+  /// When the operator-facing PMS note was last generated, and under which note
+  /// ruleset. A room-mapping change never regenerates a historical note.
+  noteGeneratedAt DateTime?
+  noteVersion     String?
+
   /// Development demo marker (dev-test tools only). Real bookings are always false.
   isDemo      Boolean @default(false)
   /// The demo batch this row belongs to (null for real data).
@@ -414,6 +622,8 @@ model Booking {
   reviewedBy       User?                    @relation("BookingReviewedBy", fields: [reviewedByUserId], references: [id])
   createdBy        User?                    @relation("BookingCreatedBy", fields: [createdByUserId], references: [id])
   rooms            BookingRoom[]
+  guests           BookingGuest[]
+  auditEvents      BookingAuditEvent[]
   statusHistory    BookingStatusHistory[]
   notifications    Notification[]
   warnings         BookingExtractWarning[]
@@ -541,7 +751,7 @@ model BookingProofComparison {
 
 /// One room within a booking. Rooms are never merged; each keeps its own prices.
 model BookingRoom {
-  id           String   @id @default(cuid())
+  id           String  @id @default(cuid())
   bookingId    String
   /// 1-based position as shown in the UI ("Phòng 1", "Phòng 2").
   roomIndex    Int
@@ -550,8 +760,34 @@ model BookingRoom {
   roomSubtotal Int?
   taxAmount    Int?
   feeAmount    Int?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+
+  /// ---------------------------------------------------------------------
+  /// IMMUTABLE ROOM-CLASS SNAPSHOT (C.3.8)
+  ///
+  /// Captured when the room is created or explicitly re-resolved, and NEVER
+  /// rewritten by a later mapping change. A booking made today under
+  /// "Premium / LUXDEL / version 1" keeps showing Premium / LUXDEL forever,
+  /// even after an Admin activates a version that renames or re-codes it.
+  ///
+  /// The snapshot is what every note, export and comparison reads; the live
+  /// mapping is only ever consulted to CREATE a snapshot.
+  /// ---------------------------------------------------------------------
+  /// The resolved room class, kept for provenance. Nulled if that class row is
+  /// ever removed — the *_Snapshot columns below stay authoritative regardless.
+  roomClassId          String?
+  roomClassVersionId   String?
+  /// The branch the class belonged to, so a cross-branch edit is detectable.
+  roomClassBranchId    Int?
+  /// Verbatim copies — deliberately duplicated, never joined at read time.
+  roomClassDisplayName String?
+  roomClassPmsCode     String?
+  /// The exact source text that was resolved (or failed to resolve).
+  roomClassSourceText  String?
+  roomClassStatus      RoomClassResolutionStatus?
+  roomClassResolvedAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   booking Booking             @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   nights  BookingNightPrice[]
