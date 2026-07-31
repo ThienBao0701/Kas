@@ -7,9 +7,16 @@
  *  - Refuses to run in production unless an explicit override flag is supplied.
  *  - The caller must pass `confirmed: true` (the CLI gates this behind an
  *    interactive phrase).
- *  - Backs up the SQLite file + upload dirs + a manifest BEFORE any deletion, and
- *    aborts if the backup fails. Physical uploads are removed only after backup.
+ *  - Takes a REAL database backup + upload dirs + a manifest BEFORE any
+ *    deletion, and aborts if the backup fails. Physical uploads are removed
+ *    only after backup.
  *  - Idempotent: a second run leaves the system safely empty.
+ *
+ * PHASE D.1: the database half of that backup used to be a copy of the SQLite
+ * file. On PostgreSQL there is no file to copy, so it is now a real
+ * `pg_dump --format=custom` archive. This is not cosmetic — without it this
+ * function would delete every booking, proof, issue and notification while
+ * "backing up" nothing but the uploads, and the reset would be irreversible.
  *
  * This module never runs itself; it is invoked by the CLI wrapper or tests.
  */
@@ -18,15 +25,24 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { PrismaClient } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db/prisma';
-import { isProduction } from '../config/env';
+import { env, isProduction } from '../config/env';
+import { describeDatabaseUrl } from '../config/databaseUrl';
+import { connectionArgs, connectionFromUrl, runPgTool } from '../production/pgTools';
 import { TEST_RECEPTIONIST_USERNAME } from './constants';
 import { normalizeUsername } from '../auth/username';
+
+/** Name of the pre-reset database archive inside the backup directory. */
+export const RESET_DUMP_NAME = 'database.dump';
 
 export interface ResetOptions {
   /** The caller (CLI) has confirmed the interactive phrase. */
   confirmed: boolean;
-  /** Absolute path to the SQLite DB file to back up (skipped if it doesn't exist). */
-  dbFilePath?: string | null;
+  /**
+   * Connection to dump before wiping. Defaults to the running process's
+   * DATABASE_URL. A non-PostgreSQL URL aborts the reset rather than skipping
+   * the backup.
+   */
+  databaseUrl?: string;
   /** Absolute upload directories to back up + clear (proof/issue photos). */
   uploadDirs?: string[];
   /** Where timestamped backups are written. */
@@ -95,11 +111,34 @@ export async function prepareForProduction(opts: ResetOptions): Promise<ResetMan
   // --- Backup FIRST (abort on failure) ---
   let backupDir: string | null = null;
   if (doBackup) {
+    const databaseUrl = opts.databaseUrl ?? env.DATABASE_URL;
+    const target = describeDatabaseUrl(databaseUrl);
+    if (target.kind !== 'postgresql') {
+      // Refuse rather than proceed with an uploads-only "backup": this
+      // function is about to delete every operational row.
+      throw new Error(
+        'Không thể sao lưu trước khi xóa: DATABASE_URL không phải postgresql:// URL. Đã hủy.',
+      );
+    }
+
     backupDir = path.join(opts.backupRoot, `pre-official-${timestamp(now)}`);
     await fsp.mkdir(backupDir, { recursive: true });
-    if (opts.dbFilePath && fs.existsSync(opts.dbFilePath)) {
-      await fsp.copyFile(opts.dbFilePath, path.join(backupDir, 'data.db'));
+
+    const connection = connectionFromUrl(databaseUrl);
+    const dumped = await runPgTool(
+      'pg_dump',
+      [
+        ...connectionArgs(connection),
+        '--dbname', connection.database,
+        '--format=custom', '--no-owner', '--no-privileges',
+        '--file', path.join(backupDir, RESET_DUMP_NAME),
+      ],
+      connection,
+    );
+    if (!dumped.ok) {
+      throw new Error(`Sao lưu trước khi xóa thất bại, đã hủy reset: ${dumped.stderr.trim()}`);
     }
+
     const uploadsBackup = path.join(backupDir, 'uploads');
     for (const dir of opts.uploadDirs ?? []) {
       if (fs.existsSync(dir)) {

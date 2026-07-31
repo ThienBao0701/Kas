@@ -159,9 +159,10 @@ describe('compose.production.yml', () => {
   });
 
   it('32. no database port is published anywhere', () => {
-    // This milestone ships the SQLite pilot: there is no database service and
-    // therefore no database port at all. If a PostgreSQL service is added later
-    // this assertion keeps it private.
+    // Since Phase D.1 the database is PostgreSQL 17 on the Windows HOST, and
+    // Docker remains an optional app-only path that dials out to it. There is
+    // deliberately no database service here: two copies of the data would be
+    // two things to back up and one of them would silently go stale.
     const dbService = compose.services.db ?? compose.services.database ?? compose.services.postgres;
     if (dbService) {
       expect(dbService.ports ?? []).toEqual([]);
@@ -187,11 +188,15 @@ describe('compose.production.yml', () => {
     const app = compose.services.app!;
     expect(app.volumes).toEqual(
       expect.arrayContaining([
-        'kas-db:/data/db',
         'kas-uploads:/data/uploads',
         'kas-backups:/data/backups',
       ]),
     );
+    // The database volume is GONE on purpose: PostgreSQL owns its own storage
+    // on the host. A lingering kas-db volume would be a stale copy of the
+    // SQLite pilot's data that nobody is backing up.
+    expect(app.volumes?.some((v) => v.startsWith('kas-db:'))).toBe(false);
+
     // The only bind mount in the stack is Caddy's read-only config.
     const binds = Object.values(compose.services)
       .flatMap((s) => s.volumes ?? [])
@@ -199,7 +204,7 @@ describe('compose.production.yml', () => {
     expect(binds).toEqual(['./Caddyfile:/etc/caddy/Caddyfile:ro']);
 
     expect(Object.keys(compose.volumes ?? {}).sort()).toEqual(
-      ['caddy-config', 'caddy-data', 'kas-backups', 'kas-db', 'kas-uploads'],
+      ['caddy-config', 'caddy-data', 'kas-backups', 'kas-uploads'],
     );
   });
 
@@ -221,13 +226,25 @@ describe('compose.production.yml', () => {
     expect(env.PROOF_UPLOAD_DIR).toMatch(/^\/data\//);
     expect(env.ISSUE_UPLOAD_DIR).toMatch(/^\/data\//);
     expect(env.BACKUP_DIR).toMatch(/^\/data\//);
-    expect(env.DATABASE_URL).toMatch(/^file:\/data\/db\//);
+
+    // Since D.1 the connection URL carries a PASSWORD, so it must arrive as a
+    // secret file — never as a literal value in a committed compose file, and
+    // never as a plain environment variable visible to `docker inspect`.
+    expect(env.DATABASE_URL).toBeUndefined();
+    expect(env.DATABASE_URL_FILE).toBe('/run/secrets/database_url');
+    const rawCompose = read('compose.production.yml');
+    expect(rawCompose).not.toMatch(/DATABASE_URL:\s*["']?postgres/i);
+    expect(rawCompose).not.toMatch(/postgres(ql)?:\/\/[^\s"']*:[^\s"']*@/i);
+    // The SQLite pilot URL must not survive anywhere in the production stack.
+    expect(rawCompose).not.toMatch(/file:\/data\/db/);
 
     // Secrets are file-backed; no literal secret value appears in the file.
     expect(env.SESSION_SECRET_FILE).toBe('/run/secrets/session_secret');
     expect(env.SESSION_SECRET).toBeUndefined();
     expect(env.INITIAL_ADMIN_PASSWORD).toBeUndefined();
-    expect(Object.keys(compose.secrets ?? {}).sort()).toEqual(['initial_admin_password', 'session_secret']);
+    expect(Object.keys(compose.secrets ?? {}).sort()).toEqual(
+      ['database_url', 'initial_admin_password', 'session_secret'],
+    );
   });
 
   it('33e. no development hot reload or source mount leaks into production', () => {

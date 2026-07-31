@@ -3,44 +3,13 @@
 // Money rule: every monetary field is an Int holding whole VND (đồng).
 // VND has no minor unit in practice, so integer arithmetic is exact and
 // floating point is never used for money anywhere in this system.
-//
-// ---------------------------------------------------------------------------
-// ENGINE: PostgreSQL 17 (Phase D.1). Previously SQLite (D.0 pilot).
-//
-// The SQLite migration history is NOT part of this history and is never
-// executed against PostgreSQL — SQLite's table-rebuild idiom
-// (`PRAGMA defer_foreign_keys` + `CREATE new_X` / `DROP TABLE X` / `RENAME`)
-// has no PostgreSQL meaning at all. It is archived verbatim under
-// `prisma/legacy-sqlite/` because it is still the definition of the SOURCE
-// database that the D.1 transfer tool reads, and because historical snapshots
-// must stay explainable. `prisma/migrations/` holds one deterministic
-// PostgreSQL baseline instead.
-//
-// Differences that mattered when porting, and what was decided:
-//   - Enums were TEXT in SQLite and become native PostgreSQL enum types. A row
-//     holding an off-enum string therefore fails the transfer LOUDLY rather
-//     than being silently coerced; the transfer tool pre-flights every enum
-//     column in --dry-run for exactly this reason.
-//   - `Int @id @default(autoincrement())` was a SQLite ROWID and becomes a
-//     sequence-backed identity. Sequences do NOT advance on explicit-ID
-//     inserts, so the transfer tool resynchronises every one of them (D.1 §12).
-//   - Boolean was 0/1 and becomes native `boolean`.
-//   - DateTime becomes `timestamp(3)`; the app's UTC-midnight date-only
-//     convention is unchanged and is asserted by the verification report.
-//   - String stays `text`. `Session.data` and the several *Json columns keep
-//     holding serialised JSON as TEXT deliberately: converting them to `jsonb`
-//     would re-interpret stored business data, which D.1 forbids.
-//   - The one-ACTIVE-version-per-branch partial unique index is not
-//     expressible in the Prisma schema and is created in the baseline
-//     migration, exactly as it was under SQLite.
-// ---------------------------------------------------------------------------
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -293,12 +262,9 @@ model User {
 
 /// Server-side login session backing express-session.
 ///
-/// Sessions live in the application's own Prisma database rather than in a
-/// native store: connect-sqlite3 / better-sqlite3 / connect-pg-simple are all
-/// blocked by this project's install-script allow-list, and one storage engine
-/// is one less thing to back up, restore and keep consistent. On PostgreSQL
-/// this also means concurrent reception logins across the eight branches are
-/// handled by the same MVCC engine as every other write.
+/// A native SQLite session store (connect-sqlite3 / better-sqlite3) is blocked
+/// by this project's install-script allow-list, so sessions live in the same
+/// Prisma/SQLite database — the simplest reliable persistent store here.
 /// The browser only ever holds the opaque `id` (the session cookie); all
 /// session data stays server-side in `data`. `userId` is denormalised out of
 /// `data` so a user's sessions can be invalidated on disable / password reset.

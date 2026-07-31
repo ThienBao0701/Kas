@@ -24,7 +24,11 @@
     "prod:seed": "node server/dist/scripts/productionSeed.js",
     "prod:create-admin": "node server/dist/scripts/createAdmin.js",
     "prod:backup": "node server/dist/scripts/backup.js",
-    "prod:restore": "node server/dist/scripts/restore.js"
+    "prod:restore": "node server/dist/scripts/restore.js",
+    "d1:fixture": "tsx server/src/scripts/d1Fixture.ts",
+    "d1:transfer": "tsx server/src/scripts/d1Transfer.ts",
+    "d1:verify": "tsx server/src/scripts/d1Verify.ts",
+    "d1:drill": "tsx server/src/scripts/d1RestoreDrill.ts"
   },
   "dependencies": {
     "prisma": "^6.3.1"

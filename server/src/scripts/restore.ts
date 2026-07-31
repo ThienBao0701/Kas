@@ -1,15 +1,20 @@
 /**
- * CLI: `npm run prod:restore -- --backup=<dir> [--target-db=<file> --target-uploads=<dir>]`
+ * CLI: `npm run prod:restore -- --backup=<dir> [--target-url=<url>] [--reset-schema]`
  *
- * Restores a verified backup. It NEVER selects a backup for you, always
- * verifies checksums first, and requires a typed confirmation before it writes
- * anything. Use `--list` to see what is available, and the `--target-*` flags to
- * rehearse a restore into a throwaway directory instead of the live data.
+ * Restores a verified PostgreSQL backup. It NEVER selects a backup for you,
+ * always verifies checksums and the archive's table of contents first, and
+ * requires a typed confirmation before it writes anything.
+ *
+ * `--target-url` is how a restore DRILL is rehearsed: point it at a disposable
+ * database (during D.1, `kas_d1_test`) and the live data is never touched.
+ * `kas_production` is refused outright by the guard, whatever is passed.
  */
 import path from 'node:path';
 import readline from 'node:readline';
 import { prisma } from '../db/prisma';
-import { BACKUP_DIR } from '../config/env';
+import { BACKUP_DIR, env } from '../config/env';
+import { redactDatabaseUrl } from '../config/databaseUrl';
+import { DatabaseGuardError } from '../d1/guard';
 import { listBackups, verifyBackup } from '../production/backup';
 import { restoreBackup } from '../production/restore';
 
@@ -54,19 +59,22 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
+  const manifest = verification.manifest!;
 
-  const targetDb = stringArg('target-db');
-  const targetUploads = stringArg('target-uploads');
-  const intoTemp = Boolean(targetDb || targetUploads);
+  const targetUrl = stringArg('target-url') ?? env.DATABASE_URL;
+  const allowDatabase = stringArg('allow-database');
+  const resetSchema = process.argv.includes('--reset-schema');
 
   console.log(`\nBản sao lưu: ${backupDir}`);
-  console.log(`Tạo lúc:     ${verification.manifest!.createdAt}`);
-  console.log(`Phiên bản:   ${verification.manifest!.releaseRef ?? '(không ghi)'}`);
-  console.log(`Số bản ghi:  ${JSON.stringify(verification.manifest!.counts)}`);
+  console.log(`Tạo lúc:     ${manifest.createdAt}`);
+  console.log(`Nguồn:       ${manifest.database.name} (PostgreSQL ${manifest.database.serverVersion ?? '?'})`);
+  console.log(`Phiên bản:   ${manifest.releaseRef ?? '(không ghi)'}`);
+  console.log(`Số bản ghi:  ${JSON.stringify(manifest.counts)}`);
+  console.log(`\nĐích:        ${redactDatabaseUrl(targetUrl)}`);
   console.log(
-    intoTemp
-      ? '\nChế độ: khôi phục vào thư mục TẠM (diễn tập) — dữ liệu đang chạy không bị chạm.'
-      : '\n⚠️  Chế độ: GHI ĐÈ DỮ LIỆU ĐANG CHẠY. Hãy dừng ứng dụng trước khi tiếp tục.',
+    resetSchema
+      ? '⚠️  --reset-schema: schema đích sẽ bị XÓA rồi tạo lại trước khi khôi phục.'
+      : 'Chế độ: khôi phục đè lên schema hiện có (không xóa schema).',
   );
 
   const answer = await ask(`\nGõ chính xác "${CONFIRM_PHRASE}" để khôi phục: `);
@@ -79,22 +87,31 @@ async function main(): Promise<void> {
   const result = await restoreBackup({
     backupDir,
     confirmed: true,
-    ...(targetDb ? { targetDbFile: targetDb } : {}),
-    ...(targetUploads
-      ? {
-          targetUploadDirs: [
-            { name: 'booking-proofs', dir: path.join(targetUploads, 'booking-proofs') },
-            { name: 'issue-photos', dir: path.join(targetUploads, 'issue-photos') },
-          ],
-        }
-      : {}),
+    targetUrl,
+    resetSchema,
+    ...(allowDatabase ? { allowedDatabases: ['kas_d1_test', allowDatabase] as const } : {}),
   });
 
   console.log('\n✅ Khôi phục xong.');
-  console.log(`   Cơ sở dữ liệu: ${result.restoredDbFile}`);
+  console.log(`   Cơ sở dữ liệu: ${result.targetDatabase}`);
   for (const upload of result.restoredUploads) {
     console.log(`   ${upload.name}: ${upload.files} tệp`);
   }
+  if (result.safetyCopyFile) {
+    console.log(`   Bản sao trước khôi phục: ${result.safetyCopyFile}`);
+  }
+
+  console.log('\nĐỐI CHIẾU SAU KHÔI PHỤC:');
+  for (const check of result.verification) {
+    console.log(`   ${check.ok ? '✔' : '✘'} ${check.name}: ${check.actual} (mong đợi ${check.expected})`);
+  }
+  if (!result.verified) {
+    console.error('\n❌ DỮ LIỆU SAU KHÔI PHỤC KHÔNG KHỚP MANIFEST.');
+    process.exitCode = 1;
+  }
+
+  for (const warning of result.warnings) console.log(`\n⚠️  ${warning}`);
+
   console.log('\nDANH SÁCH KIỂM TRA SAU KHÔI PHỤC:');
   for (const item of result.checklist) console.log(`   [ ] ${item}`);
 }
@@ -102,7 +119,10 @@ async function main(): Promise<void> {
 if (require.main === module) {
   main()
     .catch((error: unknown) => {
-      console.error('Khôi phục thất bại:', error instanceof Error ? error.message : error);
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(
+        error instanceof DatabaseGuardError ? `\n${message}\n` : `Khôi phục thất bại: ${message}`,
+      );
       process.exitCode = 1;
     })
     .finally(() => void prisma.$disconnect());

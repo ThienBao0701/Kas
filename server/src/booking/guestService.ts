@@ -244,7 +244,15 @@ export async function updateGuest(
     throw ApiError.notFound('Không tìm thấy khách trong đơn này.');
   }
 
-  // Optimistic concurrency: refuse a write based on a stale read.
+  // Optimistic concurrency, first pass: fail fast on an obviously stale read so
+  // the caller gets a clear conflict without doing any work.
+  //
+  // This check ALONE is not sufficient. It reads outside the transaction, so
+  // two receptionists who both read the same version would both pass it and
+  // both write — a time-of-check/time-of-use race. Under SQLite's single
+  // writer that was almost unobservable; on PostgreSQL, with eight branches
+  // writing concurrently, it is real. The authoritative check is the
+  // conditional updateMany inside the transaction below.
   if (input.expectedUpdatedAt) {
     const seen = new Date(input.expectedUpdatedAt).getTime();
     if (seen !== existing.updatedAt.getTime()) {
@@ -257,7 +265,9 @@ export async function updateGuest(
   const has = (key: keyof UpdateGuestInput): boolean =>
     Object.prototype.hasOwnProperty.call(input, key);
 
-  const data: Prisma.BookingGuestUpdateInput = { updatedByUserId: actor.id };
+  // `UpdateManyMutationInput` (not `UpdateInput`): the write below is a
+  // conditional updateMany so the stale-read guard runs inside the database.
+  const data: Prisma.BookingGuestUpdateManyMutationInput = { updatedByUserId: actor.id };
   const changed: string[] = [];
 
   // Each field is written ONLY when the caller sent that exact key.
@@ -271,7 +281,25 @@ export async function updateGuest(
   }
 
   await client.$transaction(async (tx) => {
-    await tx.bookingGuest.update({ where: { id: guestId }, data });
+    // Optimistic concurrency, authoritative pass: the row is updated ONLY if
+    // its `updatedAt` is still the value the caller saw. PostgreSQL evaluates
+    // this predicate while holding the row lock, so of two concurrent writers
+    // exactly one matches and the loser gets a conflict instead of silently
+    // overwriting a change it never saw. `updatedAt` is maintained by Prisma's
+    // @updatedAt, so it advances on every write and needs no extra column.
+    const written = await tx.bookingGuest.updateMany({
+      where: {
+        id: guestId,
+        ...(input.expectedUpdatedAt ? { updatedAt: existing.updatedAt } : {}),
+      },
+      data,
+    });
+    if (written.count === 0) {
+      throw ApiError.conflict('Thông tin khách vừa được người khác cập nhật. Hãy tải lại rồi thử lại.', {
+        currentUpdatedAt: existing.updatedAt.toISOString(),
+      });
+    }
+
     if (changed.length > 0) {
       await recordAudit(tx, bookingId, 'BOOKING_GUEST_UPDATED', actor, existing.fullName, null, changed.join('; '));
     }

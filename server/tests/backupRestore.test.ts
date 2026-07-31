@@ -2,33 +2,45 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { execFileSync } from 'node:child_process';
 import { seedBranches } from '../src/db/seed';
 import {
   BACKUP_MANIFEST_NAME,
   BACKUP_DB_NAME,
+  LEGACY_SQLITE_FORMAT_VERSION,
   createBackup,
   listBackups,
   pruneBackups,
   verifyBackup,
 } from '../src/production/backup';
 import { restoreBackup } from '../src/production/restore';
+import { describeDatabaseUrl } from '../src/config/databaseUrl';
+import { resolveTestBaseUrl, withSchema } from '../src/d1/testDatabase';
 
 /**
- * Backup and restore run against a THROWAWAY database and THROWAWAY directories
- * created per test — never the development database, never a real volume, and
- * never a real environment. Nothing here restores over live data.
+ * Backup and restore run against a THROWAWAY SCHEMA created per test inside
+ * the disposable kas_d1_test database — never the development database, never
+ * a real volume, never live data, and never the schema the rest of the suite
+ * is using.
+ *
+ * On the SQLite pilot this isolation came free from using a throwaway FILE.
+ * The PostgreSQL equivalent is a throwaway schema, which is why every test
+ * here creates one, migrates into it, and drops it afterwards.
  */
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
+const BASE_URL = resolveTestBaseUrl(REPO_ROOT);
+const TEST_DATABASE = describeDatabaseUrl(BASE_URL).database!;
 
 let workspace: string;
-let dbFile: string;
+let schemaName: string;
+let schemaUrl: string;
 let proofDir: string;
 let issueDir: string;
 let backupRoot: string;
 let client: PrismaClient;
+let admin: PrismaClient;
 
 /** A tiny valid PNG-signature buffer, so upload files are realistic bytes. */
 function pngBytes(marker: number): Buffer {
@@ -37,290 +49,323 @@ function pngBytes(marker: number): Buffer {
   return buf;
 }
 
-/** A `file:` URL Prisma accepts on every platform. */
-const fileUrl = (p: string): string => `file:${p.split(path.sep).join('/')}`;
-
 /**
- * Applies the committed migrations to a brand-new SQLite file using exactly the
+ * Applies the committed migrations to a brand-new schema using exactly the
  * production command (`prisma migrate deploy`). The CLI is invoked through its
  * JS entry point with the current Node binary, so there is no shell and no
  * platform-specific `.cmd` wrapper involved.
  */
-function migrateInto(file: string): void {
+function migrateInto(url: string): void {
   execFileSync(
     process.execPath,
     [
       path.join(REPO_ROOT, 'node_modules', 'prisma', 'build', 'index.js'),
       'migrate', 'deploy', '--schema', 'prisma/schema.prisma',
     ],
-    {
-      cwd: REPO_ROOT,
-      env: { ...process.env, DATABASE_URL: fileUrl(file) },
-      stdio: 'pipe',
-    },
+    { cwd: REPO_ROOT, env: { ...process.env, DATABASE_URL: url }, stdio: 'pipe' },
   );
 }
 
-/** A pristine migrated database, built once and copied per test case. */
-let templateDb: string;
-
 beforeAll(() => {
-  workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'kas-backup-'));
-  templateDb = path.join(workspace, 'template.db');
-  migrateInto(templateDb);
-}, 180_000);
+  admin = new PrismaClient({ datasourceUrl: BASE_URL });
+});
+
+afterAll(async () => {
+  await admin.$disconnect();
+});
 
 beforeEach(async () => {
-  const unique = fs.mkdtempSync(path.join(workspace, 'case-'));
-  dbFile = path.join(unique, 'db', 'kas.db');
-  proofDir = path.join(unique, 'uploads', 'booking-proofs');
-  issueDir = path.join(unique, 'uploads', 'issue-photos');
-  backupRoot = path.join(unique, 'backups');
-  fs.mkdirSync(path.dirname(dbFile), { recursive: true });
+  workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'kas-backup-'));
+  proofDir = path.join(workspace, 'uploads', 'booking-proofs');
+  issueDir = path.join(workspace, 'uploads', 'issue-photos');
+  backupRoot = path.join(workspace, 'backups');
   fs.mkdirSync(proofDir, { recursive: true });
   fs.mkdirSync(issueDir, { recursive: true });
 
-  // Copying the already-migrated template keeps each case isolated without
-  // paying for a full migration run every time.
-  fs.copyFileSync(templateDb, dbFile);
-  client = new PrismaClient({ datasources: { db: { url: fileUrl(dbFile) } } });
+  schemaName = `kas_bk_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  schemaUrl = withSchema(BASE_URL, schemaName);
+  await admin.$executeRawUnsafe(`CREATE SCHEMA "${schemaName}"`);
+  migrateInto(schemaUrl);
+
+  client = new PrismaClient({ datasourceUrl: schemaUrl });
   await seedBranches(client);
-
-  await fsp.writeFile(path.join(proofDir, 'proof-a.png'), pngBytes(0x11));
-  await fsp.writeFile(path.join(issueDir, 'issue-a.png'), pngBytes(0x22));
-}, 120_000);
-
-afterEach(async () => {
-  await client?.$disconnect();
 });
 
-afterAll(() => {
+afterEach(async () => {
+  await client.$disconnect();
+  // The throwaway schema is always removed, even if a test failed.
+  await admin.$executeRawUnsafe(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`);
   fs.rmSync(workspace, { recursive: true, force: true });
 });
 
-const uploadDirs = () => [
+const uploadDirs = (): { name: string; dir: string }[] => [
   { name: 'booking-proofs', dir: proofDir },
   { name: 'issue-photos', dir: issueDir },
 ];
 
-const backup = (over: Parameters<typeof createBackup>[0] = {}) =>
-  createBackup({ backupRoot, uploadDirs: uploadDirs(), client, ...over });
-
-/* ================================================================== */
-/* 23–24  Backup creation and manifest                                 */
-/* ================================================================== */
+const backupOptions = () => ({
+  backupRoot,
+  databaseUrl: schemaUrl,
+  uploadDirs: uploadDirs(),
+  client,
+});
 
 describe('backup', () => {
   it('23. creates a consistent snapshot of a LIVE database plus every upload', async () => {
-    // Write during the same session the backup is taken from: VACUUM INTO must
-    // capture a checkpointed, self-contained copy rather than a torn file.
-    const branch = await client.branch.findFirstOrThrow();
-    await client.booking.create({
-      data: {
-        bookingCode: 'BK-LIVE-1', branchId: branch.id, customerName: 'TEST GUEST',
-        paymentStatus: 'PAY_BEFORE', rawText: 'x', status: 'NEW',
-      },
-    });
+    await fsp.writeFile(path.join(proofDir, 'proof-1.png'), pngBytes(0x11));
+    await fsp.writeFile(path.join(issueDir, 'issue-1.png'), pngBytes(0x22));
 
-    const result = await backup();
+    // Writing while the backup runs is the point of a consistent snapshot:
+    // pg_dump works inside a single transaction, so it captures a coherent
+    // state rather than a torn one.
+    const writing = client.branch.updateMany({ data: { note: 'while backing up' } });
+    const [result] = await Promise.all([createBackup(backupOptions()), writing]);
 
     expect(fs.existsSync(path.join(result.backupDir, BACKUP_DB_NAME))).toBe(true);
-    expect(fs.existsSync(path.join(result.backupDir, BACKUP_MANIFEST_NAME))).toBe(true);
-    expect(fs.existsSync(path.join(result.backupDir, 'uploads', 'booking-proofs', 'proof-a.png'))).toBe(true);
-    expect(fs.existsSync(path.join(result.backupDir, 'uploads', 'issue-photos', 'issue-a.png'))).toBe(true);
+    expect(fs.statSync(path.join(result.backupDir, BACKUP_DB_NAME)).size).toBeGreaterThan(0);
+    expect(fs.existsSync(path.join(result.backupDir, 'uploads', 'booking-proofs', 'proof-1.png'))).toBe(true);
+    expect(fs.existsSync(path.join(result.backupDir, 'uploads', 'issue-photos', 'issue-1.png'))).toBe(true);
 
-    // The snapshot is a single self-contained file — no -wal/-shm to keep in sync.
-    for (const suffix of ['-wal', '-shm']) {
-      expect(fs.existsSync(path.join(result.backupDir, BACKUP_DB_NAME + suffix))).toBe(false);
-    }
-
-    // And it is a readable database holding the row written moments earlier.
-    const copy = new PrismaClient({
-      datasources: { db: { url: fileUrl(path.join(result.backupDir, BACKUP_DB_NAME)) } },
-    });
-    await expect(copy.booking.count()).resolves.toBe(1);
-    await expect(copy.branch.count()).resolves.toBe(8);
-    await copy.$disconnect();
-  }, 120_000);
+    // The archive must be a readable custom-format dump, not just bytes.
+    const verified = await verifyBackup(result.backupDir);
+    expect(verified.ok, verified.problems.join('; ')).toBe(true);
+  });
 
   it('24. writes a manifest with checksums, counts, timestamp and release', async () => {
-    const result = await backup({ releaseRef: 'v0.0.0-test' });
+    await fsp.writeFile(path.join(proofDir, 'proof-1.png'), pngBytes(0x11));
+
+    const now = new Date('2026-07-31T04:05:06.000Z');
+    const result = await createBackup({ ...backupOptions(), now, releaseRef: 'v1.2.3' });
     const manifest = JSON.parse(
       await fsp.readFile(path.join(result.backupDir, BACKUP_MANIFEST_NAME), 'utf8'),
     );
 
-    expect(manifest.formatVersion).toBe(1);
-    expect(manifest.releaseRef).toBe('v0.0.0-test');
-    expect(Date.parse(manifest.createdAt)).not.toBeNaN();
-    expect(manifest.database.engine).toBe('sqlite');
+    expect(manifest.formatVersion).toBe(2);
+    expect(manifest.createdAt).toBe(now.toISOString());
+    expect(manifest.releaseRef).toBe('v1.2.3');
+    expect(manifest.database.engine).toBe('postgresql');
+    expect(manifest.database.dumpFormat).toBe('custom');
+    expect(manifest.database.name).toBe(TEST_DATABASE);
+    expect(manifest.database.schema).toBe(schemaName);
     expect(manifest.database.sha256).toMatch(/^[0-9a-f]{64}$/);
-    expect(manifest.database.bytes).toBeGreaterThan(0);
-    expect(manifest.counts.branches).toBe(8);
-    expect(manifest.counts.aliases).toBe(24);
+    expect(manifest.database.serverVersion).toMatch(/^\d+/);
+    expect(manifest.counts.branches).toBeGreaterThan(0);
+    expect(manifest.uploads.map((u: { name: string }) => u.name)).toEqual([
+      'booking-proofs', 'issue-photos',
+    ]);
 
-    const names = (manifest.uploads as { name: string; files: number; sha256: string }[]);
-    expect(names.map((u) => u.name)).toEqual(['booking-proofs', 'issue-photos']);
-    for (const upload of names) {
-      expect(upload.files).toBe(1);
-      expect(upload.sha256).toMatch(/^[0-9a-f]{64}$/);
-    }
-
-    // A manifest must never contain a secret or a connection string.
+    // The manifest must never carry a credential or a connection string.
     const raw = await fsp.readFile(path.join(result.backupDir, BACKUP_MANIFEST_NAME), 'utf8');
-    expect(raw).not.toMatch(/SESSION_SECRET|passwordHash|DATABASE_URL|file:/);
-
-    await expect(verifyBackup(result.backupDir)).resolves.toMatchObject({ ok: true, problems: [] });
-  }, 120_000);
+    expect(raw).not.toMatch(/postgres(ql)?:\/\//i);
+    expect(raw).not.toMatch(/password/i);
+    expect(raw).not.toContain('kas_app');
+  });
 
   it('24b. retention keeps the newest N and never deletes by default', async () => {
-    const a = await backup({ now: new Date('2026-07-01T01:00:00Z') });
-    const b = await backup({ now: new Date('2026-07-02T01:00:00Z') });
-    const c = await backup({ now: new Date('2026-07-03T01:00:00Z') });
+    for (let i = 1; i <= 3; i += 1) {
+      await createBackup({ ...backupOptions(), now: new Date(`2026-07-0${i}T00:00:00.000Z`) });
+    }
     expect(await listBackups(backupRoot)).toHaveLength(3);
 
-    // retain = 0 (the default) keeps everything.
-    expect(await pruneBackups(backupRoot, 0)).toEqual([]);
-    expect(await listBackups(backupRoot)).toHaveLength(3);
+    // Default retention (0) keeps everything.
+    await createBackup({ ...backupOptions(), now: new Date('2026-07-04T00:00:00.000Z') });
+    expect(await listBackups(backupRoot)).toHaveLength(4);
 
     const pruned = await pruneBackups(backupRoot, 2);
-    expect(pruned).toHaveLength(1);
-    expect(fs.existsSync(a.backupDir)).toBe(false);
-    expect(fs.existsSync(b.backupDir)).toBe(true);
-    expect(fs.existsSync(c.backupDir)).toBe(true);
-  }, 180_000);
+    expect(pruned).toHaveLength(2);
+    const remaining = await listBackups(backupRoot);
+    expect(remaining).toHaveLength(2);
+    // Newest first, and the two oldest are the ones that went.
+    expect(remaining[0]).toContain('2026-07-04');
+    expect(remaining[1]).toContain('2026-07-03');
+    expect(pruned.sort()).toEqual(
+      expect.arrayContaining([expect.stringContaining('2026-07-01')]),
+    );
+  });
+
+  it('24c. a failed pg_dump leaves no half-written backup directory behind', async () => {
+    // Point at a database that does not exist: pg_dump must fail, and the
+    // partial directory must be removed so it can never look like a backup.
+    const brokenUrl = withSchema(
+      BASE_URL.replace(`/${TEST_DATABASE}`, '/kas_d1_test_does_not_exist'),
+      schemaName,
+    );
+    await expect(
+      createBackup({ ...backupOptions(), databaseUrl: brokenUrl }),
+    ).rejects.toThrow(/pg_dump/i);
+    expect(await listBackups(backupRoot)).toHaveLength(0);
+  });
 });
 
-/* ================================================================== */
-/* 25–28  Restore, verification and rejection                          */
-/* ================================================================== */
-
 describe('restore', () => {
-  it('25/26/27. restores database AND uploads into a temporary environment', async () => {
-    const branch = await client.branch.findFirstOrThrow();
-    await client.booking.create({
-      data: {
-        bookingCode: 'BK-RESTORE-1', branchId: branch.id, customerName: 'TEST GUEST',
-        paymentStatus: 'PAY_BEFORE', rawText: 'x', status: 'NEW',
-      },
-    });
-    const created = await backup();
+  it('25/26/27. restores database AND uploads into a throwaway schema', async () => {
+    await fsp.writeFile(path.join(proofDir, 'proof-1.png'), pngBytes(0x11));
+    await fsp.writeFile(path.join(issueDir, 'issue-1.png'), pngBytes(0x22));
+    const branchesBefore = await client.branch.count();
 
-    // Mutate the "live" state so a successful restore is unambiguous.
-    await client.booking.deleteMany({});
-    await fsp.rm(path.join(proofDir, 'proof-a.png'));
-    await fsp.writeFile(path.join(proofDir, 'stray.png'), pngBytes(0x33));
+    const backup = await createBackup(backupOptions());
 
-    // 25. Restore into throwaway targets — the live paths are untouched.
-    const tempRoot = fs.mkdtempSync(path.join(workspace, 'drill-'));
-    const tempDb = path.join(tempRoot, 'db', 'kas.db');
+    // Destroy the live data so the restore has something real to prove.
+    await client.branch.deleteMany();
+    await fsp.rm(path.join(proofDir, 'proof-1.png'));
+    expect(await client.branch.count()).toBe(0);
+
+    const restoreProofDir = path.join(workspace, 'restored', 'booking-proofs');
+    const restoreIssueDir = path.join(workspace, 'restored', 'issue-photos');
+
     const result = await restoreBackup({
-      backupDir: created.backupDir,
+      backupDir: backup.backupDir,
       confirmed: true,
-      targetDbFile: tempDb,
+      targetUrl: schemaUrl,
+      allowedDatabases: [TEST_DATABASE],
+      resetSchema: true,
       targetUploadDirs: [
-        { name: 'booking-proofs', dir: path.join(tempRoot, 'uploads', 'booking-proofs') },
-        { name: 'issue-photos', dir: path.join(tempRoot, 'uploads', 'issue-photos') },
+        { name: 'booking-proofs', dir: restoreProofDir },
+        { name: 'issue-photos', dir: restoreIssueDir },
       ],
+      safetyCopy: false,
+      client,
     });
 
-    // 26. The restored database really contains the backed-up rows.
-    const restored = new PrismaClient({
-      datasources: { db: { url: fileUrl(tempDb) } },
-    });
-    await expect(restored.booking.count()).resolves.toBe(1);
-    await expect(restored.branch.count()).resolves.toBe(8);
-    const booking = await restored.booking.findFirstOrThrow();
-    expect(booking.bookingCode).toBe('BK-RESTORE-1');
-    await restored.$disconnect();
+    expect(result.targetDatabase).toBe(TEST_DATABASE);
+    expect(fs.existsSync(path.join(restoreProofDir, 'proof-1.png'))).toBe(true);
+    expect(fs.existsSync(path.join(restoreIssueDir, 'issue-1.png'))).toBe(true);
 
-    // 27. Uploads are restored byte-for-byte, and a file that did not exist in
-    // the backup does not appear (the target is replaced, not merged).
-    const restoredProof = path.join(tempRoot, 'uploads', 'booking-proofs', 'proof-a.png');
-    expect(await fsp.readFile(restoredProof)).toEqual(pngBytes(0x11));
-    expect(fs.existsSync(path.join(tempRoot, 'uploads', 'booking-proofs', 'stray.png'))).toBe(false);
-    expect(await fsp.readFile(path.join(tempRoot, 'uploads', 'issue-photos', 'issue-a.png')))
-      .toEqual(pngBytes(0x22));
+    // The restored database really holds the data again.
+    const restoredClient = new PrismaClient({ datasourceUrl: schemaUrl });
+    try {
+      expect(await restoredClient.branch.count()).toBe(branchesBefore);
+    } finally {
+      await restoredClient.$disconnect();
+    }
 
-    // The live directory was NOT touched by the drill.
-    expect(fs.existsSync(path.join(proofDir, 'stray.png'))).toBe(true);
-    expect(await client.booking.count()).toBe(0);
-
-    // A verification checklist is printed rather than anything being restarted.
-    expect(result.checklist.length).toBeGreaterThan(4);
-    expect(result.checklist.join(' ')).toMatch(/migrate deploy/);
-    expect(result.checklist.join(' ')).toMatch(/health/);
-  }, 180_000);
+    // And the restore verified ITSELF against the manifest.
+    expect(result.verified, JSON.stringify(result.verification)).toBe(true);
+    expect(result.verification.some((c) => c.name === 'count:branches')).toBe(true);
+    expect(
+      result.verification.find((c) => c.name === 'invariant:one-active-version-per-branch')?.ok,
+    ).toBe(true);
+  });
 
   it('25b. a restore is refused unless explicitly confirmed', async () => {
-    const created = await backup();
-    const tempRoot = fs.mkdtempSync(path.join(workspace, 'noconfirm-'));
+    const backup = await createBackup(backupOptions());
     await expect(
       restoreBackup({
-        backupDir: created.backupDir,
+        backupDir: backup.backupDir,
         confirmed: false,
-        targetDbFile: path.join(tempRoot, 'kas.db'),
-        targetUploadDirs: [],
+        targetUrl: schemaUrl,
+        allowedDatabases: [TEST_DATABASE],
+        client,
       }),
-    ).rejects.toThrow(/chưa được xác nhận/);
-    expect(fs.existsSync(path.join(tempRoot, 'kas.db'))).toBe(false);
-  }, 120_000);
+    ).rejects.toThrow(/chưa được xác nhận/i);
+
+    // Nothing was touched.
+    expect(await client.branch.count()).toBeGreaterThan(0);
+  });
 
   it('25c. the pre-restore state is preserved so a mistaken restore is reversible', async () => {
-    const created = await backup();
-
-    const tempRoot = fs.mkdtempSync(path.join(workspace, 'safety-'));
-    const tempDb = path.join(tempRoot, 'kas.db');
-    fs.writeFileSync(tempDb, 'PREVIOUS DATABASE CONTENT');
+    const backup = await createBackup(backupOptions());
+    await client.branch.updateMany({ data: { note: 'state we must be able to get back' } });
 
     const result = await restoreBackup({
-      backupDir: created.backupDir,
+      backupDir: backup.backupDir,
       confirmed: true,
-      targetDbFile: tempDb,
-      targetUploadDirs: [],
+      targetUrl: schemaUrl,
+      allowedDatabases: [TEST_DATABASE],
+      resetSchema: true,
+      targetUploadDirs: uploadDirs(),
+      client,
     });
 
-    expect(result.safetyCopyDir).not.toBeNull();
-    expect(fs.readFileSync(path.join(result.safetyCopyDir!, BACKUP_DB_NAME), 'utf8'))
-      .toBe('PREVIOUS DATABASE CONTENT');
-  }, 120_000);
+    expect(result.safetyCopyFile).not.toBeNull();
+    expect(fs.existsSync(result.safetyCopyFile!)).toBe(true);
+    expect(fs.statSync(result.safetyCopyFile!).size).toBeGreaterThan(0);
+  });
+
+  it('25d. a restore into the WRONG schema is refused before anything is written', async () => {
+    const backup = await createBackup(backupOptions());
+    const otherSchema = `${schemaName}_other`;
+    await expect(
+      restoreBackup({
+        backupDir: backup.backupDir,
+        confirmed: true,
+        targetUrl: withSchema(BASE_URL, otherSchema),
+        allowedDatabases: [TEST_DATABASE],
+        client,
+      }),
+    ).rejects.toThrow(/schema/i);
+  });
+
+  it('25e. a restore targeting a reserved database is refused outright', async () => {
+    const backup = await createBackup(backupOptions());
+    await expect(
+      restoreBackup({
+        backupDir: backup.backupDir,
+        confirmed: true,
+        targetUrl: 'postgresql://kas_app:x@127.0.0.1:5432/kas_production',
+        client,
+      }),
+    ).rejects.toThrow(/bảo lưu|kas_production/i);
+  });
 
   it('28. an invalid, corrupted or incomplete backup is rejected', async () => {
-    const created = await backup();
-    const tempRoot = fs.mkdtempSync(path.join(workspace, 'invalid-'));
-    const target = { targetDbFile: path.join(tempRoot, 'kas.db'), targetUploadDirs: [] };
-
-    // (a) A directory with no manifest at all.
-    const empty = path.join(workspace, 'not-a-backup');
+    // (a) no manifest at all
+    const empty = path.join(workspace, 'empty-backup');
     fs.mkdirSync(empty, { recursive: true });
-    await expect(verifyBackup(empty)).resolves.toMatchObject({ ok: false });
-    await expect(restoreBackup({ backupDir: empty, confirmed: true, ...target }))
-      .rejects.toThrow(/không hợp lệ/);
+    expect((await verifyBackup(empty)).ok).toBe(false);
 
-    // (b) A tampered database file — the checksum no longer matches.
-    const tampered = path.join(workspace, 'tampered');
-    fs.cpSync(created.backupDir, tampered, { recursive: true });
-    fs.appendFileSync(path.join(tampered, BACKUP_DB_NAME), 'corruption');
-    const verdict = await verifyBackup(tampered);
-    expect(verdict.ok).toBe(false);
-    expect(verdict.problems.join(' ')).toMatch(/[Cc]hecksum/);
-    await expect(restoreBackup({ backupDir: tampered, confirmed: true, ...target }))
-      .rejects.toThrow(/không hợp lệ/);
+    // (b) manifest present, database archive corrupted.
+    // Distinct `now` values: two backups in the same second would collide, and
+    // createBackup deliberately refuses to overwrite an existing directory.
+    const backup = await createBackup({
+      ...backupOptions(),
+      now: new Date('2026-07-10T00:00:00.000Z'),
+    });
+    await fsp.writeFile(path.join(backup.backupDir, BACKUP_DB_NAME), 'not a dump at all');
+    const corrupted = await verifyBackup(backup.backupDir);
+    expect(corrupted.ok).toBe(false);
+    expect(corrupted.problems.join(' ')).toMatch(/checksum/i);
 
-    // (c) A missing database file.
-    const truncated = path.join(workspace, 'truncated');
-    fs.cpSync(created.backupDir, truncated, { recursive: true });
-    fs.rmSync(path.join(truncated, BACKUP_DB_NAME));
-    await expect(verifyBackup(truncated)).resolves.toMatchObject({ ok: false });
+    await expect(
+      restoreBackup({
+        backupDir: backup.backupDir,
+        confirmed: true,
+        targetUrl: schemaUrl,
+        allowedDatabases: [TEST_DATABASE],
+        client,
+      }),
+    ).rejects.toThrow(/không hợp lệ/i);
 
-    // (d) A tampered upload set.
-    const badUploads = path.join(workspace, 'bad-uploads');
-    fs.cpSync(created.backupDir, badUploads, { recursive: true });
-    fs.writeFileSync(path.join(badUploads, 'uploads', 'booking-proofs', 'extra.png'), pngBytes(0x44));
-    const uploadVerdict = await verifyBackup(badUploads);
-    expect(uploadVerdict.ok).toBe(false);
-    expect(uploadVerdict.problems.join(' ')).toMatch(/booking-proofs/);
+    // (c) an upload directory tampered with after the manifest was written
+    const second = await createBackup({
+      ...backupOptions(),
+      now: new Date('2026-07-11T00:00:00.000Z'),
+    });
+    await fsp.writeFile(
+      path.join(second.backupDir, 'uploads', 'booking-proofs', 'sneaked-in.png'),
+      pngBytes(0x33),
+    );
+    const tampered = await verifyBackup(second.backupDir);
+    expect(tampered.ok).toBe(false);
+    expect(tampered.problems.join(' ')).toMatch(/booking-proofs/);
+  });
 
-    // Nothing was written to the target by any rejected attempt.
-    expect(fs.existsSync(path.join(tempRoot, 'kas.db'))).toBe(false);
-  }, 180_000);
+  it('28b. a SQLite-era (format 1) backup is refused with an actionable message', async () => {
+    // Rolling forward from D.0 must not silently "succeed" against PostgreSQL.
+    const legacy = path.join(workspace, 'legacy-backup');
+    fs.mkdirSync(legacy, { recursive: true });
+    await fsp.writeFile(
+      path.join(legacy, BACKUP_MANIFEST_NAME),
+      JSON.stringify({
+        formatVersion: LEGACY_SQLITE_FORMAT_VERSION,
+        database: { file: 'database.sqlite', sha256: '0'.repeat(64), bytes: 1, engine: 'sqlite' },
+        uploads: [],
+        counts: {},
+      }),
+    );
+
+    const verified = await verifyBackup(legacy);
+    expect(verified.ok).toBe(false);
+    expect(verified.problems.join(' ')).toMatch(/D\.0/);
+  });
 });

@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import { Router } from 'express';
-import { checkDatabase } from '../db/prisma';
-import { ApiError } from '../lib/errors';
+import { checkDatabase, checkMigrationsApplied } from '../db/prisma';
 import {
   BACKUP_DIR,
   ISSUE_UPLOAD_DIR,
@@ -14,11 +13,20 @@ import {
 export const healthRouter: Router = Router();
 
 /**
- * GET /api/health — liveness.
+ * GET /api/health — liveness, plus the one dependency the process cannot serve
+ * a single request without.
  *
- * Reports 200 only when the database actually answers a query; a process that
- * is up but cannot reach its database is not healthy and returns 503. This is
- * what the container health check and the reverse proxy poll.
+ * The PAYLOAD distinguishes the two things an operator needs to tell apart
+ * (D.1 §17): `process` is always reported as alive — if the process were not
+ * alive this endpoint would not answer at all, which is the other case — while
+ * `database` reports PostgreSQL connectivity separately. So "connection
+ * refused" means the process is down, and "503 with process.alive = true"
+ * means the process is up but PostgreSQL is not answering.
+ *
+ * The STATUS CODE keeps its established contract: 503 when the database is
+ * unreachable. The container HEALTHCHECK, the Caddy upstream probe and
+ * scripts/production/health-check.sh all key off that, and an app that cannot
+ * reach its database genuinely must not receive traffic.
  */
 healthRouter.get('/health', async (_req, res, next) => {
   try {
@@ -26,20 +34,27 @@ healthRouter.get('/health', async (_req, res, next) => {
     const databaseOk = await checkDatabase();
     const databaseLatencyMs = Date.now() - startedAt;
 
+    const body = {
+      status: databaseOk ? 'ok' : 'degraded',
+      uptimeSeconds: Math.round(process.uptime()),
+      timestamp: new Date().toISOString(),
+      // Liveness: reaching this line at all proves the process is serving.
+      process: { alive: true, pid: process.pid },
+      database: {
+        connected: databaseOk,
+        engine: 'postgresql',
+        latencyMs: databaseLatencyMs,
+      },
+    };
+
     if (!databaseOk) {
-      next(new ApiError('SERVICE_UNAVAILABLE', 'Không kết nối được cơ sở dữ liệu.'));
+      // A structured 503 rather than a bare error envelope: the operator needs
+      // to see WHICH half is broken. No connection string, no driver message.
+      res.status(503).json(body);
       return;
     }
 
-    res.json({
-      status: 'ok',
-      uptimeSeconds: Math.round(process.uptime()),
-      timestamp: new Date().toISOString(),
-      database: {
-        connected: true,
-        latencyMs: databaseLatencyMs,
-      },
-    });
+    res.json(body);
   } catch (error) {
     next(error);
   }
@@ -86,6 +101,22 @@ healthRouter.get('/ready', async (_req, res) => {
     ok: databaseOk,
     ...(databaseOk ? {} : { detail: 'không phản hồi' }),
   });
+
+  // A reachable PostgreSQL is not the same as a MIGRATED one. After the D.1
+  // cutover it is entirely possible to point the app at a database that exists
+  // but has never had `prisma migrate deploy` run against it; every request
+  // would then fail at its first query. Readiness catches that here instead.
+  // The detail never names a migration — readiness is often reachable.
+  if (databaseOk) {
+    const migrationsOk = await checkMigrationsApplied();
+    checks.push({
+      name: 'migrations',
+      ok: migrationsOk === true,
+      ...(migrationsOk === true ? {} : { detail: 'schema chưa được triển khai đầy đủ' }),
+    });
+  } else {
+    checks.push({ name: 'migrations', ok: false, detail: 'không kiểm tra được' });
+  }
 
   checks.push(checkWritableDir('proofUploads', PROOF_UPLOAD_DIR));
   checks.push(checkWritableDir('issueUploads', ISSUE_UPLOAD_DIR));

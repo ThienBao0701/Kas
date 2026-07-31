@@ -46,7 +46,11 @@ let ownBranchId: number;
 const PRODUCTION_ENV: NodeJS.ProcessEnv = {
   NODE_ENV: 'production',
   PORT: '3001',
-  DATABASE_URL: 'file:/data/db/kas.db',
+  // PostgreSQL 17 since Phase D.1. The password is a placeholder and the host
+  // is loopback: this fixture is never connected to, only validated. Note the
+  // percent-encoded '@' — the fixture deliberately exercises the encoding rule
+  // that a real deployment must follow.
+  DATABASE_URL: 'postgresql://kas_app:pl%40ceholder@127.0.0.1:5432/kas',
   APP_ORIGIN: 'https://dispatch.example.invalid',
   SESSION_SECRET: 'f'.repeat(64),
   SESSION_COOKIE_SECURE: 'true',
@@ -99,6 +103,34 @@ describe('production configuration', () => {
       expect(result.env.SESSION_COOKIE_SECURE).toBe(true);
       expect(result.env.TRUST_PROXY).toBe(1);
     }
+  });
+
+  it('1b. production refuses a SQLite DATABASE_URL, and never echoes the URL', () => {
+    // The D.0 pilot shape must not be able to boot a production process after
+    // the D.1 cutover: it would silently start the app on an empty local
+    // database instead of PostgreSQL.
+    const sqlite = parseEnvironment(prod({ DATABASE_URL: 'file:/data/db/kas.db' }));
+    expect(sqlite.success).toBe(false);
+    expect(errorFor(sqlite, 'DATABASE_URL')).toContain('postgresql');
+
+    // A malformed URL is reported by NAME only — never by value, because the
+    // value carries the database password.
+    const secret = 'postgresql://kas_app:sup3r-s3cret-value@127.0.0.1:5432';
+    const malformed = parseEnvironment(prod({ DATABASE_URL: secret }));
+    expect(malformed.success).toBe(false);
+    const joined = malformed.success ? '' : malformed.errors.join('\n');
+    expect(joined).not.toContain('sup3r-s3cret-value');
+    expect(joined).not.toContain(secret);
+    expect(errorFor(malformed, 'DATABASE_URL')).toContain('percent-encode');
+
+    // Outside production a file: URL is still accepted, because the transfer
+    // tool has to be able to open the legacy pilot database.
+    const dev = parseEnvironment({
+      NODE_ENV: 'development',
+      DATABASE_URL: 'file:./data.db',
+      SESSION_SECRET: 'x'.repeat(20),
+    });
+    expect(dev.success).toBe(true);
   });
 
   it('2. every required variable is named when missing, without echoing secrets', () => {
@@ -310,15 +342,76 @@ describe('production database bootstrap', () => {
     // production code touches therefore already exists here.
     const dir = path.join(__dirname, '..', '..', 'prisma', 'migrations');
     const migrations = fs.readdirSync(dir).filter((d) => /^\d{14}_/.test(d));
-    expect(migrations.length).toBeGreaterThanOrEqual(10);
+
+    // Phase D.1 replaced the eleven SQLite migrations with a deterministic
+    // PostgreSQL baseline, so a COUNT proves nothing any more. What matters is
+    // asserted directly instead.
+    expect(migrations.length).toBeGreaterThanOrEqual(1);
     for (const m of migrations) {
       expect(fs.existsSync(path.join(dir, m, 'migration.sql')), m).toBe(true);
     }
-    expect(migrations.some((m) => m.includes('branch_management'))).toBe(true);
+
+    // The engine the migration history is locked to must be PostgreSQL: a lock
+    // file still saying "sqlite" makes `migrate deploy` refuse to run at all.
+    const lock = fs.readFileSync(path.join(dir, 'migration_lock.toml'), 'utf8');
+    expect(lock).toContain('provider = "postgresql"');
+
+    // The SQLite history must be archived, NOT deleted — it is still the
+    // definition of the source database the D.1 transfer tool reads.
+    const legacyDir = path.join(__dirname, '..', '..', 'prisma', 'legacy-sqlite', 'migrations');
+    expect(fs.existsSync(legacyDir)).toBe(true);
+    const legacy = fs.readdirSync(legacyDir).filter((d) => /^\d{14}_/.test(d));
+    expect(legacy.length).toBeGreaterThanOrEqual(10);
+    expect(legacy.some((m) => m.includes('branch_management'))).toBe(true);
+    expect(legacy.some((m) => m.includes('branch_room_class_versioning'))).toBe(true);
+
+    // ...and it must never be executed against PostgreSQL. The archived files
+    // use SQLite's table-rebuild idiom, which would be catastrophic here.
+    //
+    // `--` comments are stripped first: the PostgreSQL migrations DESCRIBE the
+    // SQLite idiom in their header comments, and matching that prose would be
+    // a false positive. Only executable SQL is checked.
+    const executableSql = migrations
+      .map((m) => fs.readFileSync(path.join(dir, m, 'migration.sql'), 'utf8'))
+      .join('\n')
+      .split('\n')
+      .filter((line) => !line.trimStart().startsWith('--'))
+      .join('\n');
+    expect(executableSql).not.toMatch(/PRAGMA/i);
+    expect(executableSql).not.toMatch(/\bDATETIME\b/);
+    expect(executableSql).not.toMatch(/\bAUTOINCREMENT\b/i);
+    // Positive control: the stripper must not have eaten the real statements.
+    expect(executableSql).toMatch(/CREATE TABLE "Booking"/);
+    expect(executableSql).toMatch(/CREATE TYPE "BookingStatus"/);
 
     // Prove the newest tables really are present on this freshly migrated DB.
     await expect(testPrisma.branchSourceAlias.count()).resolves.toBeGreaterThanOrEqual(0);
     await expect(testPrisma.branchChangeLog.count()).resolves.toBeGreaterThanOrEqual(0);
+    await expect(testPrisma.branchRoomClass.count()).resolves.toBeGreaterThanOrEqual(0);
+    await expect(testPrisma.bookingGuest.count()).resolves.toBeGreaterThanOrEqual(0);
+    await expect(testPrisma.bookingAuditEvent.count()).resolves.toBeGreaterThanOrEqual(0);
+  });
+
+  it('10b. the C.3.8 and D.1 invariants exist as real database indexes', async () => {
+    // These are the constraints that application code alone cannot guarantee
+    // once eight branches write concurrently. They must exist in the DATABASE.
+    const indexes = await testPrisma.$queryRaw<{ indexname: string; indexdef: string }[]>`
+      SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = current_schema()
+    `;
+    const byName = new Map(indexes.map((i) => [i.indexname, i.indexdef]));
+
+    const activeVersion = byName.get('BranchRoomMappingVersion_one_active_per_branch');
+    expect(activeVersion, 'one-ACTIVE-version-per-branch index is missing').toBeTruthy();
+    expect(activeVersion).toMatch(/UNIQUE/i);
+    expect(activeVersion).toMatch(/WHERE/i);
+
+    const primaryGuest = byName.get('BookingGuest_one_primary_per_booking');
+    expect(primaryGuest, 'one-primary-guest-per-booking index is missing').toBeTruthy();
+    expect(primaryGuest).toMatch(/UNIQUE/i);
+
+    const operationalBooking = byName.get('Booking_one_operational_per_code_branch_checkin');
+    expect(operationalBooking, 'operational duplicate-booking index is missing').toBeTruthy();
+    expect(operationalBooking).toMatch(/UNIQUE/i);
   });
 
   it('11. the production bootstrap is idempotent', async () => {
@@ -522,7 +615,16 @@ describe('health, readiness and storage', () => {
     expect(res.body.status).toBe('ok');
     expect(res.body.database.connected).toBe(true);
     // Unauthenticated on purpose: the container probe has no session.
-    expect(JSON.stringify(res.body)).not.toMatch(/DATABASE_URL|SESSION_SECRET|passwordHash|file:/);
+    const body = JSON.stringify(res.body);
+    expect(body).not.toMatch(/DATABASE_URL|SESSION_SECRET|passwordHash|file:/);
+    // Since D.1 the connection URL carries a password, so the probe payload
+    // must not contain a connection string, a host:port, or a credential.
+    expect(body).not.toMatch(/postgres(ql)?:\/\//i);
+    expect(body).not.toMatch(/kas_app/);
+    expect(body).not.toMatch(/5432/);
+    // Liveness and database readiness are reported as separate facts (D.1 §17).
+    expect(res.body.process.alive).toBe(true);
+    expect(res.body.database.engine).toBe('postgresql');
   });
 
   it('20. GET /api/ready verifies the database and every writable directory', async () => {

@@ -1,10 +1,16 @@
 import path from 'node:path';
 import { defineConfig } from 'vitest/config';
+import { resolveTestDatabaseUrl } from './src/d1/testDatabase';
 
-// Tests run against their own throwaway SQLite file so development data is
-// never touched. The absolute path avoids ambiguity about which cwd Prisma
-// resolves a relative file: URL from.
-const testDbPath = path.join(__dirname, '.tmp', 'test.db');
+// Since Phase D.1 the suite runs against REAL PostgreSQL, in its own schema
+// inside the disposable kas_d1_test database — production runs on PostgreSQL,
+// and enum handling, concurrent writes, partial unique indexes and sequence
+// allocation all behave differently on SQLite. The URL comes from
+// .env.d1.local (git-ignored) or KAS_TEST_DATABASE_URL; no password is ever
+// written into this file.
+const repoRoot = path.resolve(__dirname, '..');
+const testDatabaseUrl = resolveTestDatabaseUrl(repoRoot);
+
 // Proof screenshots land in a throwaway dir so the suite never writes into the
 // real server/uploads tree.
 const testProofDir = path.join(__dirname, '.tmp', 'proof-uploads');
@@ -14,8 +20,11 @@ export default defineConfig({
   test: {
     environment: 'node',
     globalSetup: ['./tests/setup/globalSetup.ts'],
-    // SQLite is a single file with writer locking; serial runs keep the
-    // constraint tests deterministic.
+    // The suite shares ONE PostgreSQL schema, and most files reset it in
+    // beforeEach. Running files in parallel would let one file's reset delete
+    // another file's fixtures mid-test. Kept serial for determinism; the
+    // dedicated concurrency suite opens its own extra connections explicitly
+    // when it needs two writers at once.
     fileParallelism: false,
     // Generous margin: this can run on a CPU-contended VM where a bcrypt-backed
     // login is occasionally slow. Well above real durations, still catches hangs.
@@ -23,10 +32,10 @@ export default defineConfig({
     // beforeEach resets the DB, re-seeds branches and logs in several agents;
     // under full-suite load on a contended VM that can momentarily exceed the
     // 10s default. Match the test timeout so a slow reset is not a false failure.
-    hookTimeout: 20000,
+    hookTimeout: 30000,
     env: {
       NODE_ENV: 'test',
-      DATABASE_URL: `file:${testDbPath.split(path.sep).join('/')}`,
+      DATABASE_URL: testDatabaseUrl,
       SESSION_SECRET: 'test-session-secret-value',
       // Cheapest valid bcrypt cost so hashing does not dominate the suite.
       BCRYPT_COST: '4',

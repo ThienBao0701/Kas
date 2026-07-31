@@ -5,10 +5,15 @@
 #   app    : Express API + built React client on one internal port. Never
 #            published to the host, so it is unreachable except through Caddy.
 #
-# There is no database container: this milestone ships the hardened SQLite
-# PILOT. The database file lives on the `kas-db` volume, never inside the
-# container filesystem. See docs/production-deployment.md for the explicit
-# scope of that decision and what a PostgreSQL milestone would change here.
+# There is still NO database container. Since Phase D.1 the database is
+# PostgreSQL 17 installed directly on the Windows host, which is the supported
+# production path (docs/postgresql-migration.md). Docker remains an optional
+# secondary deployment path and connects OUT to that host PostgreSQL through
+# `host.docker.internal`; it never runs its own database, so there is exactly
+# one copy of the data and exactly one thing to back up.
+#
+# DATABASE_URL therefore carries a password and CANNOT be written here. It is
+# supplied as a Docker secret file, like every other secret in this stack.
 #
 #   docker compose -f compose.production.yml config      # validate
 #   docker compose -f compose.production.yml up -d       # start
@@ -29,8 +34,10 @@ services:
       NODE_ENV: production
       PORT: "3001"
       SERVE_CLIENT: "true"
-      # SQLite file on the persistent kas-db volume — never in the container.
-      DATABASE_URL: "file:/data/db/kas.db"
+      # PostgreSQL 17 on the host. The URL contains a password, so it arrives as
+      # a secret FILE (DATABASE_URL_FILE) rather than an environment value —
+      # keeping it out of `docker inspect` and out of this repository.
+      DATABASE_URL_FILE: /run/secrets/database_url
       APP_ORIGIN: ${APP_ORIGIN:?APP_ORIGIN is required, e.g. https://dispatch.example.com}
       # Exactly one proxy (caddy) sits in front of this process.
       TRUST_PROXY: "1"
@@ -57,8 +64,12 @@ services:
     secrets:
       - session_secret
       - initial_admin_password
+      - database_url
+    # The database lives on the host, so the app container reaches it through
+    # the Docker host gateway rather than over the internal network.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
-      - kas-db:/data/db
       - kas-uploads:/data/uploads
       - kas-backups:/data/backups
     networks:
@@ -116,7 +127,6 @@ networks:
     driver: bridge
 
 volumes:
-  kas-db:
   kas-uploads:
   kas-backups:
   caddy-data:
@@ -127,3 +137,12 @@ secrets:
     file: ./secrets/session_secret
   initial_admin_password:
     file: ./secrets/initial_admin_password
+  # ONE line holding the PostgreSQL connection URL, in this shape:
+  #   scheme "postgresql", user "kas_app", the URL-encoded password,
+  #   host "host.docker.internal", port 5432, database "kas".
+  # No credential-shaped URL is written in this repository on purpose — see
+  # docs/postgresql-migration.md for the exact literal to put in the file.
+  # Reserved characters in the password (@ : / ? # % [ ] & and space) MUST be
+  # percent-encoded or the URL resolves to a different host or database.
+  database_url:
+    file: ./secrets/database_url

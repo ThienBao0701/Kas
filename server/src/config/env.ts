@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import dotenv from 'dotenv';
 import { z } from 'zod';
+import { describeDatabaseUrl } from './databaseUrl';
 
 // The single .env lives at the repository root, while this code runs with the
 // server workspace as cwd (src in dev, dist in production) — resolve explicitly.
@@ -61,7 +62,31 @@ const envSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
     PORT: z.coerce.number().int().positive().max(65535).default(3001),
-    DATABASE_URL: z.string().min(1, 'DATABASE_URL is required (example: file:./data.db)'),
+
+    /**
+     * PostgreSQL connection URL, e.g.
+     * `postgresql://kas_app:<encoded>@127.0.0.1:5432/kas`.
+     *
+     * Reserved characters in the password (`@ : / ? # % [ ] &` and space) MUST
+     * be percent-encoded, otherwise the URL parses into a different host or
+     * database and fails with a confusing "database does not exist" rather
+     * than an authentication error.
+     *
+     * A `file:` URL is still accepted outside production so the legacy SQLite
+     * pilot database can be opened by the transfer tool, but production
+     * refuses to boot on anything but PostgreSQL (checked below).
+     */
+    DATABASE_URL: z
+      .string()
+      .min(1, 'DATABASE_URL is required (example: postgresql://user:pass@127.0.0.1:5432/kas)'),
+
+    /**
+     * Optional un-pooled connection used only by schema migrations. It exists
+     * for a future deployment behind PgBouncer; with PostgreSQL running
+     * directly on the Windows host there is no pooler, so leaving this unset
+     * is correct and `DATABASE_URL` is used for migrations too.
+     */
+    DIRECT_DATABASE_URL: z.string().min(1).optional(),
 
     /**
      * The exact public origin the app is served from, e.g.
@@ -123,8 +148,8 @@ const envSchema = z
     BCRYPT_COST: z.coerce.number().int().min(4).max(15).default(10),
 
     // Where proof-of-creation screenshots are stored on the server filesystem.
-    // Only metadata + a safe relative path live in SQLite; never the image bytes.
-    // Relative values are resolved against the repository root.
+    // Only metadata + a safe relative path live in the database; never the
+    // image bytes. Relative values are resolved against the repository root.
     PROOF_UPLOAD_DIR: z.string().min(1).default('server/uploads/booking-proofs'),
     // Where receptionist issue-report photos are stored (same rules as proofs).
     ISSUE_UPLOAD_DIR: z.string().min(1).default('server/uploads/issue-photos'),
@@ -144,11 +169,33 @@ const envSchema = z
     PROOF_OCR_LANGUAGE: z.string().min(1).default('eng+vie'),
   })
   .superRefine((value, ctx) => {
-    if (value.NODE_ENV !== 'production') return;
-
     const fail = (path: string, message: string): void => {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: [path], message });
     };
+
+    // Applies in EVERY environment: a URL we cannot parse is a configuration
+    // bug, and the message must describe the shape without echoing the value
+    // (it carries the password).
+    const target = describeDatabaseUrl(value.DATABASE_URL);
+    if (target.kind === 'unknown') {
+      fail('DATABASE_URL', 'DATABASE_URL must be a postgresql:// URL (or a file: URL outside production)');
+    } else if (target.malformed) {
+      fail(
+        'DATABASE_URL',
+        target.kind === 'postgresql'
+          ? 'DATABASE_URL is missing a database name, or reserved characters in the password are not percent-encoded'
+          : 'DATABASE_URL is not a usable file: path',
+      );
+    }
+
+    if (value.NODE_ENV !== 'production') return;
+
+    // Production runs on PostgreSQL 17. The SQLite pilot shape must not boot a
+    // production process by accident after the D.1 cutover — a `file:` URL
+    // there would silently start the app on an empty local database.
+    if (target.kind !== 'postgresql') {
+      fail('DATABASE_URL', 'DATABASE_URL must be a postgresql:// URL in production (SQLite is pilot-only)');
+    }
 
     // A missing initial-admin variable must never silently create a predictable
     // default account, so fail configuration validation instead.
@@ -286,13 +333,23 @@ export const MAX_UPLOAD_BYTES = env.MAX_UPLOAD_MB * 1024 * 1024;
 export const serveClient = env.SERVE_CLIENT ?? isProduction;
 
 /**
- * Absolute path of the SQLite database file, or null when DATABASE_URL is not a
+ * Absolute path of a SQLite database file, or null when the URL is not a
  * `file:` URL. Prisma resolves a relative `file:` path from the schema's own
- * directory (`prisma/`), so the same rule is applied here — this is the single
- * place that mapping lives, used by the health probe, backup and restore.
+ * directory (`prisma/`), so the same rule is applied here.
+ *
+ * Since Phase D.1 this is LEGACY-ONLY: production runs on PostgreSQL and the
+ * backup/restore path is pg_dump/pg_restore. The single remaining caller is
+ * the SQLite→PostgreSQL transfer tool, which opens the pilot database
+ * READ-ONLY as a migration source.
  */
 export function sqliteFilePath(databaseUrl: string = env.DATABASE_URL): string | null {
   if (!databaseUrl.startsWith('file:')) return null;
   const raw = databaseUrl.slice('file:'.length);
   return path.isAbsolute(raw) ? raw : path.resolve(REPO_ROOT, 'prisma', raw);
 }
+
+/** The connection target of the running process, with no credentials in it. */
+export const databaseTarget = describeDatabaseUrl(env.DATABASE_URL);
+
+/** Whether this process is talking to PostgreSQL (as production always does). */
+export const isPostgres = databaseTarget.kind === 'postgresql';

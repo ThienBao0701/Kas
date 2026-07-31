@@ -610,7 +610,6 @@ describe('branch management — developer tools stay dynamic', () => {
       confirmed: true,
       backupRoot,
       doBackup: false,
-      dbFilePath: null,
       uploadDirs: [],
       client: testPrisma,
     });
