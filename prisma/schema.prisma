@@ -189,6 +189,13 @@ enum PlatformIdentityAction {
   IDENTITY_CONFIRMED
 }
 
+/// What happened to one OTA room mapping. Immutable audit trail.
+enum OtaRoomMappingAction {
+  MAPPING_CREATED
+  MAPPING_UPDATED
+  MAPPING_DELETED
+}
+
 /// What changed on a branch (audit trail for Admin branch management).
 /// The ROOM_MAPPING_* / ROOM_CLASS_* members extend the SAME audit trail to
 /// branch room-class configuration — room classes are branch configuration, so
@@ -335,6 +342,7 @@ model User {
   issuesResolved        HotelIssue[]               @relation("IssueResolvedBy")
   branchChanges         BranchChangeLog[]
   identityEvents        BranchPlatformIdentityEvent[]
+  otaRoomMappingEvents  BranchOtaRoomMappingEvent[]
   roomMappingsCreated   BranchRoomMappingVersion[] @relation("RoomMappingCreatedBy")
   roomMappingsActivated BranchRoomMappingVersion[] @relation("RoomMappingActivatedBy")
   bookingAuditEvents    BookingAuditEvent[]
@@ -419,6 +427,8 @@ model Branch {
   aliases             BranchSourceAlias[]
   platformIdentities  BranchPlatformIdentity[]
   identityEvents      BranchPlatformIdentityEvent[]
+  otaRoomMappings     BranchOtaRoomMapping[]
+  otaRoomMappingEvents BranchOtaRoomMappingEvent[]
   changeLogs          BranchChangeLog[]
   roomMappingVersions BranchRoomMappingVersion[]
   roomClasses         BranchRoomClass[]
@@ -663,6 +673,74 @@ model BranchPlatformIdentityEvent {
   @@index([branchId, createdAt])
   @@index([platform, createdAt])
   @@index([action])
+}
+
+/// How ONE room name shown on ONE platform maps to a branch's internal PMS code.
+///
+/// Separate from `BranchRoomClass`, which is the branch's own versioned room
+/// CATALOGUE. This table answers a different question: "when Agoda calls a room
+/// «Phòng Queen Superior Có Cửa Sổ», which of this branch's PMS codes is that?"
+/// The same physical class is named differently by each OTA, and the same OTA
+/// name can mean different classes at different branches — so the mapping is
+/// keyed by (branch, platform, OTA name) and never by name alone.
+///
+/// AGODA AND CTRIP ARE INDEPENDENT ROWS even where the names are identical
+/// today. Sharing one row would mean renaming a room on Agoda silently changed
+/// what a CTrip booking resolves to.
+///
+/// `pmsCode` is a plain string rather than a foreign key to BranchRoomClass on
+/// purpose: room classes are versioned and archived, and a mapping must keep
+/// naming the same operational code across a catalogue re-version. The seed and
+/// the API both validate the code against the branch's ACTIVE catalogue.
+model BranchOtaRoomMapping {
+  id       String      @id @default(cuid())
+  branchId Int
+  platform OtaPlatform
+  /// Exactly as the platform displays it — never normalised for storage.
+  otaRoomName String
+  /// Case/accent/whitespace/punctuation-folded form used for lookup.
+  normalizedOtaRoomName String
+  /// The platform's own room-type identifier when one is known (Agoda supplies
+  /// these). Null when the platform has not given us a real identifier — never
+  /// borrowed from another platform.
+  otaRoomTypeId String?
+  /// The branch's internal PMS code, e.g. STAN, SUP, LUXDEL, PRE_DD.
+  pmsCode String
+  active  Boolean @default(true)
+
+  createdByUserId Int?
+  updatedByUserId Int?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  /// One current mapping per OTA room name, per platform, per branch.
+  @@unique([branchId, platform, normalizedOtaRoomName])
+  @@index([branchId, platform])
+  @@index([platform, normalizedOtaRoomName])
+}
+
+/// Immutable history of every OTA room-mapping change.
+model BranchOtaRoomMappingEvent {
+  id       String              @id @default(cuid())
+  branchId Int
+  platform OtaPlatform
+  action   OtaRoomMappingAction
+  otaRoomName String
+  oldPmsCode  String?
+  newPmsCode  String?
+  reason        String?
+  actorUserId   Int?
+  actorRole     UserRole?
+  correlationId String?
+  createdAt     DateTime @default(now())
+
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  actor  User?  @relation(fields: [actorUserId], references: [id])
+
+  @@index([branchId, createdAt])
+  @@index([platform, createdAt])
 }
 
 /// Immutable audit trail of Admin branch/alias configuration changes. Values are
