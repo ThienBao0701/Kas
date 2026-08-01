@@ -79,6 +79,23 @@ const KNOWN_LABELS: readonly RegExp[] = [
   /^cancellation policy$/,
   /^reference sell rate.*$/,
   /^net rate.*$/,
+  // ── Vietnamese labels (folded: accent-free, lower-case) ──────────────────
+  // Agoda prints these BESIDE the English label. Without them a bilingual row
+  // such as "Booking ID | Ma so dat phong" hands back the Vietnamese label as
+  // if it were the value.
+  /^ma so dat phong$/,
+  /^loai phong$/,
+  /^so phong$/,
+  /^so luong phong$/,
+  /^ten khach( hang)?$/,
+  /^ngay nhan phong$/,
+  /^ngay tra phong$/,
+  /^khach kh?ac$/,
+  /^quoc gia cu tru$/,
+  /^suc chua$/,
+  /^gia thuc te.*$/,
+  /^gia ban tham khao.*$/,
+  /^hoa hong$/,
   /^commission$/,
   /^compensation$/,
   /^other programs$/,
@@ -94,7 +111,23 @@ const KNOWN_LABELS: readonly RegExp[] = [
   /^hotel name$/,
 ];
 
+/**
+ * Vietnamese labels whose ACCENT-FREE form collides with a real value.
+ *
+ * "Họ" is the surname label, and it folds to "ho" — which is also how a guest
+ * surnamed HO is written. Treating the folded form as a label made every such
+ * guest lose their surname (the confirmed booking's THU UYEN HO became THU
+ * UYEN), so these are matched with their diacritics intact.
+ */
+const ACCENTED_LABELS: readonly string[] = ['họ', 'họ khách'];
+
 function isKnownLabel(cell: string): boolean {
+  const exact = cell
+    .toLowerCase()
+    .replace(/\s*:\s*$/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (ACCENTED_LABELS.includes(exact)) return true;
   const f = fold(cell).replace(/\s*:\s*$/, '');
   return KNOWN_LABELS.some((p) => p.test(f));
 }
@@ -144,12 +177,17 @@ function labelValue(all: string[], labelPattern: RegExp): string | null {
       const neighbour = row[c + 1];
       if (neighbour && !isKnownLabel(neighbour)) return neighbour;
 
-      // A lone label line: the value is the next non-empty line's first cell.
-      if (row.length === 1) {
+      // A row that is ONLY labels — a lone label, or Agoda's bilingual
+      // "Booking ID | Mã số đặt phòng" — puts its values on the next line. The
+      // value is taken from the SAME COLUMN, so "Check-in | Check-out" above
+      // two dates gives each label its own date instead of both taking the
+      // first one.
+      if (row.every((other, idx) => idx === c || isKnownLabel(other))) {
         const j = nextNonEmpty(all, i + 1);
         if (j >= 0) {
-          const first = cells(all[j]!)[0];
-          if (first && !isKnownLabel(first)) return first;
+          const valueRow = cells(all[j]!);
+          const value = valueRow[c] ?? (valueRow.length === 1 ? valueRow[0] : undefined);
+          if (value && !isKnownLabel(value)) return value;
         }
       }
       return null;
@@ -236,6 +274,77 @@ export function normalizeRoomType(raw: string | null | undefined): string {
   );
 }
 
+/**
+ * The OTA room name as the mapping catalogue holds it.
+ *
+ * Agoda appends a numeric STYLE marker to the room row — "Superior Room (2)",
+ * "Standard (0)". It is not a quantity and not part of the name, so only a
+ * TRAILING marker is removed. Everything else is preserved verbatim: accents,
+ * capitalisation and any parenthesised text that is genuinely part of the name
+ * ("Phòng Superior Có Cửa Sổ (Giường Queen)") stay exactly as written, because
+ * this string is the key the branch's mappings are looked up by.
+ */
+export function normalizeOtaRoomName(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const value = raw
+    .replace(/\s*\(\s*\d+\s*\)\s*$/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return value.length > 0 ? value : null;
+}
+
+/**
+ * The guest's name, from the customer fields and the "Other Guests" list.
+ *
+ * Agoda states the name up to three times and rarely identically: the customer
+ * fields hold it split, while "Other Guests" repeats it decorated with a room
+ * marker and sometimes as "Guest of <name>". The decorations are stripped and
+ * the entries compared case-insensitively; when every entry turns out to name
+ * the SAME person, that spelling is used. Anything else — an empty list, or two
+ * genuinely different guests — falls back to "First Last", because guessing
+ * which of several people the booking is under is not the parser's decision.
+ */
+export function resolveAgodaGuestName(
+  firstName: string | null,
+  lastName: string | null,
+  otherGuests: string | null,
+): string | null {
+  const primary =
+    [firstName, lastName].filter((p) => p && p.trim().length > 0).join(' ').trim() || null;
+
+  // The customer fields WIN whenever they exist. "Other Guests" lists the
+  // occupants, which routinely includes a companion travelling on the same
+  // reservation; letting it override would rename the booking to whoever
+  // happened to be listed first.
+  if (primary) return primary;
+  if (!otherGuests) return null;
+
+  // With no customer name at all, the occupant list is the only evidence there
+  // is. It is used only when every entry, once stripped of its room marker and
+  // "Guest of" prefix, turns out to name the SAME person — two genuinely
+  // different guests leave the field empty for the Admin to fill.
+  const cleaned = otherGuests
+    .split(',')
+    .map((entry) =>
+      entry
+        // "[RmNo.1]" / "[RmNo 2]" — which room the guest occupies, not a name.
+        .replace(/\[\s*rm\s*no\.?\s*\d*\s*\]/gi, ' ')
+        .replace(/\bguest\s+of\b/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim(),
+    )
+    .filter((entry) => entry.length > 0);
+  if (cleaned.length === 0) return null;
+
+  // Deduplicate case-insensitively, keeping the FIRST spelling seen.
+  const byFolded = new Map<string, string>();
+  for (const entry of cleaned) {
+    const key = fold(entry);
+    if (key.length > 0 && !byFolded.has(key)) byFolded.set(key, entry);
+  }
+  return byFolded.size === 1 ? [...byFolded.values()][0]! : null;
+}
+
 export interface RoomCodeResult {
   /** The abbreviation, or null when the type is not in the controlled map. */
   code: string | null;
@@ -307,7 +416,14 @@ export function isAgodaEmail(rawText: string): boolean {
 export interface AgodaNightlyRate {
   /** ISO "YYYY-MM-DD". */
   stayDate: string;
+  /** Exactly as the source stated it — for several rooms this covers them all. */
   amount: number | null;
+  /**
+   * `amount` divided by the room count, for per-room display only. Null when
+   * the division is not exact, or when the room count is unknown. Never used
+   * for the note and never used for the booking total.
+   */
+  perRoomAmount?: number | null;
 }
 
 export interface AgodaPartnerBooking {
@@ -328,13 +444,16 @@ export interface AgodaPartnerBooking {
   checkOut: string | null;
   /** checkOut − checkIn in calendar days; null when either date is unusable. */
   nights: number | null;
+  /** The room row exactly as Agoda printed it, including any "(2)" marker. */
   roomTypeOriginal: string | null;
+  /** The same name with the trailing style marker removed — the mapping key. */
+  roomTypeNormalized: string | null;
   roomCode: string | null;
   roomTypeKnown: boolean;
   roomQuantity: number | null;
   occupancy: string | null;
   extraBeds: number | null;
-  /** True only when breakfast is genuinely included (drinks are not breakfast). */
+  /** Always false: these branches serve no breakfast on Agoda. */
   breakfastIncluded: boolean;
   payment: string | null;
   ratePlan: string | null;
@@ -359,6 +478,59 @@ export interface AgodaPartnerBooking {
 
 const warn = (code: string, message: string, severity: ExtractWarning['severity'] = 'WARNING'): ExtractWarning => ({ code, message, severity });
 
+/**
+ * Reads an Agoda date, which hyphenates its named-month form: "5-Aug-2026".
+ *
+ * The shared reader expects spaces around a named month, so only the hyphens
+ * SURROUNDING LETTERS are relaxed to spaces. A purely numeric "5-08-2026" is
+ * left untouched and keeps its day-first meaning — which is what makes
+ * "3-Aug-2026 (3-08-2026)" resolve through the parenthesised numeric form, as
+ * the operator specified.
+ *
+ * Deliberately local to Agoda: widening the shared reader would change how
+ * every other source, Booking.com included, interprets a hyphenated date.
+ */
+function agodaDate(raw: string): string | null {
+  return findDate(raw.replace(/(\d)\s*-\s*([A-Za-z]{3,9})\s*-\s*(\d{4})/g, '$1 $2 $3'));
+}
+
+/**
+ * True when a row states a date in words AND in numbers, and they differ.
+ *
+ * Agoda writes "3-Aug-2026 (3-08-2026)". `findDate` resolves the numeric form,
+ * which is the one to trust; this only detects the case where the words say
+ * something else, so the Admin is told rather than silently given one of two
+ * conflicting dates.
+ */
+function disagreesWithTextualDate(raw: string, iso: string): boolean {
+  const flat = removeDiacritics(raw).toLowerCase();
+  // "3-Aug-2026" / "3 Aug 2026" / "August 3, 2026" — a month written in letters.
+  const named =
+    /(\d{1,2})\s*[-\s]\s*([a-z]{3,9})\.?\s*[-,\s]\s*(\d{4})/.exec(flat) ??
+    /([a-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})/.exec(flat);
+  if (!named) return false;
+
+  const dayFirst = /^\d/.test(named[1]!);
+  const day = Number(dayFirst ? named[1] : named[2]);
+  const monthWord = dayFirst ? named[2]! : named[1]!;
+  const month = MONTH_NAMES[monthWord.slice(0, 3)];
+  if (!month) return false;
+  const year = Number(named[3]);
+
+  const expected = `${year}-${pad2(month)}-${pad2(day)}`;
+  return expected !== iso;
+}
+
+function pad2(n: number): string {
+  return n.toString().padStart(2, '0');
+}
+
+/** English month names and abbreviations, keyed by their first three letters. */
+const MONTH_NAMES: Readonly<Record<string, number>> = {
+  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+  jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+};
+
 /** Whole calendar days between two ISO dates, or null when invalid/negative. */
 export function nightsBetween(checkIn: string | null, checkOut: string | null): number | null {
   if (!checkIn || !checkOut) return null;
@@ -382,29 +554,86 @@ function findRate(all: string[], labelPattern: RegExp): number | null {
     const line = all[i]!;
     const folded = fold(line);
     if (!labelPattern.test(folded)) continue;
-    // The amount sits on the label line, or on the next non-empty line.
-    let amount = parseAgodaMoney(line);
-    if (amount == null) {
-      for (let j = i + 1; j < all.length && j <= i + 2; j++) {
-        if (all[j]!.length === 0) continue;
-        amount = parseAgodaMoney(all[j]!);
-        break;
-      }
-    }
+    const amount = readWrappedAmount(all, i);
     if (amount == null) continue;
-    (/incl/.test(folded) ? withIncl : plain).push(amount);
+    // "(incl. taxes & fees)" / "(bao gồm thuế & phí)" is the authoritative row.
+    (/incl|bao gom/.test(folded) ? withIncl : plain).push(amount);
   }
   // Prefer the "(incl. taxes & fees)" rows and take the LAST (the final total).
   const pool = withIncl.length > 0 ? withIncl : plain;
   return pool.length > 0 ? pool[pool.length - 1]! : null;
 }
 
+/** A line that is nothing but one or two digits. */
+const BARE_DIGITS = /^\d{1,2}$/;
+
+/**
+ * Rejoins a money value that a mail client wrapped across lines.
+ *
+ * Copying an Agoda rate row out of Gmail at a narrow width splits it, and the
+ * split can fall INSIDE the number:
+ *
+ *   Net rate (incl. taxes & fees)
+ *   VND
+ *   2,012,236.0
+ *   0
+ *
+ * Reading only the next line yields nothing; reading "2,012,236.0" on its own
+ * yields 20,122,360 — an order of magnitude wrong, and it would be pasted into
+ * the hotel PMS. A stray one-or-two-digit line is therefore treated as the
+ * CONTINUATION of the preceding number rather than as a value of its own, but
+ * only when that number already ends in a decimal separator plus a digit, so
+ * two genuinely separate amounts are never glued together.
+ */
+function joinWrappedParts(parts: readonly string[]): string {
+  const out: string[] = [];
+  for (const part of parts) {
+    const previous = out[out.length - 1];
+    if (previous !== undefined && BARE_DIGITS.test(part) && /[.,]\d{1,2}$/.test(previous)) {
+      out[out.length - 1] = previous + part;
+      continue;
+    }
+    out.push(part);
+  }
+  return out.join(' ');
+}
+
+/**
+ * Reads the amount belonging to the label on line `from`, tolerating wrapping.
+ *
+ * Collection stops at the next known label, so the following rate row — or a
+ * Commission line — can never be absorbed into this one.
+ */
+function readWrappedAmount(all: string[], from: number, limit = 4): number | null {
+  const parts: string[] = [];
+  for (let i = from; i < all.length && parts.length < limit; i++) {
+    const text = all[i]!.trim();
+    if (text.length === 0) continue;
+    const firstCell = cells(text)[0];
+    if (parts.length > 0 && firstCell && isKnownLabel(firstCell)) break;
+    parts.push(text);
+  }
+  if (parts.length === 0) return null;
+  return parseAgodaMoney(joinWrappedParts(parts));
+}
+
 /** Rows that are commercial summaries, never per-night stay rows. */
 const SUMMARY_ROW =
   /reference sell rate|net rate|commission|promotion|withholding|tax on|compensation|other program|total/;
 
-/** Reads the nightly-rate rows ("July 27, 2026  VND 508,355.00"). */
-function extractNightlyRates(all: string[]): AgodaNightlyRate[] {
+/**
+ * Reads the nightly-rate rows ("July 27, 2026  VND 508,355.00").
+ *
+ * Agoda's nightly figure is the amount for ALL rooms that night, so with two
+ * rooms it is twice what one room costs. Both readings are kept: `amount` is
+ * exactly what Agoda printed, and `perRoomAmount` is that divided by the room
+ * count — for display only. The booking total is never divided.
+ *
+ * The per-room figure is filled in only when the division is EXACT. A rounded
+ * share would not add back up to the stated total, and a number that looks
+ * precise but is not would be read as if Agoda had quoted it.
+ */
+function extractNightlyRates(all: string[], roomQuantity: number | null): AgodaNightlyRate[] {
   const out: AgodaNightlyRate[] = [];
   const seen = new Set<string>();
   for (const line of all) {
@@ -414,9 +643,17 @@ function extractNightlyRates(all: string[]): AgodaNightlyRate[] {
     const iso = findDate(line);
     if (!iso || seen.has(iso)) continue;
     seen.add(iso);
-    out.push({ stayDate: iso, amount: parseAgodaMoney(line) });
+    const amount = parseAgodaMoney(line);
+    out.push({ stayDate: iso, amount, perRoomAmount: perRoom(amount, roomQuantity) });
   }
   return out;
+}
+
+/** An exact per-room share of a nightly total, or null when there isn't one. */
+function perRoom(amount: number | null, roomQuantity: number | null): number | null {
+  if (amount == null) return null;
+  if (roomQuantity == null || !Number.isInteger(roomQuantity) || roomQuantity <= 0) return null;
+  return amount % roomQuantity === 0 ? amount / roomQuantity : null;
 }
 
 /**
@@ -430,13 +667,36 @@ export function parseAgodaPartnerBooking(rawText: string): AgodaPartnerBooking {
   const bookingId = extractBookingId(all, rawText);
   if (!bookingId) warnings.push(warn('AGODA_MISSING_BOOKING_ID', 'Không đọc được Booking ID của Agoda.', 'ERROR'));
 
-  const first = labelValue(all, /^customer first name$/);
+  const first = labelValue(all, /^customer first name$|^ten khach( hang)?$/);
+  // Matched by the English label only: the Vietnamese "Họ" is indistinguishable
+  // from a surname once accents are folded, so it identifies the label's
+  // POSITION (above) rather than being searched for as a label itself.
   const last = labelValue(all, /^customer last name$/);
-  const fullName = [first, last].filter((p) => p && p.length > 0).join(' ').trim() || null;
+  const otherGuests = labelValue(all, /^other guests$|^khach kh?ac$/);
+  const fullName = resolveAgodaGuestName(first, last, otherGuests);
   if (!fullName) warnings.push(warn('AGODA_MISSING_CUSTOMER', 'Không đọc được tên khách chính.'));
 
-  const checkIn = findDate(labelValue(all, /^check[- ]?in$/) ?? '');
-  const checkOut = findDate(labelValue(all, /^check[- ]?out$/) ?? '');
+  const checkInRaw = labelValue(all, /^check[- ]?in$|^ngay nhan phong$/) ?? '';
+  const checkOutRaw = labelValue(all, /^check[- ]?out$|^ngay tra phong$/) ?? '';
+  const checkIn = agodaDate(checkInRaw);
+  const checkOut = agodaDate(checkOutRaw);
+  // "3-Aug-2026 (3-08-2026)" states the same day twice. `findDate` takes the
+  // parenthesised numeric form; if the words disagree with it, neither is
+  // trustworthy on its own and the Admin is asked.
+  for (const [raw, iso, field] of [
+    [checkInRaw, checkIn, 'nhận phòng'],
+    [checkOutRaw, checkOut, 'trả phòng'],
+  ] as const) {
+    if (iso && disagreesWithTextualDate(raw, iso)) {
+      warnings.push(
+        warn(
+          'AGODA_DATE_FORMS_DISAGREE',
+          `Ngày ${field} ghi hai dạng khác nhau ("${raw.trim()}") — vui lòng kiểm tra.`,
+          'ERROR',
+        ),
+      );
+    }
+  }
   if (!checkIn) warnings.push(warn('AGODA_MISSING_CHECK_IN', 'Không đọc được ngày nhận phòng.', 'ERROR'));
   if (!checkOut) warnings.push(warn('AGODA_MISSING_CHECK_OUT', 'Không đọc được ngày trả phòng.', 'ERROR'));
   const nights = nightsBetween(checkIn, checkOut);
@@ -447,7 +707,7 @@ export function parseAgodaPartnerBooking(rawText: string): AgodaPartnerBooking {
   // The room table is read as a table first; the labelled form is the fallback for
   // layouts that print "Room Type:" / "No. of Rooms:" on their own lines.
   const table = parseRoomTable(all);
-  const roomTypeRaw = table?.roomType ?? labelValue(all, /^room ?type$/);
+  const roomTypeRaw = table?.roomType ?? labelValue(all, /^room ?type$|^loai phong$/);
   const room = mapAgodaRoomCode(roomTypeRaw);
   if (!room.original) {
     warnings.push(warn('AGODA_MISSING_ROOM_TYPE', 'Không đọc được hạng phòng.', 'ERROR'));
@@ -465,18 +725,18 @@ export function parseAgodaPartnerBooking(rawText: string): AgodaPartnerBooking {
     return Number.isFinite(n) ? n : null;
   };
 
-  const roomsRaw = table?.rooms ?? labelValue(all, /^no\.? of rooms$/);
+  const roomsRaw = table?.rooms ?? labelValue(all, /^no\.? of rooms$|^so (?:luong )?phong$/);
   const parsedRooms = countOf(roomsRaw);
   const roomQty = parsedRooms != null && parsedRooms > 0 ? parsedRooms : null;
   if (roomQty == null) warnings.push(warn('AGODA_MISSING_ROOM_QUANTITY', 'Không đọc được số lượng phòng.', 'ERROR'));
 
   const extraParsed = countOf(table?.extraBeds ?? labelValue(all, /^no\.? of extra bed$/));
 
-  const referenceSellRate = findRate(all, /reference sell rate/);
+  const referenceSellRate = findRate(all, /reference sell rate|gia ban tham khao/);
   if (referenceSellRate == null) {
     warnings.push(warn('AGODA_MISSING_SELL_RATE', 'Không đọc được "Reference sell rate" — cần kiểm tra thủ công.', 'ERROR'));
   }
-  const netRate = findRate(all, /net rate/);
+  const netRate = findRate(all, /net rate|gia thuc te/);
   if (netRate == null) {
     warnings.push(warn('AGODA_MISSING_NET_RATE', 'Không đọc được "Net rate" — cần kiểm tra thủ công.', 'ERROR'));
   }
@@ -491,7 +751,7 @@ export function parseAgodaPartnerBooking(rawText: string): AgodaPartnerBooking {
     netRate != null && stayDates.length > 0
       ? allocateEvenly(netRate, stayDates.length).map((amount, i) => ({ stayDate: stayDates[i]!, amount }))
       : [];
-  const nightlyRates = extractNightlyRates(all);
+  const nightlyRates = extractNightlyRates(all, roomQty);
   if (nightlyDebt.length > 0 && nightlyRates.length > 0 && differsFromAgodaRows(nightlyDebt, nightlyRates)) {
     warnings.push(
       warn(
@@ -514,12 +774,13 @@ export function parseAgodaPartnerBooking(rawText: string): AgodaPartnerBooking {
     checkOut,
     nights,
     roomTypeOriginal: room.original,
+    roomTypeNormalized: normalizeOtaRoomName(room.original),
     roomCode: room.code,
     roomTypeKnown: room.known,
     roomQuantity: roomQty,
-    occupancy: table?.occupancy ?? labelValue(all, /^occupancy$/),
+    occupancy: table?.occupancy ?? labelValue(all, /^occupancy$|^suc chua$/),
     extraBeds: extraParsed,
-    breakfastIncluded: hasBreakfast(rawText),
+    breakfastIncluded: AGODA_BREAKFAST_INCLUDED,
     payment,
     ratePlan: cleanRatePlan(labelValue(all, /^rate ?plan(?: name)?$/)),
     cancellationPolicy: labelValue(all, /^cancellation policy$/),
@@ -535,13 +796,19 @@ export function parseAgodaPartnerBooking(rawText: string): AgodaPartnerBooking {
 }
 
 /**
- * Whether breakfast is actually included. Agoda's "Benefits Included" often lists
- * coffee/tea, drinking water or a welcome drink — none of those is breakfast, and
- * the operator's Agoda note is fixed to "KHONG AN SANG" regardless.
+ * Breakfast on Agoda, for these eight branches: never included.
+ *
+ * This is an operator-confirmed business rule, not something read from the
+ * document. The text is deliberately NOT consulted: "Benefits Included" lists
+ * coffee & tea, drinking water and welcome drinks, none of which is breakfast,
+ * and a rate-plan blurb that happens to contain the word would otherwise flip a
+ * booking to "has breakfast" and block dispatch over a note wording that does
+ * not exist. Every Agoda note therefore ends "KHONG AN SANG".
+ *
+ * If a branch ever starts serving breakfast on Agoda, this becomes a per-branch
+ * configuration change — not a parser change.
  */
-function hasBreakfast(rawText: string): boolean {
-  return /\bbreakfast\b|\ban sang\b/.test(fold(rawText));
-}
+export const AGODA_BREAKFAST_INCLUDED = false;
 
 /** "Non-Refundable ()" → "Non-Refundable". */
 function cleanRatePlan(raw: string | null): string | null {

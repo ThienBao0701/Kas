@@ -40,7 +40,10 @@ export interface OtaReviewRoomLine {
 /** A price the platform stated per night. Empty when it stated none. */
 export interface OtaReviewNightly {
   stayDate: string;
+  /** Exactly as the platform stated it — may cover every room that night. */
   amount: number | null;
+  /** An exact per-room share, for display only. Null when there isn't one. */
+  perRoomAmount?: number | null;
 }
 
 export interface OtaReviewWarning {
@@ -94,6 +97,12 @@ export interface OtaReviewOverrides {
   breakfastIncluded?: boolean | null;
   paymentMode?: OtaPaymentMode;
 }
+
+/**
+ * Breakfast for Agoda and CTrip at these eight branches: never included.
+ * Operator-confirmed configuration, deliberately not inferred from the text.
+ */
+export const OTA_BREAKFAST_INCLUDED = false;
 
 /** Whole nights between two ISO dates, or null. */
 export function nightsBetween(checkIn: string | null, checkOut: string | null): number | null {
@@ -223,19 +232,16 @@ export function buildOtaReview(input: BuildOtaReviewInput): OtaReview {
   const branchPrice = o.branchPrice !== undefined ? o.branchPrice : input.parsed.branchPrice;
   const guestBookedPrice =
     o.guestBookedPrice !== undefined ? o.guestBookedPrice : input.parsed.guestBookedPrice;
-  const breakfastIncluded =
-    o.breakfastIncluded !== undefined ? o.breakfastIncluded : input.parsed.breakfastIncluded;
+  // Breakfast is a CONFIGURED business rule for these eight branches, not a
+  // parsed field and not an Admin choice: Agoda and CTrip stays include no
+  // breakfast, so every note ends "KHONG AN SANG".
+  //
+  // A submitted `true` is normalised to false rather than refused. This review
+  // serves only Agoda and CTrip, so `true` cannot be correct here; honouring it
+  // would block dispatch over a note wording that does not exist, and rejecting
+  // the whole request would strand an Admin who merely toggled the wrong box.
+  const breakfastIncluded = OTA_BREAKFAST_INCLUDED;
   const paymentMode: OtaPaymentMode = o.paymentMode ?? 'CN';
-
-  // Breakfast: only the negative phrase has approved wording.
-  if (paymentMode === 'CN' && breakfastIncluded === true) {
-    warnings.push({
-      code: 'OTA_BREAKFAST_TEXT_UNAPPROVED',
-      message:
-        'Đơn có ăn sáng nhưng nội dung ghi chú cho trường hợp này chưa được duyệt. Vui lòng xác nhận với quản lý.',
-      severity: 'ERROR',
-    });
-  }
 
   const note = buildOtaPmsNote({
     source: input.source,
@@ -245,7 +251,7 @@ export function buildOtaReview(input: BuildOtaReviewInput): OtaReview {
     branchPrice,
     guestBookedPrice,
     paymentMode,
-    breakfastIncluded: breakfastIncluded === true,
+    breakfastIncluded,
   });
 
   // Specific reasons, never a generic "invalid".
@@ -266,9 +272,6 @@ export function buildOtaReview(input: BuildOtaReviewInput): OtaReview {
   if (branchPrice == null) blockingReasons.push('Thiếu giá chi nhánh.');
   if (paymentMode === 'CN' && guestBookedPrice == null) {
     blockingReasons.push('Thiếu giá khách đặt (bắt buộc khi thanh toán CN).');
-  }
-  if (paymentMode === 'CN' && breakfastIncluded === true) {
-    blockingReasons.push('Chưa có nội dung ghi chú cho đơn có ăn sáng.');
   }
   if (!note.ok) blockingReasons.push(note.error);
 

@@ -27,6 +27,7 @@ import {
   resolveOtaRoomCode,
   resolveOtaRoomCodeById,
 } from '../src/room/otaRoomMappingResolver';
+import { normalizeText } from '../src/booking/text';
 import { resetAll, testPrisma } from './helpers/db';
 
 const branchIdByCode = new Map<string, number>();
@@ -109,8 +110,20 @@ describe('seeded mappings', () => {
 
   it('records Agoda room-type ids and leaves CTrip ids null', async () => {
     const agoda = await mappingsFor('TRUONG_DINH_05', 'AGODA');
-    expect(agoda.find((m) => m.pmsCode === 'STAN')?.otaRoomTypeId).toBe('852778539');
-    expect(agoda.every((m) => m.otaRoomTypeId !== null)).toBe(true);
+    expect(agoda.find((m) => m.otaRoomName === 'Phòng Tiêu Chuẩn Không Có Cửa Sổ')?.otaRoomTypeId).toBe(
+      '852778539',
+    );
+
+    // Each row carries exactly the id the catalogue states, and no other. The
+    // official long names have Agoda's real identifiers; the short operator
+    // aliases were supplied as text alone, so theirs stay null rather than
+    // borrowing the id of a room they merely resemble.
+    const seed = BRANCH_OTA_ROOM_MAPPING_SEED.find((s) => s.branchCode === 'TRUONG_DINH_05')!;
+    for (const room of seed.rooms) {
+      const row = agoda.find((m) => m.otaRoomName === room.otaRoomName);
+      expect(row, room.otaRoomName).toBeDefined();
+      expect(row!.otaRoomTypeId, room.otaRoomName).toBe(room.agodaRoomTypeId ?? null);
+    }
 
     // No CTrip identifier has been supplied, so none is invented or borrowed.
     const ctrip = await mappingsFor('TRUONG_DINH_05', 'CTRIP');
@@ -226,5 +239,140 @@ describe('resolution', () => {
 
     const ctrip = await mappingsFor('TRUONG_DINH_05', 'CTRIP');
     expect(resolveOtaRoomCodeById('852779721', ctrip).pmsCode).toBeNull();
+  });
+});
+
+/* ================================================================== */
+/* The shared Agoda/CTrip catalogue                                    */
+/* ================================================================== */
+
+/**
+ * The operator confirmed that the room-name catalogue is IDENTICAL on Agoda and
+ * CTrip for all eight branches. That is a statement about the names, not about
+ * the storage: the rows stay independent so renaming a room on one platform
+ * cannot move the other.
+ */
+describe('shared catalogue, independent rows', () => {
+  it.each(BRANCH_OTA_ROOM_MAPPING_SEED.map((s) => [s.cnLabel, s.branchCode] as const))(
+    '%s has a matching, independent CTrip row for every Agoda row',
+    async (_label, branchCode) => {
+      const agoda = await mappingsFor(branchCode, 'AGODA');
+      const ctrip = await mappingsFor(branchCode, 'CTRIP');
+      expect(agoda.length).toBeGreaterThan(0);
+      expect(ctrip.length).toBe(agoda.length);
+
+      for (const row of agoda) {
+        const twin = ctrip.find((c) => c.normalizedOtaRoomName === row.normalizedOtaRoomName);
+        expect(twin, `${branchCode} / ${row.otaRoomName}`).toBeDefined();
+        // Same destination code…
+        expect(twin!.pmsCode, row.otaRoomName).toBe(row.pmsCode);
+      }
+    },
+  );
+
+  it('stores the two platforms as separate rows with different ids', async () => {
+    const branchId = branchIdByCode.get('LE_THANH_TON_278')!;
+    const rows = await testPrisma.branchOtaRoomMapping.findMany({
+      where: { branchId, normalizedOtaRoomName: normalizeText('Standard Double Room No Window') },
+      select: { id: true, platform: true, pmsCode: true },
+      orderBy: { platform: 'asc' },
+    });
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.platform).sort()).toEqual(['AGODA', 'CTRIP']);
+    // Same code, but genuinely two records — neither references the other.
+    expect(rows[0]!.pmsCode).toBe(rows[1]!.pmsCode);
+    expect(rows[0]!.id).not.toBe(rows[1]!.id);
+  });
+
+  it('editing one platform does not move the other', async () => {
+    const branchId = branchIdByCode.get('LE_THANH_TON_278')!;
+    const key = normalizeText('Standard Double Room No Window');
+    await testPrisma.branchOtaRoomMapping.updateMany({
+      where: { branchId, platform: 'AGODA', normalizedOtaRoomName: key },
+      data: { pmsCode: 'SUP' },
+    });
+
+    const ctrip = await testPrisma.branchOtaRoomMapping.findFirstOrThrow({
+      where: { branchId, platform: 'CTRIP', normalizedOtaRoomName: key },
+    });
+    expect(ctrip.pmsCode).toBe('STAN');
+  });
+
+  it('holds no duplicate active rows for a (branch, platform, name)', async () => {
+    const rows = await testPrisma.branchOtaRoomMapping.findMany({
+      where: { active: true },
+      select: { branchId: true, platform: true, normalizedOtaRoomName: true },
+    });
+    const keys = rows.map((r) => `${r.branchId}:${r.platform}:${r.normalizedOtaRoomName}`);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it('resolves the confirmed operator aliases at their own branch', async () => {
+    const cases = [
+      ['TRUONG_DINH_05', 'Superior Room', 'SUP'],
+      ['LY_TU_TRONG_260', 'Luxury Twin Room - 01', 'PRE_DD'],
+      ['LY_TU_TRONG_260', 'Luxury Deluxe Room - 01', 'LUXDEL'],
+      ['NGUYEN_THAI_BINH_170', 'Suite Balcony', 'SUITEBAL'],
+      ['LE_THANH_TON_278', 'Standard Double Room No Window', 'STAN'],
+      ['LE_THANH_TON_278', 'D-D Room', 'TWIN'],
+      ['LE_THANH_TON_278', 'Studio Room', 'STU'],
+      ['BUI_THI_XUAN_40', 'Deluxe Double Room with Window', 'DEL'],
+      ['BUI_THI_XUAN_40', 'D-D Room', 'DD'],
+      ['BUI_THI_XUAN_13', 'Superior Queen Room with City View', 'SUP'],
+      ['LE_THANH_TON_191', 'Superior giường Queen', 'SUP'],
+      ['LE_THANH_TON_191', 'Phòng Loại Sang', 'DEL'],
+      ['LE_THANH_TON_191', 'King Balcony', 'KINGBAL'],
+    ] as const;
+
+    for (const [branchCode, name, expected] of cases) {
+      for (const platform of MAPPED_PLATFORMS) {
+        const mappings = await mappingsFor(branchCode, platform);
+        expect(resolveOtaRoomCode(name, mappings).pmsCode, `${branchCode}/${platform}/${name}`).toBe(
+          expected,
+        );
+      }
+    }
+  });
+
+  it('does not leak an alias across branches', async () => {
+    // "D-D Room" exists at CN5 and CN6 with DIFFERENT codes, and nowhere else.
+    for (const platform of MAPPED_PLATFORMS) {
+      expect(resolveOtaRoomCode('D-D Room', await mappingsFor('LE_THANH_TON_278', platform)).pmsCode).toBe('TWIN');
+      expect(resolveOtaRoomCode('D-D Room', await mappingsFor('BUI_THI_XUAN_40', platform)).pmsCode).toBe('DD');
+      expect(resolveOtaRoomCode('D-D Room', await mappingsFor('TRUONG_DINH_05', platform)).pmsCode).toBeNull();
+      // Studio exists only at CN5.
+      expect(resolveOtaRoomCode('Studio Room', await mappingsFor('BUI_THI_XUAN_40', platform)).pmsCode).toBeNull();
+    }
+  });
+
+  it('gives CN4 no Standard alias on either platform', async () => {
+    for (const platform of MAPPED_PLATFORMS) {
+      const cn4 = await mappingsFor('NGUYEN_THAI_BINH_170', platform);
+      expect(cn4.some((m) => m.pmsCode === 'STAN')).toBe(false);
+      for (const name of ['Standard', 'Standard Room', 'Standard Double Room']) {
+        expect(resolveOtaRoomCode(name, cn4).pmsCode, `${platform}/${name}`).toBeNull();
+      }
+    }
+  });
+
+  it('renames no historical room-class code', async () => {
+    // Every code the aliases point at must already exist in the confirmed
+    // catalogue — the supplied shorthand never introduces a new one.
+    const used = new Set(BRANCH_OTA_ROOM_MAPPING_SEED.flatMap((b) => b.rooms.map((r) => r.pmsCode)));
+    for (const code of used) {
+      expect(CONFIRMED_PMS_CODES, code).toContain(code);
+    }
+    // The four codes the operator's list got wrong are still absent.
+    for (const wrong of ['PREMIUM', 'PRE-DD', 'TWINT', 'STUDIO', 'DEQUEEN', 'LUX_DD']) {
+      expect(used.has(wrong), wrong).toBe(false);
+    }
+  });
+
+  it('records an audit event for every seeded row', async () => {
+    const rows = await testPrisma.branchOtaRoomMapping.count();
+    const events = await testPrisma.branchOtaRoomMappingEvent.count({
+      where: { action: 'MAPPING_CREATED', reason: 'SEED' },
+    });
+    expect(events).toBe(rows);
   });
 });

@@ -392,13 +392,17 @@ describe('validation', () => {
     expect(hotel.note).toContain('THANH TOÁN KHÁCH SẠN');
   });
 
-  it('refuses a breakfast-included CN note rather than inventing wording', () => {
-    const r = agoda({ breakfastIncluded: true });
-    expect(r.canDispatch).toBe(false);
-    expect(r.warnings.map((w) => w.code)).toContain('OTA_BREAKFAST_TEXT_UNAPPROVED');
-    expect(r.note).toBeNull();
-    // The structured status is still retained for the record.
-    expect(r.breakfastIncluded).toBe(true);
+  it('normalises a submitted breakfast=true to false instead of blocking', () => {
+    // These eight branches serve no breakfast on Agoda or CTrip — a configured
+    // business rule, so `true` cannot be right here. It is normalised rather
+    // than refused: honouring it would block dispatch over note wording that
+    // does not exist, and rejecting the request would strand an Admin who had
+    // merely toggled the wrong box.
+    const r = agoda({}, { breakfastIncluded: true });
+    expect(r.breakfastIncluded).toBe(false);
+    expect(r.warnings.map((w) => w.code)).not.toContain('OTA_BREAKFAST_TEXT_UNAPPROVED');
+    expect(r.blockingReasons).not.toContain('Chưa có nội dung ghi chú cho đơn có ăn sáng.');
+    expect(r.note).toContain('KHONG AN SANG');
   });
 
   it('rejects a zero or negative room quantity', () => {

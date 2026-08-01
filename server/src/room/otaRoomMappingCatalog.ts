@@ -48,7 +48,12 @@ export interface BranchOtaRoomMappingSeed {
   rooms: OtaRoomMappingSeed[];
 }
 
-export const BRANCH_OTA_ROOM_MAPPING_SEED: readonly BranchOtaRoomMappingSeed[] = [
+/**
+ * The platforms' OFFICIAL long room names, as Agoda publishes them, with Agoda's
+ * own room-type identifiers. These are the names the OTA prints on a real
+ * reservation.
+ */
+const OFFICIAL_ROOM_NAMES: readonly BranchOtaRoomMappingSeed[] = [
   {
     branchCode: 'TRUONG_DINH_05',
     cnLabel: 'CN1',
@@ -152,6 +157,166 @@ export const BRANCH_OTA_ROOM_MAPPING_SEED: readonly BranchOtaRoomMappingSeed[] =
     ],
   },
 ] as const;
+
+/**
+ * The SHORT operator aliases, confirmed for all eight branches.
+ *
+ * These are the names that actually arrive in a pasted reservation — Agoda's
+ * partner email and CTrip's reservation page both print the short form
+ * ("Superior Room", "Standard Double Room No Window") rather than the long
+ * official name above. Both spellings must therefore resolve, so these are
+ * ADDITIONAL rows, never replacements: the official names and their Agoda ids
+ * are left exactly as they are.
+ *
+ * No Agoda room-type id is recorded here. These aliases were supplied as text,
+ * and attaching an id from the official row would assert a link nobody stated.
+ *
+ * The catalogue is IDENTICAL for Agoda and CTrip (operator-confirmed), which is
+ * why it is written once — but `seedOtaRoomMappings` still writes an
+ * independent row per platform, so renaming a room on one never moves the
+ * other.
+ *
+ * ── WHERE THE SUPPLIED SHORTHAND MET AN EXISTING CODE ─────────────────────
+ * Three aliases named a code the branch's committed catalogue does not use.
+ * The repository's canonical code wins in every case — these codes are already
+ * in dispatched bookings' immutable snapshots and in notes pasted into the PMS:
+ *
+ *   CN5 "D-D Room"           -> TWIN   (CN5 has TWIN, and has no DD class)
+ *   CN5 "Deluxe Queen Room"  -> DEL    (CN5 has no DELQUEEN; CN6 does)
+ *   CN2 "Luxury Twin Room - 01" -> PRE_DD  (the premium-twin code, unchanged)
+ *
+ * CN4 deliberately receives NO Standard alias: that branch has no STAN class,
+ * so a Standard-like room there must stay unresolved and wait for an Admin.
+ */
+const OPERATOR_ROOM_ALIASES: readonly BranchOtaRoomMappingSeed[] = [
+  {
+    branchCode: 'TRUONG_DINH_05',
+    cnLabel: 'CN1',
+    rooms: [
+      { otaRoomName: 'Standard Window', pmsCode: 'STAN' },
+      { otaRoomName: 'Standard Room', pmsCode: 'STAN' },
+      { otaRoomName: 'Superior Room', pmsCode: 'SUP' },
+      { otaRoomName: 'Deluxe Family Room', pmsCode: 'DEFAM' },
+    ],
+  },
+  {
+    branchCode: 'LY_TU_TRONG_260',
+    cnLabel: 'CN2',
+    rooms: [
+      { otaRoomName: 'Standard Double Room', pmsCode: 'STAN' },
+      { otaRoomName: 'Superior Double Room', pmsCode: 'SUP' },
+      { otaRoomName: 'Deluxe Room -03', pmsCode: 'DEL' },
+      { otaRoomName: 'Luxury Deluxe Room - 01', pmsCode: 'LUXDEL' },
+      { otaRoomName: 'Deluxe Twin Room - 03', pmsCode: 'DD' },
+      // The premium twin. Canonical code PRE_DD — never PRE-DD or LUX_DD.
+      { otaRoomName: 'Luxury Twin Room - 01', pmsCode: 'PRE_DD' },
+      { otaRoomName: 'Family Room', pmsCode: 'FAM' },
+      { otaRoomName: 'Deluxe Family Room', pmsCode: 'DEFAM' },
+    ],
+  },
+  {
+    branchCode: 'NGUYEN_TRAI_47A',
+    cnLabel: 'CN3',
+    rooms: [
+      { otaRoomName: 'Standard Room', pmsCode: 'STAN' },
+      { otaRoomName: 'Superior Room', pmsCode: 'SUP' },
+      { otaRoomName: 'Deluxe Family Room', pmsCode: 'DEFAM' },
+      { otaRoomName: 'Deluxe Room', pmsCode: 'DEL' },
+    ],
+  },
+  {
+    // No Standard alias: CN4 has no STAN class.
+    branchCode: 'NGUYEN_THAI_BINH_170',
+    cnLabel: 'CN4',
+    rooms: [
+      { otaRoomName: 'Superior Room', pmsCode: 'SUP' },
+      { otaRoomName: 'Deluxe 1 - 2', pmsCode: 'DEL12' },
+      { otaRoomName: 'Deluxe 3 - 4', pmsCode: 'DEL34' },
+      { otaRoomName: 'Deluxe D-D', pmsCode: 'DD' },
+      { otaRoomName: 'Deluxe Balcony', pmsCode: 'DEBAL' },
+      { otaRoomName: 'Suite Balcony', pmsCode: 'SUITEBAL' },
+    ],
+  },
+  {
+    branchCode: 'LE_THANH_TON_278',
+    cnLabel: 'CN5',
+    rooms: [
+      { otaRoomName: 'Standard Double Room', pmsCode: 'STAN' },
+      { otaRoomName: 'Standard Double Room No Window', pmsCode: 'STAN' },
+      { otaRoomName: 'Superior Double Room', pmsCode: 'SUP' },
+      // CN5's twin class is TWIN; this branch has no DD.
+      { otaRoomName: 'D-D Room', pmsCode: 'TWIN' },
+      // CN5 has no DELQUEEN class — its deluxe code is DEL.
+      { otaRoomName: 'Deluxe Queen Room', pmsCode: 'DEL' },
+      { otaRoomName: 'Studio Room', pmsCode: 'STU' },
+      { otaRoomName: 'Suite Room', pmsCode: 'SUITE' },
+    ],
+  },
+  {
+    branchCode: 'BUI_THI_XUAN_40',
+    cnLabel: 'CN6',
+    rooms: [
+      { otaRoomName: 'Standard Double Room', pmsCode: 'STAN' },
+      { otaRoomName: 'Standard Double Room No Window', pmsCode: 'STAN' },
+      { otaRoomName: 'Standard', pmsCode: 'STAN' },
+      { otaRoomName: 'Superior Room', pmsCode: 'SUP' },
+      { otaRoomName: 'Deluxe Room', pmsCode: 'DEL' },
+      { otaRoomName: 'Deluxe Double Room with Window', pmsCode: 'DEL' },
+      { otaRoomName: 'Deluxe Queen Room', pmsCode: 'DELQUEEN' },
+      { otaRoomName: 'Deluxe Balcony Room', pmsCode: 'DEBAL' },
+      { otaRoomName: 'King Room', pmsCode: 'KING' },
+      { otaRoomName: 'D-D Room', pmsCode: 'DD' },
+      { otaRoomName: 'Family Room', pmsCode: 'FAM' },
+      { otaRoomName: 'Deluxe Family Room', pmsCode: 'DEFAM' },
+    ],
+  },
+  {
+    branchCode: 'BUI_THI_XUAN_13',
+    cnLabel: 'CN7',
+    rooms: [
+      { otaRoomName: 'Superior', pmsCode: 'SUP' },
+      { otaRoomName: 'Superior Room', pmsCode: 'SUP' },
+      { otaRoomName: 'Superior Queen Room with City View', pmsCode: 'SUP' },
+      { otaRoomName: 'Standard', pmsCode: 'STAN' },
+      { otaRoomName: 'Standard Room', pmsCode: 'STAN' },
+      { otaRoomName: 'Deluxe Room', pmsCode: 'DEL' },
+      { otaRoomName: 'Deluxe Balcony', pmsCode: 'DEBAL' },
+      { otaRoomName: 'King Room', pmsCode: 'KING' },
+      { otaRoomName: 'Deluxe King Room with Window', pmsCode: 'KING' },
+      { otaRoomName: 'Suites Room', pmsCode: 'SUITE' },
+      { otaRoomName: 'Suite Room', pmsCode: 'SUITE' },
+    ],
+  },
+  {
+    branchCode: 'LE_THANH_TON_191',
+    cnLabel: 'CN8',
+    rooms: [
+      { otaRoomName: 'Standard Room', pmsCode: 'STAN' },
+      { otaRoomName: 'Superior giường Queen', pmsCode: 'SUP' },
+      { otaRoomName: 'Superior Queen Room', pmsCode: 'SUP' },
+      { otaRoomName: 'Phòng Loại Sang', pmsCode: 'DEL' },
+      { otaRoomName: 'Deluxe Room', pmsCode: 'DEL' },
+      { otaRoomName: 'King Room', pmsCode: 'KING' },
+      { otaRoomName: 'Deluxe King Room with Window', pmsCode: 'KING' },
+      { otaRoomName: 'Deluxe Balcony', pmsCode: 'DEBAL' },
+      { otaRoomName: 'King Balcony', pmsCode: 'KINGBAL' },
+    ],
+  },
+] as const;
+
+/**
+ * The full catalogue: each branch's official names followed by its operator
+ * aliases. Merged by branch code so a branch appears exactly once.
+ */
+export const BRANCH_OTA_ROOM_MAPPING_SEED: readonly BranchOtaRoomMappingSeed[] =
+  OFFICIAL_ROOM_NAMES.map((branch) => ({
+    branchCode: branch.branchCode,
+    cnLabel: branch.cnLabel,
+    rooms: [
+      ...branch.rooms,
+      ...(OPERATOR_ROOM_ALIASES.find((a) => a.branchCode === branch.branchCode)?.rooms ?? []),
+    ],
+  }));
 
 /** The platforms these mappings are seeded for. */
 export const MAPPED_PLATFORMS = ['AGODA', 'CTRIP'] as const;

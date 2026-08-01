@@ -77,7 +77,7 @@ const MAPPED_ROOM = {
 /* ================================================================== */
 
 describe('CTrip review endpoint', () => {
-  it('resolves the branch and every field, leaving only the room to be mapped', async () => {
+  it('resolves the branch, every field and the room from the seeded aliases', async () => {
     const res = await review({ source: 'CTRIP', rawText: CTRIP_RAW });
     expect(res.status).toBe(200);
 
@@ -94,13 +94,17 @@ describe('CTrip review endpoint', () => {
     expect(r.guestBookedPrice).toBe(6_637_080); // Original room rate
     expect(r.nightlyRates).toEqual([]); // CTrip states none
 
-    // The room name is English and the seeded CTrip mappings are Vietnamese, so
-    // it is unmapped. That must block dispatch rather than be guessed at.
-    expect(r.rooms[0].pmsCode).toBeNull();
-    expect(r.rooms[0].requiresManualMapping).toBe(true);
-    expect(r.canDispatch).toBe(false);
-    expect(r.note).toBeNull();
-    expect(r.blockingReasons).toContain('Còn hạng phòng chưa gán mã nội bộ.');
+    // The English name CTrip actually prints is now a seeded CN5 alias, so it
+    // resolves without an Admin having to map it by hand. It is still resolved
+    // through THIS BRANCH's mappings — the name alone decides nothing.
+    expect(r.rooms[0].pmsCode).toBe('STAN');
+    expect(r.rooms[0].requiresManualMapping).toBe(false);
+    expect(r.canDispatch).toBe(true);
+    expect(r.note).toBe(
+      'CTRIP_1658113703317875_1STAN_7DEM 4.645.956 CN\nGIÁ KHÁCH ĐẶT 6.637.080 KHONG AN SANG',
+    );
+    expect(r.blockingReasons).toEqual([]);
+    expect(r.breakfastIncluded).toBe(false);
   });
 
   it('produces the exact CN note once the Admin maps the room', async () => {

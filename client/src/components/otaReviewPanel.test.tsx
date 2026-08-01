@@ -295,6 +295,39 @@ describe('room rows', () => {
 /* Payment mode and prices                                             */
 /* ================================================================== */
 
+describe('breakfast', () => {
+  it('is fixed to "no breakfast" and cannot be toggled', async () => {
+    // Agoda and CTrip stays at these branches include no breakfast — a
+    // configured rule, not a choice, so the control states it rather than
+    // offering it. The server enforces the same thing independently.
+    const { bodies } = mockReview(RESOLVED);
+    mount();
+
+    await screen.findByTestId('ota-review');
+    const box = screen.getByLabelText('Ăn sáng');
+    expect(box).toBeDisabled();
+    expect(box).not.toBeChecked();
+    expect(screen.getByText('Không ăn sáng')).toBeInTheDocument();
+
+    await userEvent.click(box);
+    // The click changed nothing and sent nothing.
+    expect(box).not.toBeChecked();
+    expect(
+      bodies.every(
+        (b) =>
+          (b as { overrides?: { breakfastIncluded?: unknown } }).overrides?.breakfastIncluded !==
+          true,
+      ),
+    ).toBe(true);
+  });
+
+  it('renders a note ending in KHONG AN SANG', async () => {
+    mockReview(RESOLVED);
+    mount();
+    expect((await screen.findByTestId('ota-note')).textContent).toContain('KHONG AN SANG');
+  });
+});
+
 describe('payment mode', () => {
   it('offers exactly CN and THANH TOÁN KHÁCH SẠN', async () => {
     mockReview(RESOLVED);

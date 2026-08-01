@@ -97,9 +97,24 @@ export function parseCtripBooking(
   // so a field the engine found is never overwritten with nothing.
   const checkIn = fields.checkIn ?? parsed.checkIn;
   const checkOut = fields.checkOut ?? parsed.checkOut;
+  const nights = nightsBetween(checkIn, checkOut);
+
+  // CTrip prints the night count beside the stay period. When it disagrees with
+  // the dates, the DATES are kept — they are what the stay actually is — and the
+  // Admin is told, because one of the two is wrong and the parser cannot know
+  // which.
+  const warnings = [...parsed.warnings];
+  if (fields.statedNights != null && nights != null && fields.statedNights !== nights) {
+    warnings.push({
+      code: 'CTRIP_NIGHTS_MISMATCH',
+      message: `CTrip ghi ${fields.statedNights} đêm nhưng khoảng ngày là ${nights} đêm — vui lòng kiểm tra.`,
+      severity: 'ERROR',
+    });
+  }
 
   return {
     ...parsed,
+    warnings,
     bookingCode: fields.reservationCode ?? parsed.bookingCode,
     guestName: fields.guestName ?? parsed.guestName,
     checkIn,
@@ -114,7 +129,7 @@ export function parseCtripBooking(
       guestName: fields.guestName,
       checkIn: fields.checkIn,
       checkOut: fields.checkOut,
-      nights: nightsBetween(checkIn, checkOut),
+      nights,
       roomType: fields.roomType,
       roomQuantity: fields.roomQuantity,
       branchPrice: fields.payout,

@@ -160,8 +160,13 @@ export async function buildOtaReviewFromText(
   };
 }
 
-/** Agoda's fields, expressed as the review's platform-neutral shape. */
-function agodaParsedFields(
+/**
+ * Agoda's fields, expressed as the review's platform-neutral shape.
+ *
+ * Exported so tests can drive the REAL mapping without a database, rather than
+ * re-implementing it and proving only that the copy agrees with itself.
+ */
+export function agodaParsedFields(
   parsed: ReturnType<typeof parseAgodaBooking>,
   resolvedBranchId: number | null,
 ) {
@@ -173,7 +178,10 @@ function agodaParsedFields(
       ? [
           {
             quantity: a.roomQuantity && a.roomQuantity > 0 ? a.roomQuantity : 1,
-            otaRoomName: a.roomTypeOriginal,
+            // The NORMALISED name: Agoda's trailing "(2)" is a style marker, and
+            // the branch's mappings are keyed by the name without it. The raw
+            // form stays on the parsed booking for audit.
+            otaRoomName: a.roomTypeNormalized ?? a.roomTypeOriginal,
             otaRoomTypeId: null,
           },
         ]
@@ -189,17 +197,19 @@ function agodaParsedFields(
     nightlyRates: (a?.nightlyRates ?? []).map((n) => ({
       stayDate: n.stayDate,
       amount: n.amount,
+      perRoomAmount: n.perRoomAmount ?? null,
     })),
-    // Net rate is what the branch receives; the guest's price is separate.
+    // Net rate is what the branch receives; the guest's price is separate. It is
+    // the whole-booking figure and is never divided by rooms or nights.
     branchPrice: a?.netRate ?? null,
     guestBookedPrice: a?.referenceSellRate ?? null,
-    breakfastIncluded: null as boolean | null,
+    breakfastIncluded: false,
     resolvedBranchId,
   };
 }
 
-/** CTrip's fields, expressed as the review's platform-neutral shape. */
-function ctripParsedFields(
+/** CTrip's fields, in the same shape. Exported for the same reason. */
+export function ctripParsedFields(
   parsed: ReturnType<typeof parseCtripBooking>,
   resolvedBranchId: number | null,
 ) {
@@ -228,7 +238,8 @@ function ctripParsedFields(
     // and is never replaced by Final room rate.
     branchPrice: c?.branchPrice ?? null,
     guestBookedPrice: c?.guestBookedPrice ?? null,
-    breakfastIncluded: c?.breakfastIncluded ?? null,
+    // Configured business rule, not read from the page: no breakfast on CTrip.
+    breakfastIncluded: false,
     resolvedBranchId,
   };
 }

@@ -382,15 +382,25 @@ export function OtaReviewPanel({ source, rawText, onDispatch, onBack }: OtaRevie
         </div>
 
         <div className="mt-3 flex flex-wrap gap-4">
-          <label className="flex items-center gap-2 text-sm text-slate-600">
+          {/*
+            Breakfast is a configured business rule for these eight branches on
+            Agoda and CTrip — never included — so this is shown as a fixed fact
+            rather than a choice. It stays visible because the note's wording
+            depends on it and an Admin needs to see what will be generated; it
+            is disabled because there is nothing here to decide. The server
+            enforces the same rule, so a request that sets it is normalised
+            rather than believed.
+          */}
+          <label className="flex items-center gap-2 text-sm text-slate-500">
             <input
               type="checkbox"
-              aria-label="Có ăn sáng"
-              checked={review.breakfastIncluded === true}
-              onChange={(e) => patch({ breakfastIncluded: e.target.checked })}
-              className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-600"
+              aria-label="Ăn sáng"
+              checked={false}
+              disabled
+              readOnly
+              className="h-4 w-4 rounded border-slate-300 text-slate-400"
             />
-            Có ăn sáng
+            Không ăn sáng
           </label>
 
           <label className="block text-sm font-medium text-slate-600">

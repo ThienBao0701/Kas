@@ -188,7 +188,10 @@ export interface AgodaPartnerExtras {
   checkIn: string | null;
   checkOut: string | null;
   nights: number | null;
+  /** The room row verbatim, including Agoda's trailing "(2)" style marker. */
   roomTypeOriginal: string | null;
+  /** The same name without that marker — the key the mappings are looked up by. */
+  roomTypeNormalized: string | null;
   roomCode: string | null;
   roomTypeKnown: boolean;
   roomQuantity: number | null;
@@ -200,8 +203,12 @@ export interface AgodaPartnerExtras {
   ratePlan: string | null;
   cancellationPolicy: string | null;
   countryOfResidence: string | null;
-  /** Agoda's own per-night rows (diagnostics only — not the debt schedule). */
-  nightlyRates: { stayDate: string; amount: number | null }[];
+  /**
+   * Agoda's own per-night rows (diagnostics only — not the debt schedule).
+   * `amount` is what Agoda printed and may cover every room that night;
+   * `perRoomAmount` is an exact per-room share when one exists.
+   */
+  nightlyRates: { stayDate: string; amount: number | null; perRoomAmount?: number | null }[];
   /** Total hotel receivable = the Agoda Net rate. */
   totalDebtAmount: number | null;
   /** Net rate split evenly per stay night; sums exactly to totalDebtAmount. */
