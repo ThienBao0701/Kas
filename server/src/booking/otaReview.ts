@@ -27,14 +27,26 @@ import {
 /** One physical room group on the reservation. */
 export interface OtaReviewRoomLine {
   quantity: number;
-  /** Exactly as the platform named it, for the Admin to recognise. */
+  /** The name used for MAPPING — normalised, with any "(2)" marker removed. */
   otaRoomName: string | null;
+  /** The name exactly as the platform printed it, for audit and recognition. */
+  rawOtaRoomName?: string | null;
   /** The platform's room-type id when it supplied one (Agoda does). */
   otaRoomTypeId: string | null;
   /** The branch's internal code — resolved, or chosen by the Admin. */
   pmsCode: string | null;
   /** True while no code is resolved; blocks dispatch. */
   requiresManualMapping: boolean;
+  /**
+   * The nightly figure the SOURCE stated, when it stated one consistent rate
+   * for every night. It covers all rooms on the line. Null when the platform
+   * gave no nightly rows, or gave rows that differ from night to night — the
+   * per-date detail is in `nightlyRates` either way, and no single figure is
+   * invented to stand in for a varying rate.
+   */
+  sourceNightlyTotal?: number | null;
+  /** `sourceNightlyTotal` divided by the room count, when that is exact. */
+  perRoomNightlyRate?: number | null;
 }
 
 /** A price the platform stated per night. Empty when it stated none. */
@@ -133,7 +145,14 @@ export interface BuildOtaReviewInput {
     guestName: string | null;
     checkIn: string | null;
     checkOut: string | null;
-    rooms: { quantity: number; otaRoomName: string | null; otaRoomTypeId: string | null }[];
+    rooms: {
+      quantity: number;
+      otaRoomName: string | null;
+      rawOtaRoomName?: string | null;
+      otaRoomTypeId: string | null;
+      sourceNightlyTotal?: number | null;
+      perRoomNightlyRate?: number | null;
+    }[];
     nightlyRates: OtaReviewNightly[];
     branchPrice: number | null;
     guestBookedPrice: number | null;
@@ -183,7 +202,10 @@ export function buildOtaReview(input: BuildOtaReviewInput): OtaReview {
       : input.parsed.rooms.map((r) => ({
           quantity: r.quantity,
           otaRoomName: r.otaRoomName,
+          rawOtaRoomName: r.rawOtaRoomName ?? r.otaRoomName,
           otaRoomTypeId: r.otaRoomTypeId,
+          sourceNightlyTotal: r.sourceNightlyTotal ?? null,
+          perRoomNightlyRate: r.perRoomNightlyRate ?? null,
           pmsCode: null,
           requiresManualMapping: true,
         }));
@@ -207,11 +229,12 @@ export function buildOtaReview(input: BuildOtaReviewInput): OtaReview {
     if (!branch) {
       return { ...line, pmsCode: null, requiresManualMapping: true };
     }
+    // Spread, never rebuild field by field: listing the fields explicitly meant
+    // every value added to a room line was silently dropped the moment the line
+    // resolved, which is how correctly parsed data disappears between layers.
     const resolved = resolveOtaRoomCode(line.otaRoomName, branch.mappings);
     return {
-      quantity: line.quantity,
-      otaRoomName: line.otaRoomName,
-      otaRoomTypeId: line.otaRoomTypeId,
+      ...line,
       pmsCode: resolved.pmsCode,
       requiresManualMapping: resolved.pmsCode === null,
     };

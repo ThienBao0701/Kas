@@ -144,7 +144,24 @@ export function parseCtripRoomLine(raw: string | null): {
   };
 }
 
-/** Reads one labelled value, tolerating a value on the following line. */
+/**
+ * A line that sits BETWEEN a label and its value rather than being the value.
+ *
+ * CTrip prints a parenthetical qualifier under the price labels ("Original room
+ * rate" / "(incl. taxes and fees)" / "6637080.00") and sometimes puts the
+ * currency on its own line ("Your payout" / "VND" / "4645956.00"). Returning
+ * the first following line blindly yielded "(incl. taxes and fees)" and "VND",
+ * which parse to no amount at all — so the price silently vanished.
+ */
+function isQualifier(line: string): boolean {
+  const text = line.trim();
+  if (text.length === 0) return true;
+  if (/^\(.*\)$/.test(text)) return true;
+  if (/^(?:VND|₫|USD|\$)$/i.test(text)) return true;
+  return false;
+}
+
+/** Reads one labelled value, tolerating qualifier lines before the value. */
 function labelled(lines: readonly string[], labels: readonly string[]): string | null {
   const wanted = labels.map((l) => normalizeForPhrase(l));
   for (let i = 0; i < lines.length; i += 1) {
@@ -155,9 +172,16 @@ function labelled(lines: readonly string[], labels: readonly string[]): string |
 
     const inline = colon >= 0 ? line.slice(colon + 1).trim() : '';
     if (inline.length > 0) return inline;
-    // CTrip wraps some values onto the next line.
-    const next = lines[i + 1]?.trim();
-    if (next && !next.includes(':')) return next;
+
+    // The value is on a following line, possibly behind a qualifier. A line
+    // carrying a colon is the NEXT label, so this field simply has no value.
+    for (let j = i + 1; j < lines.length && j <= i + 3; j += 1) {
+      const next = lines[j]!.trim();
+      if (isQualifier(next)) continue;
+      if (next.includes(':')) break;
+      return next;
+    }
+    return null;
   }
   return null;
 }
@@ -210,43 +234,55 @@ export function extractCtripFields(rawText: string): CtripFields {
     .split('\n')
     .map((l) => l.trim())
     .filter((l) => l.length > 0);
-  // The detail block is authoritative; the list and filter bar above it are not.
-  const lines = detailBlock(allLines);
+  // The detail block is authoritative — it is where the OPEN reservation's own
+  // values live, so a repeated field from the list below it never wins.
+  const block = detailBlock(allLines);
 
-  const meals = labelled(lines, ['Meals', 'Meal', 'Bữa ăn']);
+  /**
+   * Detail block first, whole page second.
+   *
+   * The block cannot simply REPLACE the page: the property header is printed
+   * ABOVE the reservation on a real page, so slicing at "Reservation:" threw
+   * the branch away entirely. Falling back keeps that header readable while
+   * still letting the block win wherever both state the same field.
+   *
+   * The filter bar stays excluded either way — its labels are "Check-in date
+   * from" / "Check-in date to", which are not the labels read here.
+   */
+  const pick = (labels: readonly string[]): string | null =>
+    labelled(block, labels) ?? labelled(allLines, labels);
+
+  const meals = pick(['Meals', 'Meal', 'Bữa ăn']);
 
   // "Aug 1, 2026 - Aug 8, 2026 7 night(s)" states the whole stay on one row.
   // The separate Check-in / Check-out labels remain supported for layouts that
   // print them, but the stay period wins when both are present.
-  const stay = parseCtripStayPeriod(
-    labelled(lines, ['Stay period', 'Stay dates', 'Stay']),
-  );
-  const room = parseCtripRoomLine(labelled(lines, ['Room type', 'Room', 'Hạng phòng']));
+  const stay = parseCtripStayPeriod(pick(['Stay period', 'Stay dates', 'Stay']));
+  const room = parseCtripRoomLine(pick(['Room type', 'Room', 'Hạng phòng']));
 
   const labelledQuantity = (() => {
-    const raw = labelled(lines, ['Room quantity', 'Rooms', 'Number of rooms', 'Số lượng phòng']);
+    const raw = pick(['Room quantity', 'Rooms', 'Number of rooms', 'Số lượng phòng']);
     const parsed = raw ? Number.parseInt(raw.replace(/[^\d]/g, ''), 10) : NaN;
     return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
   })();
 
   return {
     reservationCode: cleanReservationCode(
-      labelled(lines, ['Reservation', 'Reservation number', 'Reservation ID']),
+      pick(['Reservation', 'Reservation number', 'Reservation ID']),
     ),
-    propertyName: labelled(lines, ['Property name', 'Property', 'Hotel name']),
-    guestName: labelled(lines, ['Guest name', 'Guest', 'Guests', 'Guest(s)', 'Khách']),
-    checkIn: stay.checkIn ?? parseCtripDate(labelled(lines, ['Check-in', 'Check in', 'Nhận phòng'])),
-    checkOut:
-      stay.checkOut ?? parseCtripDate(labelled(lines, ['Check-out', 'Check out', 'Trả phòng'])),
+    propertyName: pick(['Property name', 'Property', 'Hotel name']),
+    guestName: pick(['Guest name', 'Guest', 'Guests', 'Guest(s)', 'Khách']),
+    checkIn: stay.checkIn ?? parseCtripDate(pick(['Check-in', 'Check in', 'Nhận phòng'])),
+    checkOut: stay.checkOut ?? parseCtripDate(pick(['Check-out', 'Check out', 'Trả phòng'])),
     statedNights: stay.statedNights,
     roomType: room.roomType,
     roomQuantity: room.roomQuantity ?? labelledQuantity,
     // The guest-booked price. Never replaced by "Final room rate".
-    originalRoomRate: parseCtripAmount(labelled(lines, ['Original room rate'])),
+    originalRoomRate: parseCtripAmount(pick(['Original room rate'])),
     // Read for the review screen only — deliberately not used as any price.
-    finalRoomRate: parseCtripAmount(labelled(lines, ['Final room rate'])),
+    finalRoomRate: parseCtripAmount(pick(['Final room rate'])),
     // The branch price.
-    payout: parseCtripAmount(labelled(lines, ['Your payout', 'Payout'])),
+    payout: parseCtripAmount(pick(['Your payout', 'Payout'])),
     breakfastIncluded: meals === null ? null : !/no\s*meals?/i.test(meals),
   };
 }

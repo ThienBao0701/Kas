@@ -121,6 +121,36 @@ describe('DispatchPage — intake source tabs', () => {
     expect(extract!.body.rawText).toContain('KAS Passion Boutique Hotel');
   });
 
+  it('transmits the pasted text verbatim, including tabs and blank lines', async () => {
+    // The server does all the parsing, so the browser must not tidy the paste:
+    // stripping a tab or collapsing a blank line changes what the label reader
+    // sees and can silently empty a field.
+    const seen: { path: string; body: Record<string, unknown> }[] = [];
+    mount((path, init) => {
+      seen.push({ path, body: JSON.parse(String(init.body)) as Record<string, unknown> });
+    });
+    const user = userEvent.setup();
+
+    const tablist = await screen.findByRole('tablist', { name: 'Nguồn đặt phòng' });
+    await user.click(within(tablist).getByRole('tab', { name: 'Agoda' }));
+
+    const pasted = 'Booking ID\tMã số đặt phòng\n1756224954\n\nCheck-in Nhận phòng 4-Aug-2026';
+    // Paste rather than type: userEvent.type interprets tabs and newlines.
+    await user.click(screen.getByRole('textbox'));
+    await user.paste(pasted);
+    await user.click(screen.getByRole('button', { name: /Trích xuất thông tin/ }));
+
+    const review = await vi.waitFor(() => {
+      const hit = seen.find((r) => r.path === '/api/admin/ota/review');
+      expect(hit).toBeDefined();
+      return hit!;
+    });
+    expect(review.body.rawText).toBe(pasted);
+    expect(review.body.source).toBe('AGODA');
+    // The exact property names the route reads — not "content" or "platform".
+    expect(Object.keys(review.body).sort()).toEqual(['overrides', 'rawText', 'source']);
+  });
+
   it.each([
     ['CTrip', 'CTRIP'],
     ['Agoda', 'AGODA'],

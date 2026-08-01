@@ -20,13 +20,28 @@ import { z } from 'zod';
 import { requireAuth, requireAdmin, requirePasswordChanged } from '../middleware/auth';
 import { buildOtaReviewFromText } from '../booking/otaReviewService';
 
+/**
+ * A room line as the browser sends it back.
+ *
+ * Zod DROPS keys it does not declare, so every field a room line carries has to
+ * be declared here even when the server re-derives it — otherwise the value
+ * survives the first response and then vanishes the moment the Admin edits
+ * anything, which looks exactly like a parser failure.
+ *
+ * The audit and nightly fields are accepted but never trusted: the server
+ * recomputes them from the pasted text, and `pmsCode` is re-validated against
+ * the selected branch.
+ */
 const roomLineSchema = z.object({
   quantity: z.number().int().min(1, 'Số lượng phòng phải lớn hơn 0.').max(50),
   otaRoomName: z.string().trim().max(300).nullable(),
+  rawOtaRoomName: z.string().trim().max(300).nullable().optional(),
   otaRoomTypeId: z.string().trim().max(100).nullable(),
   /** A proposal only — the server checks it against the branch. */
   pmsCode: z.string().trim().max(40).nullable(),
   requiresManualMapping: z.boolean(),
+  sourceNightlyTotal: z.number().int().nonnegative().nullable().optional(),
+  perRoomNightlyRate: z.number().int().nonnegative().nullable().optional(),
 });
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ngày phải có định dạng YYYY-MM-DD.');

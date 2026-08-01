@@ -494,9 +494,14 @@ describe('confirmed Agoda booking 1756192483', () => {
       {
         quantity: 2,
         otaRoomName: 'Superior Room',
+        // The raw name keeps Agoda's "(2)" style marker for audit.
+        rawOtaRoomName: 'Superior Room (2)',
         otaRoomTypeId: null,
         pmsCode: 'SUP',
         requiresManualMapping: false,
+        // 1,006,118 a night covers both rooms; 503,059 is one room's share.
+        sourceNightlyTotal: 1_006_118,
+        perRoomNightlyRate: 503_059,
       },
     ]);
   });

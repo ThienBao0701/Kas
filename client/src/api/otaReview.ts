@@ -29,16 +29,25 @@ export const OTA_SOURCE_LABEL: Record<OtaReviewSource, string> = {
 
 export interface OtaReviewRoomLine {
   quantity: number;
+  /** The name the branch mappings are keyed by. */
   otaRoomName: string | null;
+  /** The name exactly as the platform printed it. Server-derived; sent back untouched. */
+  rawOtaRoomName?: string | null;
   otaRoomTypeId: string | null;
   /** null while unresolved. Never free text — chosen from validPmsCodes. */
   pmsCode: string | null;
   requiresManualMapping: boolean;
+  /** The nightly figure the source stated, covering every room on the line. */
+  sourceNightlyTotal?: number | null;
+  /** That figure divided by the room count, when the split is exact. */
+  perRoomNightlyRate?: number | null;
 }
 
 export interface OtaReviewNightly {
   stayDate: string;
   amount: number | null;
+  /** An exact per-room share of that night, when there is one. */
+  perRoomAmount?: number | null;
 }
 
 export interface OtaReviewWarning {

@@ -173,19 +173,34 @@ export function agodaParsedFields(
   const a = parsed.agoda;
   // One line per room type the email states. The OTA NAME is carried, never a
   // code: the branch decides the code.
-  const rooms: { quantity: number; otaRoomName: string | null; otaRoomTypeId: string | null }[] =
-    a?.roomTypeOriginal
-      ? [
-          {
-            quantity: a.roomQuantity && a.roomQuantity > 0 ? a.roomQuantity : 1,
-            // The NORMALISED name: Agoda's trailing "(2)" is a style marker, and
-            // the branch's mappings are keyed by the name without it. The raw
-            // form stays on the parsed booking for audit.
-            otaRoomName: a.roomTypeNormalized ?? a.roomTypeOriginal,
-            otaRoomTypeId: null,
-          },
-        ]
-      : [];
+  const quantity = a?.roomQuantity && a.roomQuantity > 0 ? a.roomQuantity : 1;
+  // The nightly figure the email stated, but ONLY when every night carries the
+  // same amount. A stay whose nights differ has no single nightly figure, and
+  // picking one of them would present a guess as a quoted rate.
+  const nightlyAmounts = (a?.nightlyRates ?? []).map((n) => n.amount);
+  const uniformNightly =
+    nightlyAmounts.length > 0 && nightlyAmounts.every((n) => n != null && n === nightlyAmounts[0])
+      ? nightlyAmounts[0]!
+      : null;
+
+  const rooms = a?.roomTypeOriginal
+    ? [
+        {
+          quantity,
+          // The NORMALISED name: Agoda's trailing "(2)" is a style marker, and
+          // the branch's mappings are keyed by the name without it.
+          otaRoomName: a.roomTypeNormalized ?? a.roomTypeOriginal,
+          // The name exactly as Agoda printed it, kept for audit.
+          rawOtaRoomName: a.roomTypeOriginal,
+          otaRoomTypeId: null,
+          sourceNightlyTotal: uniformNightly,
+          perRoomNightlyRate:
+            uniformNightly != null && uniformNightly % quantity === 0
+              ? uniformNightly / quantity
+              : null,
+        },
+      ]
+    : [];
 
   return {
     bookingCode: a?.bookingId ?? parsed.bookingCode,

@@ -366,9 +366,13 @@ describe('confirmed CTrip reservation 1658113703317875', () => {
       {
         quantity: 1,
         otaRoomName: 'Standard Double Room No Window',
+        rawOtaRoomName: 'Standard Double Room No Window',
         otaRoomTypeId: null,
         pmsCode: 'STAN',
         requiresManualMapping: false,
+        // CTrip states no per-night breakdown, and none is invented.
+        sourceNightlyTotal: null,
+        perRoomNightlyRate: null,
       },
     ]);
   });

@@ -295,6 +295,74 @@ describe('room rows', () => {
 /* Payment mode and prices                                             */
 /* ================================================================== */
 
+describe('rendering a fully-resolved server response', () => {
+  /**
+   * The shape the real route returns for the confirmed Agoda booking, with
+   * every field populated. The panel must SHOW all of it and warn about none
+   * of it — a false "missing check-in" on a booking that has one is what makes
+   * an Admin distrust the screen.
+   */
+  const REAL: OtaReviewResponse = {
+    ...response(),
+    review: {
+      ...response().review,
+      source: 'AGODA',
+      bookingCode: '1756224954',
+      guestName: 'Nga Đỗ',
+      checkIn: '2026-08-04',
+      checkOut: '2026-08-05',
+      nights: 1,
+      rooms: [
+        {
+          quantity: 1,
+          otaRoomName: 'Superior Double Room',
+          rawOtaRoomName: 'Superior Double Room',
+          otaRoomTypeId: null,
+          pmsCode: 'SUP',
+          requiresManualMapping: false,
+          sourceNightlyTotal: 529_537,
+          perRoomNightlyRate: 529_537,
+        },
+      ],
+      branchPrice: 529_537,
+      guestBookedPrice: 875_000,
+      note: 'AGD 1756224954_1SUP_1DEM 529.537 CN\nGIÁ KHÁCH ĐẶT 875.000 KHONG AN SANG',
+      noteError: null,
+      warnings: [],
+      canDispatch: true,
+      blockingReasons: [],
+    },
+  };
+
+  it('shows guest, dates, room and prices', async () => {
+    mockReview(REAL);
+    mount('AGODA');
+
+    await screen.findByTestId('ota-review');
+    expect(screen.getByLabelText('Mã đặt phòng')).toHaveValue('1756224954');
+    expect(screen.getByLabelText('Tên khách')).toHaveValue('Nga Đỗ');
+    expect(screen.getByLabelText('Nhận phòng')).toHaveValue('2026-08-04');
+    expect(screen.getByLabelText('Trả phòng')).toHaveValue('2026-08-05');
+    expect(screen.getByTestId('ota-nights').textContent).toContain('1');
+    expect(screen.getByLabelText('Tên hạng phòng dòng 1')).toHaveValue('Superior Double Room');
+    expect(screen.getByLabelText('Số lượng phòng dòng 1')).toHaveValue(1);
+    expect(screen.getByLabelText('Giá chi nhánh')).toHaveValue('529537');
+    expect(screen.getByLabelText('Giá khách đặt')).toHaveValue('875000');
+  });
+
+  it('shows the note and no missing-field warnings', async () => {
+    mockReview(REAL);
+    mount('AGODA');
+
+    await screen.findByTestId('ota-review');
+    expect(screen.getByTestId('ota-note').textContent).toContain(
+      'AGD 1756224954_1SUP_1DEM 529.537 CN',
+    );
+    expect(screen.queryByTestId('ota-warnings')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('ota-blocking')).not.toBeInTheDocument();
+  });
+});
+
 describe('breakfast', () => {
   it('is fixed to "no breakfast" and cannot be toggled', async () => {
     // Agoda and CTrip stays at these branches include no breakfast — a
