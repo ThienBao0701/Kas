@@ -213,14 +213,27 @@ enum RoomClassResolutionStatus {
   LEGACY
 }
 
-/// Booking-scoped audit trail (guests, room-mapping re-application). Mirrors the
-/// shape of BranchChangeLog so both trails read the same way.
+/// Booking-scoped audit trail (guests, room-mapping re-application, proof
+/// lifecycle). Mirrors the shape of BranchChangeLog so both trails read the
+/// same way.
+///
+/// The BOOKING_PROOF_* members close the two holes in the operational timeline:
+/// BookingStatusHistory can only record BookingStatus transitions, but proof
+/// submission and rejection change `verificationStatus` while `status` stays
+/// NEW, so neither was recorded anywhere queryable as history.
+///
+/// BOOKING_PROOF_REJECTED IS the "correction requested" event — rejecting with
+/// a reason is exactly how an Admin asks a receptionist to recreate and
+/// resubmit. There is deliberately no separate correction state.
 enum BookingAuditAction {
   BOOKING_GUEST_ADDED
   BOOKING_GUEST_UPDATED
   BOOKING_GUEST_REMOVED
   BOOKING_PRIMARY_GUEST_CHANGED
   BOOKING_ROOM_MAPPING_REAPPLIED
+  BOOKING_PROOF_SUBMITTED
+  BOOKING_PROOF_APPROVED
+  BOOKING_PROOF_REJECTED
 }
 
 /// Severity of an extraction warning surfaced to the admin during preview.

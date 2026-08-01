@@ -1,4 +1,4 @@
-import type { Prisma, ProofReviewReason } from '@prisma/client';
+import type { BookingAuditAction, Prisma, ProofReviewReason } from '@prisma/client';
 import { prisma } from '../db/prisma';
 import { ApiError } from '../lib/errors';
 import { getClock, type Clock } from '../lib/clock';
@@ -6,7 +6,57 @@ import { loadBookingDetail } from './bookingRepo';
 import { generateStoredFileName, saveProofFile, sniffImageMime } from './proofStorage';
 import type { BookingDetail } from './bookingView';
 
-type Actor = { id: number; role: 'ADMIN' | 'RECEPTIONIST'; branchId: number | null; fullName: string };
+type Actor = {
+  id: number;
+  role: 'ADMIN' | 'RECEPTIONIST';
+  branchId: number | null;
+  fullName: string;
+  /** Request correlation id, when the caller supplied one. Audit metadata only. */
+  correlationId?: string | null;
+};
+
+/**
+ * Writes one immutable proof-lifecycle audit event.
+ *
+ * WHAT IS DELIBERATELY NOT STORED: the proof image or its bytes, the stored file
+ * name, the free-text review note, guest details, raw booking text, or any
+ * credential. `reason` is always a stable machine code — either the attempt
+ * number or a ProofReviewReason enum member — so the trail is queryable without
+ * ever holding operational or personal data.
+ *
+ * The branch is intentionally NOT duplicated onto this row: it is reachable
+ * through the booking relation, and denormalising it would let the audit trail
+ * drift from the booking it describes.
+ *
+ * Every caller runs this INSIDE the transaction that also performs the
+ * conditional status update, so a retried or racing request that loses the
+ * update writes no event either — the trail cannot double-count.
+ */
+async function recordProofAudit(
+  tx: Prisma.TransactionClient,
+  input: {
+    bookingId: string;
+    action: BookingAuditAction;
+    oldValue: string | null;
+    newValue: string;
+    reason: string | null;
+    actor: Actor;
+  },
+): Promise<void> {
+  await tx.bookingAuditEvent.create({
+    data: {
+      bookingId: input.bookingId,
+      action: input.action,
+      field: 'verificationStatus',
+      oldValue: input.oldValue,
+      newValue: input.newValue,
+      reason: input.reason,
+      actorUserId: input.actor.id,
+      actorRole: input.actor.role,
+      correlationId: input.actor.correlationId ?? null,
+    },
+  });
+}
 
 export interface UploadedProof {
   buffer: Buffer;
@@ -64,14 +114,53 @@ export async function submitProof(
   const mime = sniffImageMime(file.buffer);
   if (!mime) throw ApiError.unsupportedMedia();
 
-  const attemptNumber = (await prisma.bookingCreationProof.count({ where: { bookingId } })) + 1;
-  const storedFileName = generateStoredFileName(bookingId, attemptNumber, mime);
+  const previousStatus = booking.verificationStatus;
 
-  // Write the file first; if the DB write then fails on a race, the file is a
-  // harmless orphan (proofs are never deleted anyway).
-  await saveProofFile(file.buffer, storedFileName);
-
+  // ONE transaction, opening with a CONDITIONAL CLAIM of the booking.
+  //
+  // THE RACE THIS CLOSES: the attempt number used to be counted before the
+  // transaction opened. Two receptionists submitting the first proof at the
+  // same instant both read zero, both computed attemptNumber = 1, and the
+  // loser hit the (bookingId, attemptNumber) unique index — surfacing as a
+  // generic "Dữ liệu đã tồn tại" that means nothing to a receptionist.
+  //
+  // The claim below serialises them on the booking row instead: the second
+  // transaction blocks on the first, re-evaluates its WHERE once the first
+  // commits, matches nothing (verificationStatus is no longer NOT_SUBMITTED /
+  // REJECTED) and returns a clear operational conflict. Counting inside the
+  // claim is therefore safe — no other submitter can be in flight.
   await prisma.$transaction(async (tx) => {
+    const claimed = await tx.booking.updateMany({
+      where: {
+        id: bookingId,
+        status: 'NEW',
+        verificationStatus: { in: ['NOT_SUBMITTED', 'REJECTED'] },
+      },
+      // The receptionist's claim that they created the reservation externally.
+      data: {
+        verificationStatus: 'PENDING_REVIEW',
+        completedByUserId: actor.id,
+        completedAt: clock.now(),
+        // A resubmission clears the previous review verdict.
+        reviewedByUserId: null,
+        reviewedAt: null,
+      },
+    });
+    if (claimed.count === 0) {
+      throw ApiError.conflict(
+        'Đơn vừa được cập nhật ở nơi khác (đang chờ Admin kiểm tra hoặc đã đổi trạng thái). Vui lòng tải lại.',
+        { verificationStatus: previousStatus },
+      );
+    }
+
+    const attemptNumber = (await tx.bookingCreationProof.count({ where: { bookingId } })) + 1;
+    const storedFileName = generateStoredFileName(bookingId, attemptNumber, mime);
+
+    // Written before the row exists, so a later failure leaves at most an
+    // orphan file (proofs are never deleted anyway) and never a database row
+    // pointing at an image that was never saved.
+    await saveProofFile(file.buffer, storedFileName);
+
     await tx.bookingCreationProof.create({
       data: {
         bookingId,
@@ -86,17 +175,14 @@ export async function submitProof(
       },
     });
 
-    // The receptionist's claim that they created the reservation externally.
-    await tx.booking.update({
-      where: { id: bookingId },
-      data: {
-        verificationStatus: 'PENDING_REVIEW',
-        completedByUserId: actor.id,
-        completedAt: clock.now(),
-        // A resubmission clears the previous review verdict.
-        reviewedByUserId: null,
-        reviewedAt: null,
-      },
+    // Submitting the proof IS submitting for review — one action, one event.
+    await recordProofAudit(tx, {
+      bookingId,
+      action: 'BOOKING_PROOF_SUBMITTED',
+      oldValue: previousStatus,
+      newValue: 'PENDING_REVIEW',
+      reason: `PROOF_ATTEMPT_${attemptNumber}`,
+      actor,
     });
 
     await notifyAdminsProofSubmitted(tx, bookingId, booking);
@@ -167,6 +253,15 @@ export async function approveProof(
       },
     });
 
+    await recordProofAudit(tx, {
+      bookingId,
+      action: 'BOOKING_PROOF_APPROVED',
+      oldValue: 'PENDING_REVIEW',
+      newValue: 'APPROVED',
+      reason: `PROOF_ATTEMPT_${proof.attemptNumber}`,
+      actor: admin,
+    });
+
     await notifyReceptionist(tx, proof.submittedByUserId, bookingId, 'Đơn đã được xác nhận đúng', await bookingCodeOf(tx, bookingId));
   });
 
@@ -210,6 +305,19 @@ export async function rejectProof(
     await tx.booking.update({
       where: { id: bookingId },
       data: { verificationStatus: 'REJECTED', reviewedByUserId: admin.id, reviewedAt: clock.now() },
+    });
+
+    // This IS the "correction requested" event: rejecting with a reason is how
+    // an Admin asks for the reservation to be recreated and resubmitted. Only
+    // the stable reason CODE is stored — never the free-text review note, which
+    // can contain operational or guest detail.
+    await recordProofAudit(tx, {
+      bookingId,
+      action: 'BOOKING_PROOF_REJECTED',
+      oldValue: 'PENDING_REVIEW',
+      newValue: 'REJECTED',
+      reason: reasonCode,
+      actor: admin,
     });
 
     await notifyReceptionist(

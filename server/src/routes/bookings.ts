@@ -110,8 +110,19 @@ function branchScope(user: UserWithBranch, requested: number | undefined): numbe
   return user.branchId ?? -1; // -1 never matches, so an unassigned receptionist sees nothing
 }
 
-function actor(user: UserWithBranch) {
-  return { id: user.id, role: user.role, branchId: user.branchId, fullName: user.fullName };
+/**
+ * The acting user, plus the request correlation id so booking-scoped audit
+ * events can be tied back to one HTTP request. The id is opaque metadata — it
+ * is never a credential and never identifies anything but the request.
+ */
+function actor(user: UserWithBranch, correlationId?: string) {
+  return {
+    id: user.id,
+    role: user.role,
+    branchId: user.branchId,
+    fullName: user.fullName,
+    correlationId: correlationId ?? null,
+  };
 }
 
 export function createBookingsRouter(): Router {
@@ -326,7 +337,7 @@ export function createBookingsRouter(): Router {
         const file = req.file
           ? { buffer: req.file.buffer, originalName: req.file.originalname, size: req.file.size }
           : undefined;
-        const booking = await submitProof(req.params.id!, file, note, actor(user), getClock());
+        const booking = await submitProof(req.params.id!, file, note, actor(user, req.requestId), getClock());
 
         // Advisory OCR extraction on the just-created proof. It never blocks or
         // fails the upload: awaited only in tests for determinism, fire-and-forget
@@ -354,7 +365,7 @@ export function createBookingsRouter(): Router {
       const { storedFileName, mimeType } = await authorizeProofImage(
         req.params.id!,
         req.params.proofId!,
-        actor(user),
+        actor(user, req.requestId),
       );
       const bytes = await readProofFile(storedFileName);
       res.setHeader('Content-Type', mimeType);
@@ -374,7 +385,7 @@ export function createBookingsRouter(): Router {
     (req, res, next) => {
       (async () => {
         const user = req.currentUser!;
-        const booking = await approveProof(req.params.id!, req.params.proofId!, actor(user), getClock());
+        const booking = await approveProof(req.params.id!, req.params.proofId!, actor(user, req.requestId), getClock());
         res.json({ booking: serializeOpsBookingDetail(booking, true) });
       })().catch(next);
     },
@@ -395,7 +406,7 @@ export function createBookingsRouter(): Router {
           req.params.proofId!,
           reasonCode,
           reviewNote,
-          actor(user),
+          actor(user, req.requestId),
           getClock(),
         );
         res.json({ booking: serializeOpsBookingDetail(booking, true) });

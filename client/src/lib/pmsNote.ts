@@ -11,20 +11,6 @@
 import type { BookingDetail, PaymentStatus, RoomView } from '../api/bookings';
 import { formatAmountCopy, hcmDayMonth, nightCount } from './format';
 
-/**
- * Branches that serve breakfast (line 2 gets an "ĂN SÁNG" prefix). Keyed by the
- * stable seeded branch `code` — never by array position or numeric DB id.
- * The three configured branches are:
- *   - LY_TU_TRONG_260        → 260 Lý Tự Trọng
- *   - NGUYEN_TRAI_47A        → 47A Nguyễn Trãi
- *   - NGUYEN_THAI_BINH_170   → 170-172-174 Nguyễn Thái Bình
- */
-export const BREAKFAST_BRANCH_CODES: ReadonlySet<string> = new Set([
-  'LY_TU_TRONG_260',
-  'NGUYEN_TRAI_47A',
-  'NGUYEN_THAI_BINH_170',
-]);
-
 const NO_CODE_MESSAGE = 'Chưa có mã Booking để tạo ghi chú.';
 
 /** Lower-cases and strips Vietnamese diacritics (incl. đ) for keyword matching. */
@@ -173,7 +159,10 @@ export function buildPmsNote(b: BookingDetail, now: Date = new Date()): PmsNoteR
     b.totalAmount,
   )} ${paymentCode(b.paymentStatus)} CI`.replace(/ {2,}/g, ' ');
 
-  const breakfast = b.branch ? BREAKFAST_BRANCH_CODES.has(b.branch.code) : false;
+  // Breakfast comes from the branch's own configuration (Branch.breakfastIncluded),
+  // which an Admin edits in "Khách sạn & chi nhánh" and which applies to every
+  // branch alike. It is never inferred from a branch code, id or list position.
+  const breakfast = b.branch?.breakfastIncluded === true;
   const arrival = arrivalNote(b.specialRequest);
   // For a partner booking the contact label (CÓ ZL / CÓ WA / NO CONTACT) is
   // replaced by "ĐƠN ĐỐI TÁC"; breakfast, date, arrival and requests are kept.

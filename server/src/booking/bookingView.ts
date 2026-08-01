@@ -50,9 +50,25 @@ function isoDate(date: Date | null): string | null {
   return date ? date.toISOString().slice(0, 10) : null;
 }
 
+/**
+ * The branch fields every booking-scoped response carries.
+ *
+ * `breakfastIncluded` is part of this shape because it is OPERATIONAL data the
+ * receptionist's PMS note depends on. It used to be absent, which forced both
+ * the client note builder and the server proof-comparison to hardcode a set of
+ * branch codes — so an Admin toggling breakfast in branch management changed
+ * nothing. The database column is the single source of truth for every branch.
+ */
 function branchView(branch: BookingDetail['branch']) {
   return branch
-    ? { id: branch.id, code: branch.code, hotelName: branch.hotelName, address: branch.address }
+    ? {
+        id: branch.id,
+        code: branch.code,
+        hotelName: branch.hotelName,
+        address: branch.address,
+        branchNumber: branch.branchNumber,
+        breakfastIncluded: branch.breakfastIncluded,
+      }
     : null;
 }
 

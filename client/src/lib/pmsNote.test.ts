@@ -189,7 +189,7 @@ describe('buildPmsNote — exact output', () => {
     const res = buildPmsNote(
       booking({
         bookingCode: '6339476198',
-        branch: { id: 2, code: 'LY_TU_TRONG_260', hotelName: 'L', address: '260 Lý Tự Trọng' },
+        branch: { id: 2, code: 'LY_TU_TRONG_260', hotelName: 'L', address: '260 Lý Tự Trọng', breakfastIncluded: true },
         totalAmount: 510_138,
         paymentStatus: 'PAY_BEFORE',
         phone: '+84 901 234 567',
@@ -203,7 +203,7 @@ describe('buildPmsNote — exact output', () => {
     const res = buildPmsNote(
       booking({
         bookingCode: '6339476198',
-        branch: { id: 3, code: 'NGUYEN_TRAI_47A', hotelName: 'L', address: '47A Nguyễn Trãi' },
+        branch: { id: 3, code: 'NGUYEN_TRAI_47A', hotelName: 'L', address: '47A Nguyễn Trãi', breakfastIncluded: true },
         totalAmount: 510_138,
         paymentStatus: 'PAY_BEFORE',
         phone: '+64 210 812 1300',
@@ -235,7 +235,7 @@ describe('buildPmsNote — exact output', () => {
     const res = buildPmsNote(
       booking({
         bookingCode: '6339476198',
-        branch: { id: 2, code: 'LY_TU_TRONG_260', hotelName: 'L', address: '260 Lý Tự Trọng' },
+        branch: { id: 2, code: 'LY_TU_TRONG_260', hotelName: 'L', address: '260 Lý Tự Trọng', breakfastIncluded: true },
         totalAmount: 510_138,
         paymentStatus: 'PAY_AFTER',
         phone: '+84 901 234 567',
@@ -254,7 +254,7 @@ describe('buildPmsNote — exact output', () => {
     const res = buildPmsNote(
       booking({
         bookingCode: '6339476198',
-        branch: { id: 3, code: 'NGUYEN_TRAI_47A', hotelName: 'L', address: '47A Nguyễn Trãi' },
+        branch: { id: 3, code: 'NGUYEN_TRAI_47A', hotelName: 'L', address: '47A Nguyễn Trãi', breakfastIncluded: true },
         totalAmount: 510_138,
         paymentStatus: 'PAY_BEFORE',
         phone: '+84 901 234 567',
@@ -266,6 +266,56 @@ describe('buildPmsNote — exact output', () => {
     expect(res.text).toBe(
       'BK 6339476198_STAN_1 ĐÊM 510.138 PAY BEFORE CHECK-IN CI\nĂN SÁNG 22/07 ĐƠN ĐỐI TÁC KHÁCH ĐẾN KHOẢNG 13:00',
     );
+  });
+
+  // ------------------------------------------------------------------
+  // Breakfast is branch CONFIGURATION, not a branch code.
+  //
+  // These two cases are the regression guard: the note used to be driven by a
+  // hardcoded set of three branch codes, so an Admin toggling "phục vụ ăn sáng"
+  // in branch management changed nothing. Each case pairs a branch code with
+  // the OPPOSITE of what that old table said, so the assertions can only pass
+  // if Branch.breakfastIncluded is what decides. They also prove the behaviour
+  // is available to every branch, not a privileged three.
+  // ------------------------------------------------------------------
+  it('B1 — a historically-breakfast branch code with breakfastIncluded=false gets NO ĂN SÁNG', () => {
+    const res = buildPmsNote(
+      booking({
+        branch: {
+          id: 2,
+          code: 'LY_TU_TRONG_260',
+          hotelName: 'L',
+          address: '260 Lý Tự Trọng',
+          breakfastIncluded: false,
+        },
+      }),
+      NOW,
+    );
+    expect(res.text).not.toContain('ĂN SÁNG');
+    expect(res.text!.split('\n')[1]).toBe('22/07 NO CONTACT');
+  });
+
+  it('B2 — any other branch with breakfastIncluded=true gets ĂN SÁNG', () => {
+    const res = buildPmsNote(
+      booking({
+        branch: {
+          id: 8,
+          code: 'LE_THANH_TON_191',
+          hotelName: 'D',
+          address: '191 Lê Thánh Tôn',
+          breakfastIncluded: true,
+        },
+      }),
+      NOW,
+    );
+    expect(res.text!.split('\n')[1]).toBe('ĂN SÁNG 22/07 NO CONTACT');
+  });
+
+  it('B3 — a branch payload without the field is treated as no breakfast', () => {
+    // Older cached payloads may predate the field; absence must never be read
+    // as "serves breakfast".
+    const res = buildPmsNote(booking(), NOW);
+    expect(res.text).not.toContain('ĂN SÁNG');
   });
 
   it('G — first line has exactly one space after "BK" (never "BK<digit>")', () => {
