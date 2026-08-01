@@ -1,0 +1,456 @@
+/**
+ * The Admin OTA review panel.
+ *
+ * The panel holds no business rules of its own: the note, the selectable PMS
+ * codes and `canDispatch` all come from the server, and every edit is sent back
+ * for re-resolution. These tests therefore assert two things — that the panel
+ * FAITHFULLY renders what the server said, and that it cannot let an Admin act
+ * on something the server refused.
+ *
+ * The server is mocked here so each scenario is deterministic; the real
+ * resolution logic is covered by the server suites.
+ */
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { OtaReviewPanel } from './OtaReviewPanel';
+import type { OtaReviewResponse, OtaReviewRoomLine } from '../api/otaReview';
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
+const BRANCHES = [
+  { id: 5, code: 'LE_THANH_TON_278', branchNumber: 5, address: '278 Lê Thánh Tôn', hotelName: 'Zody' },
+  { id: 4, code: 'NGUYEN_THAI_BINH_170', branchNumber: 4, address: '170 Nguyễn Thái Bình', hotelName: 'Indochina' },
+];
+
+const CN5_CODES = ['STAN', 'SUP', 'TWIN', 'DEL', 'STU', 'SUITE'];
+const CN4_CODES = ['SUP', 'DEL12', 'DEL34', 'DD', 'DEBAL', 'SUITEBAL'];
+
+function room(over: Partial<OtaReviewRoomLine> = {}): OtaReviewRoomLine {
+  return {
+    quantity: 1,
+    otaRoomName: 'Standard Double Room No Window',
+    otaRoomTypeId: null,
+    pmsCode: null,
+    requiresManualMapping: true,
+    ...over,
+  };
+}
+
+/** A CTrip review as the server would return it. */
+function response(over: Partial<OtaReviewResponse['review']> = {}, codes = CN5_CODES): OtaReviewResponse {
+  return {
+    review: {
+      source: 'CTRIP',
+      branchId: 5,
+      branchCode: 'LE_THANH_TON_278',
+      branchAddress: '278 Lê Thánh Tôn',
+      requiresManualBranch: false,
+      bookingCode: '1658113703317875',
+      guestName: 'LEE/JENSON HWEE',
+      checkIn: '2026-08-01',
+      checkOut: '2026-08-08',
+      nights: 7,
+      rooms: [room()],
+      nightlyRates: [],
+      branchPrice: 4_645_956,
+      guestBookedPrice: 6_637_080,
+      breakfastIncluded: false,
+      paymentMode: 'CN',
+      note: null,
+      noteError: 'Chưa đủ dữ liệu để tạo ghi chú: mã hạng phòng nội bộ.',
+      warnings: [
+        {
+          code: 'OTA_ROOM_MAPPING_UNRESOLVED',
+          message: 'Chưa có hạng phòng nội bộ cho "Standard Double Room No Window" tại chi nhánh này.',
+          severity: 'ERROR',
+        },
+      ],
+      canDispatch: false,
+      blockingReasons: ['Còn hạng phòng chưa gán mã nội bộ.'],
+      ...over,
+    },
+    branchOptions: BRANCHES,
+    validPmsCodes: codes,
+    knownOtaRoomNames: [],
+  };
+}
+
+/** The resolved form of the confirmed CTrip sample, after manual STAN. */
+const RESOLVED = response({
+  rooms: [room({ pmsCode: 'STAN', requiresManualMapping: false })],
+  note: 'CTRIP_1658113703317875_1STAN_7DEM 4.645.956 CN\nGIÁ KHÁCH ĐẶT 6.637.080 KHONG AN SANG',
+  noteError: null,
+  warnings: [],
+  canDispatch: true,
+  blockingReasons: [],
+});
+
+/**
+ * Mocks the review endpoint. `sequence` supplies successive responses so a test
+ * can model "unresolved, then resolved after the Admin corrects it".
+ */
+function mockReview(...sequence: OtaReviewResponse[]) {
+  const bodies: unknown[] = [];
+  let call = 0;
+  const fetchMock = vi.fn(async (_url: string | URL, init: RequestInit = {}) => {
+    if (init.body) bodies.push(JSON.parse(String(init.body)));
+    const payload = sequence[Math.min(call, sequence.length - 1)]!;
+    call += 1;
+    return new Response(JSON.stringify(payload), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  return { bodies, fetchMock };
+}
+
+const mount = (source: 'AGODA' | 'CTRIP' = 'CTRIP') =>
+  render(<OtaReviewPanel source={source} rawText="RAW" />);
+
+/* ================================================================== */
+/* Rendering what the server said                                      */
+/* ================================================================== */
+
+describe('renders the server review', () => {
+  it('shows every CTrip field', async () => {
+    mockReview(RESOLVED);
+    mount();
+
+    expect(await screen.findByDisplayValue('1658113703317875')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('LEE/JENSON HWEE')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('2026-08-01')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('2026-08-08')).toBeInTheDocument();
+    expect(screen.getByTestId('ota-nights')).toHaveTextContent('7');
+    expect(screen.getByLabelText('Giá chi nhánh')).toHaveValue('4645956');
+    expect(screen.getByLabelText('Giá khách đặt')).toHaveValue('6637080');
+  });
+
+  it('shows Agoda price labels naming the platform fields', async () => {
+    mockReview({
+      ...RESOLVED,
+      review: { ...RESOLVED.review, source: 'AGODA' },
+    });
+    mount('AGODA');
+
+    expect(await screen.findByText(/Net rate/)).toBeInTheDocument();
+    expect(screen.getByText(/Reference sell rate/)).toBeInTheDocument();
+  });
+
+  it('states plainly that no nightly prices were supplied', async () => {
+    mockReview(RESOLVED);
+    mount();
+    expect(await screen.findByTestId('ota-no-nightly')).toHaveTextContent(
+      /không tự chia tổng tiền/,
+    );
+  });
+
+  it('shows the exact server note verbatim', async () => {
+    mockReview(RESOLVED);
+    mount();
+    expect(await screen.findByTestId('ota-note')).toHaveTextContent(
+      'CTRIP_1658113703317875_1STAN_7DEM 4.645.956 CN GIÁ KHÁCH ĐẶT 6.637.080 KHONG AN SANG',
+    );
+  });
+});
+
+/* ================================================================== */
+/* Unresolved mappings block dispatch                                  */
+/* ================================================================== */
+
+describe('unresolved room mapping', () => {
+  it('blocks dispatch and shows the specific reason, not a generic error', async () => {
+    mockReview(response());
+    mount();
+
+    await screen.findByTestId('ota-review');
+    expect(screen.getByRole('button', { name: /Gửi chi nhánh/ })).toBeDisabled();
+    expect(screen.getByTestId('ota-blocking')).toHaveTextContent(
+      'Còn hạng phòng chưa gán mã nội bộ.',
+    );
+    expect(screen.getByTestId('ota-warnings')).toHaveTextContent(/Standard Double Room No Window/);
+    // No note exists, so copying is not offered.
+    expect(screen.getByRole('button', { name: /Sao chép note/ })).toBeDisabled();
+  });
+
+  it('unblocks after the Admin picks STAN for CN5', async () => {
+    const { bodies } = mockReview(response(), RESOLVED);
+    mount();
+
+    await screen.findByTestId('ota-review');
+    await userEvent.selectOptions(screen.getByLabelText('Mã nội bộ dòng 1'), 'STAN');
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Gửi chi nhánh/ })).toBeEnabled(),
+    );
+    expect(screen.getByTestId('ota-note')).toHaveTextContent('1STAN_7DEM');
+
+    // The correction really was sent to the server.
+    const last = bodies[bodies.length - 1] as { overrides?: { rooms?: { pmsCode: string }[] } };
+    expect(last.overrides?.rooms?.[0]?.pmsCode).toBe('STAN');
+  });
+});
+
+/* ================================================================== */
+/* The selector only offers what the branch has                        */
+/* ================================================================== */
+
+describe('PMS-code selector', () => {
+  it('offers only the selected branch codes and never free text', async () => {
+    mockReview(response());
+    mount();
+
+    const select = await screen.findByLabelText('Mã nội bộ dòng 1');
+    expect(select.tagName).toBe('SELECT'); // never a text input
+    const options = within(select as HTMLElement).getAllByRole('option').map((o) => o.textContent);
+    for (const code of CN5_CODES) expect(options).toContain(code);
+  });
+
+  it('does not offer STAN at CN4', async () => {
+    mockReview(
+      response({ branchId: 4, branchCode: 'NGUYEN_THAI_BINH_170' }, CN4_CODES),
+    );
+    mount();
+
+    const select = await screen.findByLabelText('Mã nội bộ dòng 1');
+    const options = within(select as HTMLElement).getAllByRole('option').map((o) => o.textContent);
+    expect(options).not.toContain('STAN');
+    expect(options).toContain('DEL12');
+  });
+
+  it('changing branch re-asks the server and drops stale room overrides', async () => {
+    const { bodies } = mockReview(
+      RESOLVED,
+      response({ branchId: 4, branchCode: 'NGUYEN_THAI_BINH_170' }, CN4_CODES),
+    );
+    mount();
+
+    await screen.findByTestId('ota-review');
+    await userEvent.selectOptions(screen.getByLabelText('Chi nhánh'), '4');
+
+    await waitFor(() => {
+      const last = bodies[bodies.length - 1] as { overrides?: { branchId?: number; rooms?: unknown } };
+      expect(last.overrides?.branchId).toBe(4);
+      // Room overrides are cleared so the server re-resolves for the new branch.
+      expect(last.overrides?.rooms).toBeUndefined();
+    });
+  });
+});
+
+/* ================================================================== */
+/* Room rows                                                           */
+/* ================================================================== */
+
+describe('room rows', () => {
+  it('adds a row', async () => {
+    const { bodies } = mockReview(RESOLVED);
+    mount();
+
+    await screen.findByTestId('ota-review');
+    await userEvent.click(screen.getByRole('button', { name: /Thêm loại phòng/ }));
+
+    await waitFor(() => {
+      const last = bodies[bodies.length - 1] as { overrides?: { rooms?: unknown[] } };
+      expect(last.overrides?.rooms).toHaveLength(2);
+    });
+  });
+
+  it('removes a row', async () => {
+    const { bodies } = mockReview(RESOLVED);
+    mount();
+
+    await screen.findByTestId('ota-review');
+    await userEvent.click(screen.getAllByRole('button', { name: /Xoá/ })[0]!);
+
+    await waitFor(() => {
+      const last = bodies[bodies.length - 1] as { overrides?: { rooms?: unknown[] } };
+      expect(last.overrides?.rooms).toHaveLength(0);
+    });
+  });
+
+  it('renders a multi-room note exactly as the server built it', async () => {
+    mockReview(
+      response({
+        rooms: [
+          room({ pmsCode: 'SUP', requiresManualMapping: false }),
+          room({ quantity: 1, pmsCode: 'DEL', requiresManualMapping: false }),
+        ],
+        note: 'AGD 123456789_2SUP_1DEL_3DEM 6.500.000 CN\nGIÁ KHÁCH ĐẶT 8.200.000 KHONG AN SANG',
+        noteError: null,
+        warnings: [],
+        canDispatch: true,
+        blockingReasons: [],
+      }),
+    );
+    mount();
+    expect(await screen.findByTestId('ota-note')).toHaveTextContent('2SUP_1DEL_3DEM');
+  });
+});
+
+/* ================================================================== */
+/* Payment mode and prices                                             */
+/* ================================================================== */
+
+describe('payment mode', () => {
+  it('offers exactly CN and THANH TOÁN KHÁCH SẠN', async () => {
+    mockReview(RESOLVED);
+    mount();
+
+    const select = await screen.findByLabelText('Hình thức thanh toán');
+    const options = within(select as HTMLElement).getAllByRole('option').map((o) => o.textContent);
+    expect(options).toEqual(['CN', 'THANH TOÁN KHÁCH SẠN']);
+    // Never the wrong wording.
+    expect(options).not.toContain('THANH TOÁN TẠI KHÁCH SẠN');
+  });
+
+  it('switching to hotel payment shows the one-line note', async () => {
+    mockReview(
+      RESOLVED,
+      response({
+        rooms: [room({ pmsCode: 'STAN', requiresManualMapping: false })],
+        paymentMode: 'HOTEL_PAYMENT',
+        note: 'CTRIP_1658113703317875_1STAN_7DEM 4.645.956 THANH TOÁN KHÁCH SẠN',
+        noteError: null,
+        warnings: [],
+        canDispatch: true,
+        blockingReasons: [],
+      }),
+    );
+    mount();
+
+    await screen.findByTestId('ota-review');
+    await userEvent.selectOptions(screen.getByLabelText('Hình thức thanh toán'), 'HOTEL_PAYMENT');
+
+    await waitFor(() => {
+      const note = screen.getByTestId('ota-note').textContent ?? '';
+      expect(note.split('\n')).toHaveLength(1);
+      expect(note).not.toContain('GIÁ KHÁCH ĐẶT');
+    });
+  });
+
+  it('blocks a CN note with no guest-booked price, naming the reason', async () => {
+    mockReview(
+      response({
+        rooms: [room({ pmsCode: 'STAN', requiresManualMapping: false })],
+        guestBookedPrice: null,
+        note: null,
+        noteError: 'Chưa đủ dữ liệu để tạo ghi chú: Original room rate.',
+        warnings: [],
+        canDispatch: false,
+        blockingReasons: ['Thiếu giá khách đặt (bắt buộc khi thanh toán CN).'],
+      }),
+    );
+    mount();
+
+    expect(await screen.findByTestId('ota-blocking')).toHaveTextContent('Thiếu giá khách đặt');
+    expect(screen.getByRole('button', { name: /Gửi chi nhánh/ })).toBeDisabled();
+  });
+
+  it('sends an edited branch price on blur, without fighting the response', async () => {
+    // Typed text lives in a local draft so an arriving response cannot overwrite
+    // a half-typed number; the value is committed when the field loses focus.
+    const { bodies } = mockReview(RESOLVED);
+    mount();
+
+    await screen.findByTestId('ota-review');
+    const branchPrice = screen.getByLabelText('Giá chi nhánh');
+    await userEvent.clear(branchPrice);
+    await userEvent.type(branchPrice, '5000000');
+    // The draft holds exactly what was typed — no server value mixed in.
+    expect(branchPrice).toHaveValue('5000000');
+
+    await userEvent.tab();
+
+    await waitFor(() => {
+      const last = bodies[bodies.length - 1] as { overrides?: { branchPrice?: number } };
+      expect(last.overrides?.branchPrice).toBe(5_000_000);
+    });
+  });
+
+  it('sends an edited guest-booked price on blur', async () => {
+    const { bodies } = mockReview(RESOLVED);
+    mount();
+
+    await screen.findByTestId('ota-review');
+    const guestPrice = screen.getByLabelText('Giá khách đặt');
+    await userEvent.clear(guestPrice);
+    await userEvent.type(guestPrice, '7000000');
+    await userEvent.tab();
+
+    await waitFor(() => {
+      const last = bodies[bodies.length - 1] as { overrides?: { guestBookedPrice?: number } };
+      expect(last.overrides?.guestBookedPrice).toBe(7_000_000);
+    });
+  });
+});
+
+/* ================================================================== */
+/* Copy note                                                           */
+/* ================================================================== */
+
+describe('copy note', () => {
+  it('copies exactly the visible note and confirms', async () => {
+    mockReview(RESOLVED);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    vi.stubGlobal('isSecureContext', true);
+    mount();
+
+    await screen.findByTestId('ota-note');
+    await userEvent.click(screen.getByRole('button', { name: /Sao chép note/ }));
+
+    await waitFor(() => expect(screen.getByText('Đã sao chép.')).toBeInTheDocument());
+    expect(writeText).toHaveBeenCalledWith(RESOLVED.review.note);
+  });
+
+  it('reports failure when the clipboard is unavailable', async () => {
+    mockReview(RESOLVED);
+    vi.stubGlobal('navigator', {
+      clipboard: { writeText: vi.fn().mockRejectedValue(new Error('denied')) },
+    });
+    mount();
+
+    await screen.findByTestId('ota-note');
+    await userEvent.click(screen.getByRole('button', { name: /Sao chép note/ }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/Không sao chép được/)).toBeInTheDocument(),
+    );
+  });
+});
+
+/* ================================================================== */
+/* Dispatch gating                                                     */
+/* ================================================================== */
+
+describe('dispatch', () => {
+  it('is enabled only when the server says canDispatch', async () => {
+    mockReview(RESOLVED);
+    mount();
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Gửi chi nhánh/ })).toBeEnabled(),
+    );
+  });
+
+  it('requires a branch and says so when recognition failed', async () => {
+    mockReview(
+      response({
+        branchId: null,
+        branchCode: null,
+        requiresManualBranch: true,
+        note: null,
+        canDispatch: false,
+        blockingReasons: ['Chưa chọn chi nhánh.'],
+      }),
+    );
+    mount();
+
+    expect(await screen.findByText(/Không nhận diện được chi nhánh/)).toBeInTheDocument();
+    expect(screen.getByTestId('ota-blocking')).toHaveTextContent('Chưa chọn chi nhánh.');
+    expect(screen.getByRole('button', { name: /Gửi chi nhánh/ })).toBeDisabled();
+  });
+});

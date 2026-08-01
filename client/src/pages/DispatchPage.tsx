@@ -6,6 +6,7 @@ import { bookingsApi, branchesApi, BUSINESS_TYPE_LABEL, SOURCE_LABEL, type Agoda
 import { ApiError, toUserMessage } from '../api/errors';
 import { branchLabel } from '../auth/types';
 import { AgodaPartnerCard } from '../components/AgodaPartnerCard';
+import { OtaReviewPanel } from '../components/OtaReviewPanel';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
 import { ErrorAlert } from '../components/ErrorAlert';
@@ -110,6 +111,9 @@ export function DispatchPage() {
   const navigate = useNavigate();
   const [source, setSource] = useState<BookingSource>('BOOKING_COM');
   const [rawText, setRawText] = useState('');
+  // Agoda and CTrip go through the server-authoritative review panel; the
+  // Booking.com flow below is untouched.
+  const [otaRawText, setOtaRawText] = useState<string | null>(null);
   const [draftId, setDraftId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState | null>(null);
   const [branchId, setBranchId] = useState<number | undefined>(undefined);
@@ -221,6 +225,26 @@ export function DispatchPage() {
     [branches.data, branchId],
   );
 
+  // --- Agoda / CTrip: server-authoritative review ---
+  if (otaRawText !== null && (source === 'AGODA' || source === 'CTRIP')) {
+    return (
+      <div className="space-y-4">
+        <PageHeader
+          title={`Kiểm tra & gửi — ${SOURCE_LABEL[source]}`}
+          description="Kiểm tra thông tin, gán hạng phòng, chọn hình thức thanh toán rồi sao chép ghi chú."
+        />
+        <OtaReviewPanel
+          source={source}
+          rawText={otaRawText}
+          onBack={() => {
+            setOtaRawText(null);
+            setRawText('');
+          }}
+        />
+      </div>
+    );
+  }
+
   // --- Stage 1: paste + extract ---
   if (!draftId) {
     // Only the platforms with a real intake parser. Tripadvisor and Traveloka
@@ -245,6 +269,7 @@ export function DispatchPage() {
                 aria-selected={source === s}
                 onClick={() => {
                   setSource(s);
+                  setOtaRawText(null);
                   extractMut.reset();
                 }}
                 className={`flex-shrink-0 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 ${
@@ -272,7 +297,11 @@ export function DispatchPage() {
           <p className="mt-1 text-xs text-slate-500">{SOURCE_HELP[source]}</p>
           <div className="mt-4">
             <Button
-              onClick={() => extractMut.mutate(rawText)}
+              onClick={() => {
+                // Booking.com keeps its existing extract-to-draft flow.
+                if (source === 'BOOKING_COM') extractMut.mutate(rawText);
+                else setOtaRawText(rawText);
+              }}
               disabled={rawText.trim().length === 0}
               loading={extractMut.isPending}
             >

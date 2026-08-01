@@ -1,0 +1,482 @@
+/**
+ * The Admin review screen for an Agoda or CTrip reservation.
+ *
+ * Every value shown here — including the note and whether dispatch is allowed —
+ * comes from the server. The Admin edits, the panel sends the corrections back,
+ * and the server re-resolves and re-validates. Nothing is decided locally: a PMS
+ * code is only offered if the server said it is valid for the selected branch,
+ * and the note is only ever the one the server generated.
+ *
+ * That round trip is the point. The note is pasted straight into the hotel PMS,
+ * so a preview computed from a second, client-side implementation could drift
+ * from what would actually be dispatched.
+ */
+import { useCallback, useEffect, useState } from 'react';
+import { AlertTriangle, Copy, Plus, Send, Trash2 } from 'lucide-react';
+import {
+  OTA_PAYMENT_LABEL,
+  OTA_SOURCE_LABEL,
+  otaReviewApi,
+  type OtaPaymentMode,
+  type OtaReviewOverrides,
+  type OtaReviewResponse,
+  type OtaReviewRoomLine,
+  type OtaReviewSource,
+} from '../api/otaReview';
+import { toUserMessage } from '../api/errors';
+import { Card } from './Card';
+import { Button } from './Button';
+import { ErrorAlert } from './ErrorAlert';
+import { copyText } from '../lib/copy';
+
+const inputClass =
+  'w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600';
+
+/** Whole VND from a typed value; empty stays null rather than becoming 0. */
+function parseAmount(raw: string): number | null {
+  const digits = raw.replace(/[^\d]/g, '');
+  return digits.length > 0 ? Number(digits) : null;
+}
+
+function formatAmount(value: number | null): string {
+  return value == null ? '' : String(value);
+}
+
+export interface OtaReviewPanelProps {
+  source: OtaReviewSource;
+  rawText: string;
+  /** Called when the Admin dispatches a review the server marked valid. */
+  onDispatch?: (branchId: number, note: string) => void;
+  onBack?: () => void;
+}
+
+export function OtaReviewPanel({ source, rawText, onDispatch, onBack }: OtaReviewPanelProps) {
+  const [overrides, setOverrides] = useState<OtaReviewOverrides>({});
+  const [data, setData] = useState<OtaReviewResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [copyState, setCopyState] = useState<'idle' | 'ok' | 'fail'>('idle');
+  /**
+   * Local text being typed, per field.
+   *
+   * Free-text inputs are NOT driven straight from the server response: every
+   * keystroke would round-trip, and the response arriving mid-word would
+   * overwrite what the Admin was still typing. The draft holds the in-progress
+   * value and is pushed on blur; selects, dates and checkboxes are single
+   * interactions and patch immediately.
+   */
+  const [draft, setDraft] = useState<Record<string, string>>({});
+
+  /**
+   * Re-asks the server after every correction. The Admin's overrides are sent
+   * verbatim, so a manual value is never lost to a re-parse of the raw text.
+   */
+  const refresh = useCallback(
+    async (next: OtaReviewOverrides) => {
+      setLoading(true);
+      setError(null);
+      try {
+        setData(await otaReviewApi.review(source, rawText, next));
+      } catch (err) {
+        setError(toUserMessage(err));
+      } finally {
+        setLoading(false);
+      }
+    },
+    [source, rawText],
+  );
+
+  useEffect(() => {
+    void refresh({});
+    // Deliberately keyed on the pasted text and source only: an override change
+    // triggers its own refresh through `patch`.
+  }, [refresh]);
+
+  /** The value to display: what is being typed, else what the server returned. */
+  const shown = (key: string, serverValue: string): string =>
+    draft[key] !== undefined ? draft[key]! : serverValue;
+
+  const setDraftValue = (key: string, value: string) =>
+    setDraft((d) => ({ ...d, [key]: value }));
+
+  const patch = (change: Partial<OtaReviewOverrides>) => {
+    const next = { ...overrides, ...change };
+    setOverrides(next);
+    void refresh(next);
+  };
+
+  /** Commits a typed field and clears its draft so the server value resumes. */
+  const commit = (key: string, change: Partial<OtaReviewOverrides>) => {
+    setDraft((d) => {
+      const next = { ...d };
+      delete next[key];
+      return next;
+    });
+    patch(change);
+  };
+
+  const review = data?.review;
+  const validCodes = data?.validPmsCodes ?? [];
+  /** The rooms currently on screen — the Admin's if edited, else the server's. */
+  const rooms: OtaReviewRoomLine[] = overrides.rooms ?? review?.rooms ?? [];
+
+  const patchRooms = (next: OtaReviewRoomLine[]) => patch({ rooms: next });
+
+  const onCopy = async () => {
+    if (!review?.note) return;
+    const ok = await copyText(review.note);
+    setCopyState(ok ? 'ok' : 'fail');
+    window.setTimeout(() => setCopyState('idle'), 2500);
+  };
+
+  if (!review) {
+    return (
+      <Card className="p-5">
+        {error ? <ErrorAlert>{error}</ErrorAlert> : <p className="text-sm text-slate-500">Đang phân tích…</p>}
+        {onBack ? (
+          <div className="mt-3">
+            <Button variant="secondary" onClick={onBack}>Quay lại</Button>
+          </div>
+        ) : null}
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-4" data-testid="ota-review">
+      {error ? <ErrorAlert>{error}</ErrorAlert> : null}
+
+      {/* 1. Source + 3. Branch ------------------------------------------- */}
+      <Card className="p-5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm font-semibold text-slate-700">
+            Nguồn: <span className="text-brand-700">{OTA_SOURCE_LABEL[review.source]}</span>
+          </p>
+          {loading ? <span className="text-xs text-slate-400">Đang cập nhật…</span> : null}
+        </div>
+
+        <label className="mt-3 block text-sm font-medium text-slate-600">
+          Chi nhánh
+          <select
+            aria-label="Chi nhánh"
+            className={`${inputClass} mt-1`}
+            value={review.branchId ?? ''}
+            onChange={(e) => patch({ branchId: e.target.value ? Number(e.target.value) : null, rooms: undefined })}
+          >
+            <option value="">— Chưa chọn chi nhánh —</option>
+            {(data?.branchOptions ?? []).map((b) => (
+              <option key={b.id} value={b.id}>
+                Chi nhánh {b.branchNumber} — {b.address}
+              </option>
+            ))}
+          </select>
+        </label>
+        {review.requiresManualBranch ? (
+          <p className="mt-1 text-xs text-red-700">
+            Không nhận diện được chi nhánh từ tên khách sạn. Vui lòng chọn thủ công.
+          </p>
+        ) : null}
+      </Card>
+
+      {/* 4–8. Core fields ------------------------------------------------- */}
+      <Card className="p-5">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="block text-sm font-medium text-slate-600">
+            Mã đặt phòng
+            <input
+              aria-label="Mã đặt phòng"
+              className={`${inputClass} mt-1`}
+              value={shown('bookingCode', review.bookingCode ?? '')}
+              onChange={(e) => setDraftValue('bookingCode', e.target.value)}
+              onBlur={(e) => commit('bookingCode', { bookingCode: e.target.value })}
+            />
+          </label>
+          <label className="block text-sm font-medium text-slate-600">
+            Tên khách
+            <input
+              aria-label="Tên khách"
+              className={`${inputClass} mt-1`}
+              value={shown('guestName', review.guestName ?? '')}
+              onChange={(e) => setDraftValue('guestName', e.target.value)}
+              onBlur={(e) => commit('guestName', { guestName: e.target.value })}
+            />
+          </label>
+          <label className="block text-sm font-medium text-slate-600">
+            Nhận phòng
+            <input
+              type="date"
+              aria-label="Nhận phòng"
+              className={`${inputClass} mt-1`}
+              value={review.checkIn ?? ''}
+              onChange={(e) => patch({ checkIn: e.target.value || null })}
+            />
+          </label>
+          <label className="block text-sm font-medium text-slate-600">
+            Trả phòng
+            <input
+              type="date"
+              aria-label="Trả phòng"
+              className={`${inputClass} mt-1`}
+              value={review.checkOut ?? ''}
+              onChange={(e) => patch({ checkOut: e.target.value || null })}
+            />
+          </label>
+        </div>
+        <p className="mt-2 text-sm text-slate-600">
+          Số đêm: <strong data-testid="ota-nights">{review.nights ?? '—'}</strong>
+        </p>
+      </Card>
+
+      {/* 9. Room lines ---------------------------------------------------- */}
+      <Card className="p-5">
+        <div className="mb-2 flex items-center justify-between">
+          <p className="text-sm font-semibold text-slate-700">Hạng phòng</p>
+          <Button
+            variant="secondary"
+            onClick={() =>
+              patchRooms([
+                ...rooms,
+                {
+                  quantity: 1,
+                  otaRoomName: '',
+                  otaRoomTypeId: null,
+                  pmsCode: null,
+                  requiresManualMapping: true,
+                },
+              ])
+            }
+          >
+            <Plus className="h-4 w-4" aria-hidden="true" />
+            Thêm loại phòng
+          </Button>
+        </div>
+
+        <ul className="space-y-2" aria-label="Danh sách hạng phòng">
+          {rooms.map((room, index) => (
+            <li key={index} className="rounded-xl border border-slate-200 p-3">
+              <div className="grid gap-2 sm:grid-cols-[6rem_1fr_10rem_auto] sm:items-end">
+                <label className="block text-xs font-medium text-slate-500">
+                  Số lượng
+                  <input
+                    type="number"
+                    min={1}
+                    aria-label={`Số lượng phòng dòng ${index + 1}`}
+                    className={`${inputClass} mt-1`}
+                    value={shown(`room-${index}-qty`, String(room.quantity))}
+                    onChange={(e) => setDraftValue(`room-${index}-qty`, e.target.value)}
+                    onBlur={(e) => {
+                      const next = [...rooms];
+                      next[index] = { ...room, quantity: Number(e.target.value) || 0 };
+                      commit(`room-${index}-qty`, { rooms: next });
+                    }}
+                  />
+                </label>
+
+                <label className="block text-xs font-medium text-slate-500">
+                  Tên hạng phòng trên {OTA_SOURCE_LABEL[review.source]}
+                  <input
+                    aria-label={`Tên hạng phòng dòng ${index + 1}`}
+                    className={`${inputClass} mt-1`}
+                    value={shown(`room-${index}-name`, room.otaRoomName ?? '')}
+                    onChange={(e) => setDraftValue(`room-${index}-name`, e.target.value)}
+                    onBlur={(e) => {
+                      const next = [...rooms];
+                      // Clearing the manual code lets the server re-resolve.
+                      next[index] = { ...room, otaRoomName: e.target.value, pmsCode: null };
+                      commit(`room-${index}-name`, { rooms: next });
+                    }}
+                  />
+                  {room.otaRoomTypeId ? (
+                    <span className="mt-0.5 block text-xs text-slate-400">ID: {room.otaRoomTypeId}</span>
+                  ) : null}
+                </label>
+
+                <label className="block text-xs font-medium text-slate-500">
+                  Mã nội bộ
+                  <select
+                    aria-label={`Mã nội bộ dòng ${index + 1}`}
+                    className={`${inputClass} mt-1`}
+                    value={room.pmsCode ?? ''}
+                    onChange={(e) => {
+                      const next = [...rooms];
+                      next[index] = {
+                        ...room,
+                        pmsCode: e.target.value || null,
+                        requiresManualMapping: !e.target.value,
+                      };
+                      patchRooms(next);
+                    }}
+                  >
+                    <option value="">— Chưa gán —</option>
+                    {/* Only codes the server said are valid for this branch. */}
+                    {validCodes.map((code) => (
+                      <option key={code} value={code}>{code}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <Button
+                  variant="danger"
+                  onClick={() => patchRooms(rooms.filter((_, i) => i !== index))}
+                >
+                  <Trash2 className="h-4 w-4" aria-hidden="true" />
+                  Xoá
+                </Button>
+              </div>
+
+              {room.requiresManualMapping ? (
+                <p className="mt-2 flex items-center gap-1 text-xs text-red-700">
+                  <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
+                  Chưa gán mã hạng phòng nội bộ cho chi nhánh này.
+                </p>
+              ) : null}
+            </li>
+          ))}
+          {rooms.length === 0 ? (
+            <li className="py-3 text-center text-sm text-slate-400">Chưa có dòng phòng nào.</li>
+          ) : null}
+        </ul>
+      </Card>
+
+      {/* 10–14. Prices, breakfast, payment -------------------------------- */}
+      <Card className="p-5">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="block text-sm font-medium text-slate-600">
+            Giá chi nhánh {review.source === 'AGODA' ? '(Net rate)' : '(Your payout)'}
+            <input
+              aria-label="Giá chi nhánh"
+              className={`${inputClass} mt-1`}
+              value={shown('branchPrice', formatAmount(review.branchPrice))}
+              onChange={(e) => setDraftValue('branchPrice', e.target.value)}
+              onBlur={(e) => commit('branchPrice', { branchPrice: parseAmount(e.target.value) })}
+            />
+          </label>
+          <label className="block text-sm font-medium text-slate-600">
+            Giá khách đặt {review.source === 'AGODA' ? '(Reference sell rate)' : '(Original room rate)'}
+            <input
+              aria-label="Giá khách đặt"
+              className={`${inputClass} mt-1`}
+              value={shown('guestBookedPrice', formatAmount(review.guestBookedPrice))}
+              onChange={(e) => setDraftValue('guestBookedPrice', e.target.value)}
+              onBlur={(e) => commit('guestBookedPrice', { guestBookedPrice: parseAmount(e.target.value) })}
+            />
+          </label>
+        </div>
+
+        {/* 10. Nightly prices — shown only when the platform stated them. */}
+        <div className="mt-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Giá từng đêm</p>
+          {review.nightlyRates.length === 0 ? (
+            <p className="mt-1 text-xs text-slate-500" data-testid="ota-no-nightly">
+              Nền tảng không cung cấp giá từng đêm. Hệ thống không tự chia tổng tiền.
+            </p>
+          ) : (
+            <ul className="mt-1 space-y-0.5 text-sm text-slate-700">
+              {review.nightlyRates.map((n) => (
+                <li key={n.stayDate}>
+                  {n.stayDate}: {n.amount == null ? 'Chưa xác định' : n.amount.toLocaleString('vi-VN')}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div className="mt-3 flex flex-wrap gap-4">
+          <label className="flex items-center gap-2 text-sm text-slate-600">
+            <input
+              type="checkbox"
+              aria-label="Có ăn sáng"
+              checked={review.breakfastIncluded === true}
+              onChange={(e) => patch({ breakfastIncluded: e.target.checked })}
+              className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-600"
+            />
+            Có ăn sáng
+          </label>
+
+          <label className="block text-sm font-medium text-slate-600">
+            Hình thức thanh toán
+            <select
+              aria-label="Hình thức thanh toán"
+              className={`${inputClass} mt-1`}
+              value={review.paymentMode}
+              onChange={(e) => patch({ paymentMode: e.target.value as OtaPaymentMode })}
+            >
+              {/* Exactly two options, worded as the operator words them. */}
+              <option value="CN">{OTA_PAYMENT_LABEL.CN}</option>
+              <option value="HOTEL_PAYMENT">{OTA_PAYMENT_LABEL.HOTEL_PAYMENT}</option>
+            </select>
+          </label>
+        </div>
+      </Card>
+
+      {/* 15. Note preview -------------------------------------------------- */}
+      <Card className="p-5">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm font-semibold text-slate-700">Ghi chú PMS</p>
+          <div className="flex items-center gap-2">
+            {copyState === 'ok' ? <span className="text-xs text-green-700">Đã sao chép.</span> : null}
+            {copyState === 'fail' ? (
+              <span className="text-xs text-red-700">Không sao chép được. Vui lòng chọn và sao chép thủ công.</span>
+            ) : null}
+            <Button variant="secondary" onClick={onCopy} disabled={!review.note}>
+              <Copy className="h-4 w-4" aria-hidden="true" />
+              Sao chép note
+            </Button>
+          </div>
+        </div>
+
+        {review.note ? (
+          <pre
+            data-testid="ota-note"
+            className="whitespace-pre-wrap rounded-xl bg-slate-900 px-3 py-3 font-mono text-sm text-slate-50"
+          >
+            {review.note}
+          </pre>
+        ) : (
+          <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            {review.noteError ?? 'Chưa đủ dữ liệu để tạo ghi chú.'}
+          </p>
+        )}
+      </Card>
+
+      {/* 16. Warnings and blocking reasons -------------------------------- */}
+      {review.blockingReasons.length > 0 ? (
+        <Card className="border-red-200 bg-red-50/50 p-4">
+          <p className="mb-1 text-sm font-semibold text-red-800">Chưa thể gửi đơn</p>
+          <ul className="list-inside list-disc space-y-0.5 text-sm text-red-700" data-testid="ota-blocking">
+            {review.blockingReasons.map((reason, i) => (
+              <li key={`${reason}-${i}`}>{reason}</li>
+            ))}
+          </ul>
+        </Card>
+      ) : null}
+
+      {review.warnings.length > 0 ? (
+        <Card className="border-amber-200 bg-amber-50/50 p-4">
+          <ul className="list-inside list-disc space-y-0.5 text-sm text-amber-800" data-testid="ota-warnings">
+            {review.warnings.map((w, i) => (
+              <li key={`${w.code}-${i}`}>{w.message}</li>
+            ))}
+          </ul>
+        </Card>
+      ) : null}
+
+      <div className="flex flex-wrap gap-2">
+        {onBack ? (
+          <Button variant="secondary" onClick={onBack}>Đơn khác</Button>
+        ) : null}
+        <Button
+          onClick={() => {
+            if (review.canDispatch && review.branchId && review.note) {
+              onDispatch?.(review.branchId, review.note);
+            }
+          }}
+          disabled={!review.canDispatch}
+        >
+          <Send className="h-4 w-4" aria-hidden="true" />
+          Gửi chi nhánh
+        </Button>
+      </div>
+    </div>
+  );
+}

@@ -23,15 +23,20 @@ const BRANCH = {
   address: '05 Trương Định',
 };
 
-function mount(onExtract?: (init: RequestInit) => void) {
+function mount(onRequest?: (path: string, init: RequestInit) => void) {
   const fetchMock = installApiMock({
     'GET /api/auth/me': () => ({ status: 200, body: { user: ADMIN_USER } }),
     'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
     'GET /api/branches': () => ({ status: 200, body: { branches: [BRANCH] } }),
     'POST /api/bookings/extract': (init) => {
-      onExtract?.(init);
+      onRequest?.('/api/bookings/extract', init);
       // Deliberately fail: this suite is about the tabs and the request, not
       // the review screen that a success would navigate to.
+      return { status: 422, body: { error: { code: 'VALIDATION_ERROR', message: 'Nội dung không hợp lệ.' } } };
+    },
+    'POST /api/admin/ota/review': (init) => {
+      onRequest?.('/api/admin/ota/review', init);
+      // Likewise: the panel's own rendering is covered by its own suite.
       return { status: 422, body: { error: { code: 'VALIDATION_ERROR', message: 'Nội dung không hợp lệ.' } } };
     },
   });
@@ -93,20 +98,52 @@ describe('DispatchPage — intake source tabs', () => {
     expect(screen.getByText(/YCS/)).toBeInTheDocument();
   });
 
-  it('sends the chosen source to the extract API', async () => {
-    let body: Record<string, unknown> | null = null;
-    mount((init) => {
-      body = JSON.parse(String(init.body)) as Record<string, unknown>;
+  /**
+   * Booking.com keeps the original extract-to-draft flow. Agoda and CTrip go to
+   * the server-authoritative Admin review panel instead, so they must NOT reach
+   * the extract API — that endpoint would create a draft the review flow never
+   * uses. These two tests pin both halves of that split.
+   */
+  it('sends Booking.com content to the extract API', async () => {
+    const seen: { path: string; body: Record<string, unknown> }[] = [];
+    mount((path, init) => {
+      seen.push({ path, body: JSON.parse(String(init.body)) as Record<string, unknown> });
+    });
+    const user = userEvent.setup();
+
+    await screen.findByRole('tablist', { name: 'Nguồn đặt phòng' });
+    await user.type(screen.getByRole('textbox'), 'KAS Passion Boutique Hotel');
+    await user.click(screen.getByRole('button', { name: /Trích xuất thông tin/ }));
+
+    const extract = seen.find((r) => r.path === '/api/bookings/extract');
+    expect(extract).toBeDefined();
+    expect(extract!.body.source).toBe('BOOKING_COM');
+    expect(extract!.body.rawText).toContain('KAS Passion Boutique Hotel');
+  });
+
+  it.each([
+    ['CTrip', 'CTRIP'],
+    ['Agoda', 'AGODA'],
+  ])('routes %s to the review endpoint instead of extract', async (tabName, source) => {
+    const seen: { path: string; body: Record<string, unknown> }[] = [];
+    mount((path, init) => {
+      seen.push({ path, body: JSON.parse(String(init.body)) as Record<string, unknown> });
     });
     const user = userEvent.setup();
 
     const tablist = await screen.findByRole('tablist', { name: 'Nguồn đặt phòng' });
-    await user.click(within(tablist).getByRole('tab', { name: 'CTrip' }));
+    await user.click(within(tablist).getByRole('tab', { name: tabName }));
     await user.type(screen.getByRole('textbox'), 'KAS Passion Boutique Hotel');
     await user.click(screen.getByRole('button', { name: /Trích xuất thông tin/ }));
 
-    expect(body).not.toBeNull();
-    expect(body!.source).toBe('CTRIP');
-    expect(body!.rawText).toContain('KAS Passion Boutique Hotel');
+    const review = await vi.waitFor(() => {
+      const hit = seen.find((r) => r.path === '/api/admin/ota/review');
+      expect(hit).toBeDefined();
+      return hit!;
+    });
+    expect(review.body.source).toBe(source);
+    expect(review.body.rawText).toContain('KAS Passion Boutique Hotel');
+    // No draft is created for these platforms.
+    expect(seen.some((r) => r.path === '/api/bookings/extract')).toBe(false);
   });
 });
