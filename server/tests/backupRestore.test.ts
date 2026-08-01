@@ -21,16 +21,16 @@ import { resolveTestBaseUrl, withSchema } from '../src/d1/testDatabase';
 
 /**
  * Backup and restore run against a THROWAWAY SCHEMA created per test inside
- * the disposable kas_d1_test database — never the development database, never
- * a real volume, never live data, and never the schema the rest of the suite
- * is using.
+ * the disposable kas_dev_cn1 database — never a production database, never a
+ * real volume, never live data, and never the schema the rest of the suite is
+ * using.
  *
  * On the SQLite pilot this isolation came free from using a throwaway FILE.
  * The PostgreSQL equivalent is a throwaway schema, which is why every test
  * here creates one, migrates into it, and drops it afterwards.
  */
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
-const BASE_URL = resolveTestBaseUrl(REPO_ROOT);
+const BASE_URL = resolveTestBaseUrl();
 const TEST_DATABASE = describeDatabaseUrl(BASE_URL).database!;
 
 let workspace: string;

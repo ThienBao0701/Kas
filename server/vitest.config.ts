@@ -2,14 +2,16 @@ import path from 'node:path';
 import { defineConfig } from 'vitest/config';
 import { resolveTestDatabaseUrl } from './src/d1/testDatabase';
 
-// Since Phase D.1 the suite runs against REAL PostgreSQL, in its own schema
-// inside the disposable kas_d1_test database — production runs on PostgreSQL,
-// and enum handling, concurrent writes, partial unique indexes and sequence
-// allocation all behave differently on SQLite. The URL comes from
-// .env.d1.local (git-ignored) or KAS_TEST_DATABASE_URL; no password is ever
-// written into this file.
-const repoRoot = path.resolve(__dirname, '..');
-const testDatabaseUrl = resolveTestDatabaseUrl(repoRoot);
+// The suite runs against REAL PostgreSQL, in its own schema inside the
+// disposable kas_dev_cn1 database — production runs on PostgreSQL, and enum
+// handling, concurrent writes, partial unique indexes and sequence allocation
+// all behave differently on SQLite.
+//
+// The URL comes from KAS_TEST_DATABASE_URL and from nowhere else: resolution
+// fails closed rather than falling back to a file, so an unset variable stops
+// the run instead of silently pointing it at whatever .env.d1.local contains.
+// No password is ever written into this file.
+const testDatabaseUrl = resolveTestDatabaseUrl();
 
 // Proof screenshots land in a throwaway dir so the suite never writes into the
 // real server/uploads tree.

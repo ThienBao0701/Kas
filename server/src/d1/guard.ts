@@ -5,12 +5,19 @@
  * restore drill, the destructive schema reset — routes through here first.
  * The rules are deliberately absolute and are not overridable by a flag:
  *
- *   1. `kas_production` is reserved and untouchable in D.1. So is any database
- *      whose name contains "production", because the cost of refusing a
- *      legitimately-named database is a one-line override in a later phase,
- *      while the cost of writing to the wrong one is unrecoverable.
+ *   1. `kas_production` and `kas_d1_test` are reserved and untouchable. So is
+ *      any database whose name contains "production", because the cost of
+ *      refusing a legitimately-named database is a one-line override in a
+ *      later phase, while the cost of writing to the wrong one is
+ *      unrecoverable.
+ *
+ *      `kas_d1_test` is NOT a test database despite its name: it is the LIVE
+ *      PRODUCTION database serving https://kasbookingapp.com. It was
+ *      previously the approved D.1 write target, which made the documented
+ *      `npm test` command write to production. It is now reserved by name so
+ *      that no allow-list, flag or environment variable can re-enable it.
  *   2. A write target must be PostgreSQL and must name a database explicitly.
- *   3. During D.1 the only approved write target is `kas_d1_test`.
+ *   3. The only approved write target is `kas_dev_cn1`.
  *   4. The URL is not trusted on its own. `assertLiveIdentity` re-asks the
  *      server `SELECT current_database(), current_user` after connecting, so a
  *      pg_service file, a PGDATABASE variable or a connection-string typo that
@@ -22,11 +29,16 @@
 import type { PrismaClient } from '@prisma/client';
 import { describeDatabaseUrl, type DatabaseTarget } from '../config/databaseUrl';
 
-/** Databases this phase may never touch, in any mode, for any reason. */
-export const RESERVED_DATABASES = ['kas_production'] as const;
+/**
+ * Databases that may never be touched, in any mode, for any reason.
+ *
+ * `kas_d1_test` is on this list because it is the LIVE PRODUCTION database —
+ * the name is a historical accident from the D.1 pilot, not a description.
+ */
+export const RESERVED_DATABASES = ['kas_production', 'kas_d1_test'] as const;
 
-/** The only database Phase D.1 is approved to write to. */
-export const D1_APPROVED_DATABASE = 'kas_d1_test';
+/** The only database this tooling is approved to write to. */
+export const D1_APPROVED_DATABASE = 'kas_dev_cn1';
 
 export class DatabaseGuardError extends Error {
   constructor(message: string) {

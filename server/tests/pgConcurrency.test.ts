@@ -21,9 +21,8 @@ import { addGuest, setPrimaryGuest, updateGuest } from '../src/booking/guestServ
 import { resetAll, testPrisma, utcDate } from './helpers/db';
 import { createAdmin } from './helpers/auth';
 import { resolveTestDatabaseUrl } from '../src/d1/testDatabase';
-import path from 'node:path';
 
-const TEST_URL = resolveTestDatabaseUrl(path.resolve(__dirname, '..', '..'));
+const TEST_URL = resolveTestDatabaseUrl();
 
 /** Opens N independent connections, so the writers below are genuinely parallel. */
 function openClients(n: number): PrismaClient[] {

@@ -26,7 +26,7 @@ import { describeDatabaseUrl } from '../src/config/databaseUrl';
 import { resolveTestBaseUrl, withSchema } from '../src/d1/testDatabase';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
-const BASE_URL = resolveTestBaseUrl(REPO_ROOT);
+const BASE_URL = resolveTestBaseUrl();
 const TEST_DATABASE = describeDatabaseUrl(BASE_URL).database!;
 const ALLOWED = [TEST_DATABASE] as const;
 

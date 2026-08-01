@@ -12,7 +12,7 @@
 
 /* eslint-disable no-console */
 import { redactDatabaseUrl } from '../config/databaseUrl';
-import { DatabaseGuardError } from '../d1/guard';
+import { D1_APPROVED_DATABASE, DatabaseGuardError } from '../d1/guard';
 import { resolveD1TargetUrl } from '../d1/localEnv';
 import { runTransfer, type TransferMode, type TransferReport } from '../d1/transfer';
 
@@ -74,7 +74,8 @@ Chuyển dữ liệu SQLite → PostgreSQL (Phase D.1)
   --execute              Thực hiện chuyển dữ liệu thật.
   --resume               Cho phép ghi vào đích đã có dữ liệu (chạy tiếp).
   --target-url <url>     Ghi đè đích. Mặc định đọc từ .env.d1.local.
-  --allow-database <db>  Thêm một tên CSDL được phép (mặc định chỉ kas_d1_test).
+  --allow-database <db>  Thêm một tên CSDL được phép (mặc định chỉ kas_dev_cn1).
+                         Tên bị bảo lưu (production) luôn bị từ chối.
   --json                 In báo cáo JSON.
 
 Phải chọn đúng một trong --dry-run hoặc --execute.
@@ -139,7 +140,7 @@ async function main(): Promise<void> {
       mode: args.mode,
       resume: args.resume,
       ...(args.allowDatabase
-        ? { allowedDatabases: ['kas_d1_test', args.allowDatabase] as const }
+        ? { allowedDatabases: [D1_APPROVED_DATABASE, args.allowDatabase] as const }
         : {}),
       logger: (line) => console.log(`  ${line}`),
     });

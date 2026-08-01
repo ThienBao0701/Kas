@@ -1,24 +1,32 @@
 /**
  * Resolves the PostgreSQL URL the automated test suite runs against.
  *
- * ISOLATION MODEL (D.1 §7 "prefer isolated temporary schemas"): the suite does
- * NOT share the `public` schema of `kas_d1_test`. It gets its own schema
- * (`kas_vitest` by default), which means:
+ * FAIL-CLOSED BY DESIGN.
  *
- *   - the destructive restore drill, which drops and recreates `public`,
- *     cannot destroy a running test suite (and vice versa);
- *   - the transferred fixture data in `public` stays intact while tests
- *     truncate their own tables freely;
- *   - dropping the whole test schema between runs is cheap and total, which is
- *     the PostgreSQL equivalent of deleting the old SQLite test.db.
+ * This module used to resolve the suite's target from `.env.d1.local`, falling
+ * back to whatever that file happened to contain. That file pointed at
+ * `kas_d1_test` — which is the LIVE PRODUCTION database, not a test database —
+ * so the documented `npm test` command dropped and recreated a schema inside
+ * production. The fallback is gone: the target now comes from ONE explicit
+ * source and is validated by name before a connection is ever opened.
  *
- * The password is never hard-coded: the URL comes from `.env.d1.local`, or
- * from `KAS_TEST_DATABASE_URL` when a developer or CI wants a different
- * target. Nothing here logs the URL.
+ *   - The URL must come from `KAS_TEST_DATABASE_URL`. There is no fallback to
+ *     `.env.d1.local`, to `.env`, or to `DATABASE_URL`.
+ *   - The database it names must not be reserved (`kas_production`,
+ *     `kas_d1_test`, anything containing "production").
+ *   - It must be exactly {@link APPROVED_TEST_DATABASE}.
+ *
+ * ISOLATION MODEL: the suite does NOT share the `public` schema of the approved
+ * database. It gets its own schema ({@link TEST_SCHEMA}), which means dropping
+ * the whole test schema between runs is cheap and total — the PostgreSQL
+ * equivalent of deleting the old SQLite test.db — while `public` is left alone.
+ *
+ * Nothing here ever logs, throws or returns the URL or its password: every
+ * message names the DATABASE only, which is not a secret and is exactly what an
+ * operator needs to see.
  */
-import fs from 'node:fs';
-import path from 'node:path';
-import { parseEnvFile } from './localEnv';
+import { describeDatabaseUrl } from '../config/databaseUrl';
+import { isReservedDatabaseName } from './guard';
 
 /**
  * Typed as `string`, not as the literal, on purpose: it is a configuration
@@ -27,6 +35,15 @@ import { parseEnvFile } from './localEnv';
  * rather than being compiled away as provably-impossible.
  */
 export const TEST_SCHEMA: string = 'kas_vitest';
+
+/**
+ * The only database the automated suite may ever run against. Typed as
+ * `string` for the same reason as {@link TEST_SCHEMA}.
+ */
+export const APPROVED_TEST_DATABASE: string = 'kas_dev_cn1';
+
+/** The one environment variable that selects the suite's target. */
+export const TEST_DATABASE_ENV_VAR = 'KAS_TEST_DATABASE_URL';
 
 /**
  * Adds or replaces the `schema` parameter of a PostgreSQL URL.
@@ -40,46 +57,90 @@ export function withSchema(url: string, schema: string): string {
   return parsed.toString();
 }
 
-export class MissingTestDatabaseError extends Error {
-  constructor(file: string) {
-    super(
-      [
-        'Bộ kiểm thử cần một cơ sở dữ liệu PostgreSQL.',
-        '',
-        'Kể từ Phase D.1, các kiểm thử chạy trên PostgreSQL thật thay vì SQLite,',
-        `trong schema riêng "${TEST_SCHEMA}" của cơ sở dữ liệu kas_d1_test.`,
-        '',
-        'Hãy làm một trong hai cách:',
-        `  1) Tạo ${file} với đúng một dòng:`,
-        '     DATABASE_URL=postgresql://kas_app:<mật-khẩu-đã-mã-hóa>@127.0.0.1:5432/kas_d1_test',
-        '  2) Hoặc đặt biến môi trường KAS_TEST_DATABASE_URL.',
-        '',
-        'Ký tự đặc biệt trong mật khẩu phải được percent-encode.',
-        'Không bao giờ commit tệp này (đã nằm trong .gitignore).',
-      ].join('\n'),
-    );
-    this.name = 'MissingTestDatabaseError';
+/**
+ * Raised whenever the suite's target is missing, unparseable, reserved or not
+ * the approved database. The message never contains the URL or the password.
+ */
+export class UnsafeTestDatabaseError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UnsafeTestDatabaseError';
   }
+}
+
+function missingVariableMessage(): string {
+  return [
+    `Bộ kiểm thử cần biến môi trường ${TEST_DATABASE_ENV_VAR}.`,
+    '',
+    'KHÔNG có giá trị mặc định và KHÔNG có cơ chế dự phòng: bộ kiểm thử sẽ',
+    'DROP/CREATE schema và ghi dữ liệu, nên đích phải được chỉ định rõ ràng.',
+    '',
+    `Hãy trỏ tới cơ sở dữ liệu dùng-một-lần "${APPROVED_TEST_DATABASE}":`,
+    `  PowerShell:  $env:${TEST_DATABASE_ENV_VAR} = '<url tới ${APPROVED_TEST_DATABASE}>'`,
+    `  bash:        export ${TEST_DATABASE_ENV_VAR}='<url tới ${APPROVED_TEST_DATABASE}>'`,
+    '',
+    'Không bao giờ trỏ bộ kiểm thử tới cơ sở dữ liệu production.',
+    'Ký tự đặc biệt trong mật khẩu phải được percent-encode.',
+  ].join('\n');
+}
+
+/**
+ * Validates a candidate test URL and returns the database name it targets.
+ *
+ * Exported so the guard can be unit-tested directly, without a connection and
+ * without mutating the process environment.
+ */
+export function assertApprovedTestDatabase(url: string): string {
+  const target = describeDatabaseUrl(url);
+
+  if (target.kind !== 'postgresql') {
+    throw new UnsafeTestDatabaseError(
+      `TỪ CHỐI: ${TEST_DATABASE_ENV_VAR} phải là một URL postgresql://.`,
+    );
+  }
+  if (target.malformed || !target.database) {
+    throw new UnsafeTestDatabaseError(
+      `TỪ CHỐI: ${TEST_DATABASE_ENV_VAR} không hợp lệ hoặc thiếu tên cơ sở dữ liệu. ` +
+        'Ký tự đặc biệt trong mật khẩu phải được percent-encode.',
+    );
+  }
+
+  // Reserved first, and never overridable: kas_production, kas_d1_test (the
+  // live production database) and anything containing "production".
+  if (isReservedDatabaseName(target.database)) {
+    throw new UnsafeTestDatabaseError(
+      `TỪ CHỐI: "${target.database}" là cơ sở dữ liệu được bảo lưu (production) ` +
+        'và không bao giờ được dùng cho kiểm thử. Bộ kiểm thử đã dừng trước khi ghi bất cứ thứ gì.',
+    );
+  }
+
+  if (target.database !== APPROVED_TEST_DATABASE) {
+    throw new UnsafeTestDatabaseError(
+      `TỪ CHỐI: bộ kiểm thử chỉ được chạy trên "${APPROVED_TEST_DATABASE}", ` +
+        `nhưng ${TEST_DATABASE_ENV_VAR} trỏ tới "${target.database}".`,
+    );
+  }
+
+  return target.database;
 }
 
 /**
  * The base URL (no schema override) the suite should use.
- * Throws a long, actionable message rather than failing deep inside Prisma.
+ *
+ * Throws a long, actionable message rather than failing deep inside Prisma —
+ * and throws rather than falling back to any file or other variable.
  */
-export function resolveTestBaseUrl(repoRoot: string): string {
-  const explicit = process.env.KAS_TEST_DATABASE_URL;
-  if (explicit && explicit.length > 0) return explicit;
-
-  const file = path.join(repoRoot, '.env.d1.local');
-  if (!fs.existsSync(file)) throw new MissingTestDatabaseError(file);
-
-  const parsed = parseEnvFile(fs.readFileSync(file, 'utf8'));
-  const url = parsed.DATABASE_URL;
-  if (!url) throw new MissingTestDatabaseError(file);
+export function resolveTestBaseUrl(): string {
+  const raw = process.env[TEST_DATABASE_ENV_VAR];
+  if (!raw || raw.trim().length === 0) {
+    throw new UnsafeTestDatabaseError(missingVariableMessage());
+  }
+  const url = raw.trim();
+  assertApprovedTestDatabase(url);
   return url;
 }
 
 /** The URL the suite connects with: the base URL pinned to the test schema. */
-export function resolveTestDatabaseUrl(repoRoot: string, schema: string = TEST_SCHEMA): string {
-  return withSchema(resolveTestBaseUrl(repoRoot), schema);
+export function resolveTestDatabaseUrl(schema: string = TEST_SCHEMA): string {
+  return withSchema(resolveTestBaseUrl(), schema);
 }

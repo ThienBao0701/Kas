@@ -6,15 +6,16 @@
  * requires a typed confirmation before it writes anything.
  *
  * `--target-url` is how a restore DRILL is rehearsed: point it at a disposable
- * database (during D.1, `kas_d1_test`) and the live data is never touched.
- * `kas_production` is refused outright by the guard, whatever is passed.
+ * database (`kas_dev_cn1`) and the live data is never touched. `kas_production`
+ * and `kas_d1_test` — the live production database — are refused outright by
+ * the guard, whatever is passed.
  */
 import path from 'node:path';
 import readline from 'node:readline';
 import { prisma } from '../db/prisma';
 import { BACKUP_DIR, env } from '../config/env';
 import { redactDatabaseUrl } from '../config/databaseUrl';
-import { DatabaseGuardError } from '../d1/guard';
+import { D1_APPROVED_DATABASE, DatabaseGuardError } from '../d1/guard';
 import { listBackups, verifyBackup } from '../production/backup';
 import { restoreBackup } from '../production/restore';
 
@@ -89,7 +90,9 @@ async function main(): Promise<void> {
     confirmed: true,
     targetUrl,
     resetSchema,
-    ...(allowDatabase ? { allowedDatabases: ['kas_d1_test', allowDatabase] as const } : {}),
+    ...(allowDatabase
+      ? { allowedDatabases: [D1_APPROVED_DATABASE, allowDatabase] as const }
+      : {}),
   });
 
   console.log('\n✅ Khôi phục xong.');

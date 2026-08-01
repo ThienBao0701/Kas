@@ -6,15 +6,15 @@
  * A backup file existing is not evidence that a restore works. This rehearses
  * the whole loop against the disposable D.1 database and proves it:
  *
- *   1. back up the current kas_d1_test (pg_dump custom format + manifest),
+ *   1. back up the current kas_dev_cn1 (pg_dump custom format + manifest),
  *   2. verify the archive's checksums and table of contents,
  *   3. DROP and recreate the schema — a genuinely empty database,
  *   4. pg_restore into it,
  *   5. re-count every table and re-check the C.3.8 invariants.
  *
  * Step 3 destroys data, so it needs `--confirm-destructive` AND the target
- * must be `kas_d1_test`. `kas_production` is refused by the guard regardless
- * of any flag (D.1 §0, §7).
+ * must be `kas_dev_cn1`. `kas_production` and `kas_d1_test` — the live
+ * production database — are refused by the guard regardless of any flag.
  */
 // MUST be first: makes config/env loadable for a CLI that starts no server.
 import '../d1/bootstrapEnv';

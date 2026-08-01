@@ -69,8 +69,9 @@ export class MissingLocalEnvError extends Error {
   constructor(file: string) {
     super(
       `Không tìm thấy tệp cấu hình D.1 cục bộ: ${file}\n` +
-        'Tạo tệp đó với đúng một dòng DATABASE_URL trỏ tới kas_d1_test, ' +
-        'hoặc truyền --target-url. Không bao giờ commit tệp này.',
+        'Tạo tệp đó với đúng một dòng DATABASE_URL trỏ tới một cơ sở dữ liệu ' +
+        'dùng-một-lần (kas_dev_cn1), hoặc truyền --target-url. ' +
+        'Không bao giờ trỏ tới cơ sở dữ liệu production. Không bao giờ commit tệp này.',
     );
     this.name = 'MissingLocalEnvError';
   }
