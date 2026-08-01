@@ -94,6 +94,18 @@ function buildEdit(form: FormState, branchId: number | undefined): BookingEdit {
 const inputClass =
   'w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600';
 
+/**
+ * What to paste, per platform. CTrip's line is deliberately explicit about the
+ * conservative extraction: it is better for a receptionist to expect to check a
+ * few fields than to trust a value the engine could not actually read.
+ */
+const SOURCE_HELP: Record<BookingSource, string> = {
+  BOOKING_COM: 'Dán từ trang chi tiết đặt phòng trong Extranet (bao gồm cả bảng giá từng đêm).',
+  AGODA: 'Dán email đặt phòng của đối tác (YCS) hoặc trang xác nhận dành cho khách.',
+  CTRIP:
+    'Dán trang xác nhận đặt phòng CTrip / Trip.com. Một số trường có thể cần bạn kiểm tra và bổ sung thủ công — hệ thống sẽ báo rõ trường nào.',
+};
+
 export function DispatchPage() {
   const navigate = useNavigate();
   const [source, setSource] = useState<BookingSource>('BOOKING_COM');
@@ -211,13 +223,20 @@ export function DispatchPage() {
 
   // --- Stage 1: paste + extract ---
   if (!draftId) {
-    const sources: BookingSource[] = ['BOOKING_COM', 'AGODA'];
+    // Only the platforms with a real intake parser. Tripadvisor and Traveloka
+    // are configurable identities but have no extraction yet, so offering them
+    // here would promise something the system cannot do.
+    const sources: BookingSource[] = ['BOOKING_COM', 'AGODA', 'CTRIP'];
     return (
       <div>
         <PageHeader title="Nhập đơn" description="Chọn nguồn, dán nội dung đặt phòng để trích xuất thông tin." />
         <Card className="p-5">
-          {/* Source tabs */}
-          <div className="mb-4 inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1" role="tablist" aria-label="Nguồn đặt phòng">
+          {/* Source tabs — horizontally scrollable so they never cramp on a tablet. */}
+          <div
+            className="mb-4 -mx-1 flex gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-slate-50 p-1"
+            role="tablist"
+            aria-label="Nguồn đặt phòng"
+          >
             {sources.map((s) => (
               <button
                 key={s}
@@ -228,7 +247,7 @@ export function DispatchPage() {
                   setSource(s);
                   extractMut.reset();
                 }}
-                className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+                className={`flex-shrink-0 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 ${
                   source === s ? 'bg-white text-brand-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
                 }`}
               >
@@ -250,6 +269,7 @@ export function DispatchPage() {
             placeholder={`Dán toàn bộ nội dung (Ctrl+A, Ctrl+C) từ trang chi tiết đặt phòng ${SOURCE_LABEL[source]}…`}
             className={`${inputClass} font-mono`}
           />
+          <p className="mt-1 text-xs text-slate-500">{SOURCE_HELP[source]}</p>
           <div className="mt-4">
             <Button
               onClick={() => extractMut.mutate(rawText)}

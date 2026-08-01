@@ -42,6 +42,9 @@ export function serializeBookingPreview(booking: BookingWithExtractRelations) {
       id: booking.id,
       bookingCode: booking.bookingCode.length > 0 ? booking.bookingCode : null,
       hotelName: booking.hotelName,
+      // The intake platform, echoed back so the review screen shows which
+      // source the Admin actually extracted from — never inferred client-side.
+      sourcePlatform: booking.sourcePlatform,
       businessType: booking.businessType,
       businessTypeConfidence: booking.businessTypeConfidence,
       businessTypeManuallyConfirmed: booking.businessTypeManuallyConfirmed,

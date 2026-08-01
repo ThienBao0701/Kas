@@ -36,25 +36,82 @@ export const OTA_PLATFORMS: readonly OtaPlatform[] = [
 ] as const;
 
 /**
- * The current Booking.com public names, by STABLE BRANCH CODE.
- *
- * Operator-confirmed. This is seed configuration, not parser logic: once seeded
- * the value lives in the database and the Admin renames it from the UI, so no
- * code change is needed when a property is renamed on Booking.com.
+ * The platforms an OTA booking can currently be taken in through. Tripadvisor
+ * and Traveloka remain valid identity platforms — an operator may configure a
+ * name for them — but no intake parser produces them yet.
  */
-export const BOOKING_COM_IDENTITIES: readonly { branchCode: string; name: string }[] = [
-  { branchCode: 'TRUONG_DINH_05', name: 'Market Ben Thanh Kas Hotel Passion' },
-  { branchCode: 'LY_TU_TRONG_260', name: 'Elegance Hotel - Ben Thanh Market - Central HCMC' },
-  { branchCode: 'NGUYEN_TRAI_47A', name: 'Boutique KAS Luxury Hotel' },
-  { branchCode: 'NGUYEN_THAI_BINH_170', name: 'Grand KAS Premium Hotel & Sky Bar' },
-  { branchCode: 'LE_THANH_TON_278', name: 'Zody KAS Hotel - Saigon Center' },
+export const OPERATIONAL_PLATFORMS: readonly OtaPlatform[] = [
+  'BOOKING_COM',
+  'AGODA',
+  'CTRIP',
+] as const;
+
+/** One branch's current public name on one platform, keyed by stable code. */
+export interface PlatformIdentitySeed {
+  branchCode: string;
+  platform: OtaPlatform;
+  name: string;
+}
+
+/**
+ * The authoritative current public names, by STABLE BRANCH CODE.
+ *
+ * SEED CONFIGURATION, NOT PARSER LOGIC. Once seeded the value lives in the
+ * database and the Admin renames it from the UI, so a property being renamed on
+ * an OTA never needs a code change. No matcher reads this table at runtime —
+ * recognition resolves against `BranchPlatformIdentity` rows loaded by
+ * `loadBranchConfigs`.
+ *
+ * The three platforms are INDEPENDENT records. CTrip starts out identical to
+ * Agoda because the properties are listed under the same names today, but the
+ * rows are separate from the moment they are created: editing or deleting one
+ * platform never touches another.
+ */
+export const PLATFORM_IDENTITY_SEED: readonly PlatformIdentitySeed[] = [
+  // Branch 1
+  { branchCode: 'TRUONG_DINH_05', platform: 'BOOKING_COM', name: 'Market Ben Thanh Kas Hotel Passion' },
+  { branchCode: 'TRUONG_DINH_05', platform: 'AGODA', name: 'KAS Passion Boutique Hotel' },
+  { branchCode: 'TRUONG_DINH_05', platform: 'CTRIP', name: 'KAS Passion Boutique Hotel' },
+  // Branch 2
+  { branchCode: 'LY_TU_TRONG_260', platform: 'BOOKING_COM', name: 'Elegance Hotel - Ben Thanh Market - Central HCMC' },
+  { branchCode: 'LY_TU_TRONG_260', platform: 'AGODA', name: 'KAS Elegance Hotel' },
+  { branchCode: 'LY_TU_TRONG_260', platform: 'CTRIP', name: 'KAS Elegance Hotel' },
+  // Branch 3
+  { branchCode: 'NGUYEN_TRAI_47A', platform: 'BOOKING_COM', name: 'Boutique KAS Luxury Hotel' },
+  { branchCode: 'NGUYEN_TRAI_47A', platform: 'AGODA', name: 'KAS Ancient Boutique Hotel' },
+  { branchCode: 'NGUYEN_TRAI_47A', platform: 'CTRIP', name: 'KAS Ancient Boutique Hotel' },
+  // Branch 4
+  { branchCode: 'NGUYEN_THAI_BINH_170', platform: 'BOOKING_COM', name: 'Grand KAS Premium Hotel & Sky Bar' },
+  { branchCode: 'NGUYEN_THAI_BINH_170', platform: 'AGODA', name: 'KAS Milestone Premium Hotel' },
+  { branchCode: 'NGUYEN_THAI_BINH_170', platform: 'CTRIP', name: 'KAS Milestone Premium Hotel' },
+  // Branch 5
+  { branchCode: 'LE_THANH_TON_278', platform: 'BOOKING_COM', name: 'Zody KAS Hotel - Saigon Center' },
+  { branchCode: 'LE_THANH_TON_278', platform: 'AGODA', name: 'KAS Zody Boutique Hotel' },
+  { branchCode: 'LE_THANH_TON_278', platform: 'CTRIP', name: 'KAS Zody Boutique Hotel' },
+  // Branch 6
   {
     branchCode: 'BUI_THI_XUAN_40',
+    platform: 'BOOKING_COM',
     name: 'Ben Thanh Market - Luxury Kas Boutique Hotel - Thai Cuisine Restaurant',
   },
-  { branchCode: 'BUI_THI_XUAN_13', name: 'My Eliana Luxury Hotel Saigon Saigon & Spa' },
-  { branchCode: 'LE_THANH_TON_191', name: 'Ben Thanh Luxury Hotel - Premium Kas Dilly & Spa' },
+  { branchCode: 'BUI_THI_XUAN_40', platform: 'AGODA', name: 'KAS Sonata Luxury Hotel' },
+  { branchCode: 'BUI_THI_XUAN_40', platform: 'CTRIP', name: 'KAS Sonata Luxury Hotel' },
+  // Branch 7
+  { branchCode: 'BUI_THI_XUAN_13', platform: 'BOOKING_COM', name: 'My Eliana Luxury Hotel Saigon Saigon & Spa' },
+  { branchCode: 'BUI_THI_XUAN_13', platform: 'AGODA', name: 'KAS Eliana Luxury Hotel' },
+  { branchCode: 'BUI_THI_XUAN_13', platform: 'CTRIP', name: 'KAS Eliana Luxury Hotel' },
+  // Branch 8
+  { branchCode: 'LE_THANH_TON_191', platform: 'BOOKING_COM', name: 'Ben Thanh Luxury Hotel - Premium Kas Dilly & Spa' },
+  { branchCode: 'LE_THANH_TON_191', platform: 'AGODA', name: 'KAS Dilly Hotel' },
+  { branchCode: 'LE_THANH_TON_191', platform: 'CTRIP', name: 'KAS Dilly Hotel' },
 ] as const;
+
+/** Backwards-compatible view: just the Booking.com rows. */
+export const BOOKING_COM_IDENTITIES: readonly { branchCode: string; name: string }[] =
+  PLATFORM_IDENTITY_SEED.filter((s) => s.platform === 'BOOKING_COM').map((s) => ({
+    branchCode: s.branchCode,
+    name: s.name,
+  }));
 
 /** Legacy alias sources that map onto a real platform. MANUAL/OTHER do not. */
 const LEGACY_SOURCE_TO_PLATFORM: Partial<Record<string, OtaPlatform>> = {
@@ -149,13 +206,28 @@ export async function seedPlatformIdentities(
     return true;
   };
 
-  /** Preserves a name that did NOT become the current identity. */
+  // Superseded events already written by an earlier run. Re-running the seed
+  // must not append a second copy of the same historical fact: the trail is
+  // append-only, so a duplicate would be indistinguishable from a real repeat.
+  const recorded = new Set(
+    (
+      await client.branchPlatformIdentityEvent.findMany({
+        where: { action: 'IDENTITY_MIGRATED' },
+        select: { branchId: true, platform: true, oldValue: true },
+      })
+    ).map((e) => `${e.branchId}:${e.platform}:${e.oldValue ?? ''}`),
+  );
+
+  /** Preserves a name that did NOT become the current identity. Idempotent. */
   const recordSuperseded = async (
     branchId: number,
     platform: OtaPlatform,
     name: string,
     reason: string,
   ): Promise<void> => {
+    const key = `${branchId}:${platform}:${name}`;
+    if (recorded.has(key)) return;
+
     await client.branchPlatformIdentityEvent.create({
       data: {
         branchId,
@@ -166,14 +238,18 @@ export async function seedPlatformIdentities(
         reason,
       },
     });
+    recorded.add(key);
     report.supersededRecorded += 1;
   };
 
-  // ---- 1. Operator-supplied Booking.com names (authoritative) --------------
-  for (const entry of BOOKING_COM_IDENTITIES) {
+  // ---- 1. Operator-supplied current names (authoritative) ------------------
+  // Every platform in the seed is created as its OWN row. `create` skips a
+  // (branch, platform) that already has a value, so an Admin edit is never
+  // overwritten and re-running this changes nothing.
+  for (const entry of PLATFORM_IDENTITY_SEED) {
     const branchId = branchByCode.get(entry.branchCode);
     if (branchId === undefined) continue; // a branch that does not exist here
-    if (await create(branchId, entry.branchCode, 'BOOKING_COM', entry.name, false)) {
+    if (await create(branchId, entry.branchCode, entry.platform, entry.name, false)) {
       report.seeded += 1;
     }
   }

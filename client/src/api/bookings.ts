@@ -3,7 +3,7 @@ import type { Branch } from '../auth/types';
 
 export type BookingStatus = 'DRAFT' | 'READY' | 'NEW' | 'COMPLETED' | 'ARCHIVED';
 export type PaymentStatus = 'PAY_BEFORE' | 'PAY_AFTER';
-export type BookingSource = 'BOOKING_COM' | 'AGODA';
+export type BookingSource = 'BOOKING_COM' | 'AGODA' | 'CTRIP';
 export type BusinessType = 'DIRECT' | 'PARTNER' | 'UNKNOWN';
 export type VerificationStatus = 'NOT_SUBMITTED' | 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED';
 export type ProofStatus = 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED';
@@ -38,6 +38,7 @@ export const REVIEW_REASON_LABEL: Record<ProofReviewReason, string> = Object.fro
 export const SOURCE_LABEL: Record<BookingSource, string> = {
   BOOKING_COM: 'Booking.com',
   AGODA: 'Agoda',
+  CTRIP: 'CTrip',
 };
 
 export interface ProofView {

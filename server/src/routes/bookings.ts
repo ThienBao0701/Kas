@@ -9,6 +9,7 @@ import { requireAuth, requireAdmin, requirePasswordChanged } from '../middleware
 import { proofUpload } from '../middleware/upload';
 import { parseBooking } from '../booking/parser';
 import { parseAgodaBooking } from '../booking/agoda';
+import { parseCtripBooking } from '../booking/ctrip';
 import { loadBranchConfigs } from '../booking/branchConfig';
 import { detectBusinessType } from '../booking/businessType';
 import { persistDraftBooking, snapshotRoomClasses } from '../booking/store';
@@ -29,7 +30,10 @@ import type { UserWithBranch } from '../auth/serialize';
 
 const extractSchema = z.object({
   rawText: z.string().min(1, 'Nội dung không được để trống.').max(50000, 'Nội dung quá dài.'),
-  source: z.enum(['BOOKING_COM', 'AGODA']).default('BOOKING_COM'),
+  // Only the platforms that actually HAVE an intake parser. Tripadvisor and
+  // Traveloka are valid identity platforms but are refused here, so a booking
+  // can never claim a source the system cannot extract.
+  source: z.enum(['BOOKING_COM', 'AGODA', 'CTRIP']).default('BOOKING_COM'),
 });
 
 const submitProofSchema = z.object({ note: z.string().trim().max(1000).optional() });
@@ -136,9 +140,17 @@ export function createBookingsRouter(): Router {
       // platform aliases); the parsers stay pure and never query the database.
       const branches = await loadBranchConfigs();
 
-      // Both adapters return the identical normalized structure; only the source
-      // platform stamp and a few label/prepaid variants differ.
-      const parsed = source === 'AGODA' ? parseAgodaBooking(rawText, branches) : parseBooking(rawText, branches);
+      // Every adapter returns the identical normalized structure; only the
+      // source stamp, the platform its hotel name is recognised against, and a
+      // few label/prepaid variants differ. The chosen source is preserved
+      // verbatim on the stored booking — a CTrip booking is never filed as
+      // Agoda, even though the two share property names today.
+      const parsed =
+        source === 'AGODA'
+          ? parseAgodaBooking(rawText, branches)
+          : source === 'CTRIP'
+            ? parseCtripBooking(rawText, branches)
+            : parseBooking(rawText, branches, 'BOOKING_COM');
       const bookingId = await persistDraftBooking(parsed, rawText, req.currentUser?.id ?? null, source);
       // Branch-specific room codes, captured as an immutable snapshot.
       await snapshotRoomClasses(bookingId);

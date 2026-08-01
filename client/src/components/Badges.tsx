@@ -75,6 +75,7 @@ export function VerificationBadge({ status }: { status: VerificationStatus }) {
 const SOURCE_STYLES: Record<BookingSource, string> = {
   BOOKING_COM: 'bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200',
   AGODA: 'bg-fuchsia-50 text-fuchsia-700 ring-1 ring-inset ring-fuchsia-200',
+  CTRIP: 'bg-teal-50 text-teal-700 ring-1 ring-inset ring-teal-200',
 };
 
 /** A small chip naming the source platform a booking was imported from. */

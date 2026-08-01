@@ -63,9 +63,20 @@ enum PaymentStatus {
 }
 
 /// Where a reservation originated. Existing rows default to BOOKING_COM.
+///
+/// This is the INTAKE source — the platform whose text was pasted — and it is
+/// stored verbatim. A CTrip booking is never recorded as Agoda even though the
+/// two currently share property names: the source drives history, filters,
+/// audit and which platform identity recognition resolves against.
+///
+/// Tripadvisor and Traveloka are deliberately absent: they are valid
+/// `OtaPlatform` identity values, but no intake parser produces them yet, so
+/// accepting them here would let a booking claim a source the system cannot
+/// actually extract.
 enum BookingSource {
   BOOKING_COM
   AGODA
+  CTRIP
 }
 
 /// Operational business type of a booking, independent of the OTA source.
