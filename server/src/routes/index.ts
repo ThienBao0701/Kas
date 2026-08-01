@@ -8,6 +8,7 @@ import { createBookingGuestsRouter } from './bookingGuests';
 import { createAdminUsersRouter } from './adminUsers';
 import { createBookingsRouter } from './bookings';
 import { createAdminBookingsRouter } from './adminBookings';
+import { createOtaReviewRouter } from './otaReview';
 import { createAdminDashboardRouter } from './adminDashboard';
 import { createNotificationsRouter } from './notifications';
 import { createIssuesRouter } from './issues';
@@ -30,6 +31,7 @@ export function createApiRouter(): Router {
   router.use(createAdminBranchesRouter());
   router.use(createAdminUsersRouter());
   router.use(createAdminBookingsRouter());
+  router.use(createOtaReviewRouter());
   router.use(createAdminDashboardRouter());
   // Guest routes are more specific than /bookings/:id, so they mount first.
   router.use(createBookingGuestsRouter());

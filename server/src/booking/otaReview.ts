@@ -181,10 +181,17 @@ export function buildOtaReview(input: BuildOtaReviewInput): OtaReview {
 
   const rooms: OtaReviewRoomLine[] = sourceRooms.map((line) => {
     // An Admin-chosen code is honoured, provided it is valid for this branch.
+    //
+    // An invalid code is DISCARDED, not merely flagged. Leaving it on the line
+    // would let the note builder emit a PMS code the branch does not have — and
+    // that note is copied straight into the hotel system. With no branch
+    // selected there is nothing to validate against, so the code is not trusted
+    // either.
     if (line.pmsCode) {
-      const valid = !branch || branch.validPmsCodes.includes(line.pmsCode);
+      const valid = branch !== null && branch.validPmsCodes.includes(line.pmsCode);
       return {
         ...line,
+        pmsCode: valid ? line.pmsCode : null,
         requiresManualMapping: !valid,
       };
     }
