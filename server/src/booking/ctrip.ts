@@ -27,6 +27,7 @@
  * names — they are independent identities and either may be renamed alone.
  */
 import { parseBooking } from './parser';
+import { extractCtripFields, nightsBetween } from './ctripFields';
 import type { IdentityBranch } from './identityResolver';
 import type { MatchableBranch, ParsedBooking } from './types';
 
@@ -88,5 +89,44 @@ export function parseCtripBooking(
 ): ParsedBooking {
   const cleaned = normalizeCtripText(rawText);
   const parsed = parseBooking(cleaned, branches as readonly IdentityBranch[], 'CTRIP');
-  return { ...parsed, parserVersion: CTRIP_PARSER_VERSION };
+  const fields = extractCtripFields(rawText);
+
+  // The structured CTrip labels are authoritative where they are present: the
+  // generic engine reads a page heuristically, whereas these are the labels the
+  // operator confirmed. Each one is applied ONLY when CTrip actually stated it,
+  // so a field the engine found is never overwritten with nothing.
+  const checkIn = fields.checkIn ?? parsed.checkIn;
+  const checkOut = fields.checkOut ?? parsed.checkOut;
+
+  return {
+    ...parsed,
+    bookingCode: fields.reservationCode ?? parsed.bookingCode,
+    guestName: fields.guestName ?? parsed.guestName,
+    checkIn,
+    checkOut,
+    // The BRANCH price. "Your payout" is what the hotel receives; the guest's
+    // own price lives in `ctrip.guestBookedPrice` and is never confused with it.
+    totalAmount: fields.payout ?? parsed.totalAmount,
+    parserVersion: CTRIP_PARSER_VERSION,
+    ctrip: {
+      reservationCode: fields.reservationCode,
+      propertyName: fields.propertyName,
+      guestName: fields.guestName,
+      checkIn: fields.checkIn,
+      checkOut: fields.checkOut,
+      nights: nightsBetween(checkIn, checkOut),
+      roomType: fields.roomType,
+      roomQuantity: fields.roomQuantity,
+      branchPrice: fields.payout,
+      // "Original room rate" — never replaced by "Final room rate", which is
+      // the post-discount figure rather than what the guest booked at.
+      guestBookedPrice: fields.originalRoomRate,
+      finalRoomRate: fields.finalRoomRate,
+      breakfastIncluded: fields.breakfastIncluded,
+      // CTrip states no per-night breakdown. This stays empty rather than
+      // holding the payout divided by the nights: a derived figure would be
+      // copied into the PMS as if CTrip had stated it.
+      nightlyRates: [],
+    },
+  };
 }

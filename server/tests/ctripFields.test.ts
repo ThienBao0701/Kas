@@ -9,6 +9,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { CTRIP_PARSER_VERSION, parseCtripBooking } from '../src/booking/ctrip';
+import { normalizeText } from '../src/booking/text';
 import {
   extractCtripFields,
   nightsBetween,
@@ -117,5 +119,83 @@ describe('absent fields stay absent', () => {
   it('an unstated Meals line leaves breakfast unknown rather than assuming', () => {
     const f = extractCtripFields('Reservation: 999');
     expect(f.breakfastIncluded).toBeNull();
+  });
+});
+
+/* ================================================================== */
+/* The fields reach parseCtripBooking                                  */
+/* ================================================================== */
+
+describe('parseCtripBooking carries the structured fields through', () => {
+  const branches = [
+    {
+      id: 5,
+      code: 'LE_THANH_TON_278',
+      hotelName: 'Boutique Zody Hotel Ben Than',
+      address: '278 Lê Thánh Tôn',
+      identities: [
+        {
+          platform: 'CTRIP' as const,
+          name: 'KAS Zody Boutique Hotel',
+          normalizedName: normalizeText('KAS Zody Boutique Hotel'),
+        },
+      ],
+    },
+  ];
+
+  const parsed = parseCtripBooking(CONFIRMED, branches);
+
+  it('resolves the branch from the CTrip property identity', () => {
+    expect(parsed.suggestedBranch?.code).toBe('LE_THANH_TON_278');
+    expect(parsed.branchConfident).toBe(true);
+  });
+
+  it('uses the confirmed labels for code, guest and dates', () => {
+    expect(parsed.bookingCode).toBe('1658113703317875');
+    expect(parsed.guestName).toBe('LEE/JENSON HWEE');
+    expect(parsed.checkIn).toBe('2026-08-01');
+    expect(parsed.checkOut).toBe('2026-08-08');
+    expect(parsed.ctrip?.nights).toBe(7);
+  });
+
+  it('sets the booking total to the BRANCH price (Your payout)', () => {
+    expect(parsed.totalAmount).toBe(4_645_956);
+    expect(parsed.ctrip?.branchPrice).toBe(4_645_956);
+  });
+
+  it('keeps the guest-booked price as Original room rate, separate from the payout', () => {
+    expect(parsed.ctrip?.guestBookedPrice).toBe(6_637_080);
+    expect(parsed.ctrip?.guestBookedPrice).not.toBe(parsed.ctrip?.branchPrice);
+    // Final room rate is exposed for review only and is never a price we use.
+    expect(parsed.ctrip?.finalRoomRate).toBe(4_645_956);
+  });
+
+  it('ignores Discounts entirely', () => {
+    expect(parsed.totalAmount).not.toBe(1_991_124);
+    expect(parsed.ctrip?.guestBookedPrice).not.toBe(1_991_124);
+  });
+
+  it('fabricates no nightly prices', () => {
+    expect(parsed.ctrip?.nightlyRates).toEqual([]);
+    const perNight = 4_645_956 / 7; // divides exactly — the tempting case
+    for (const room of parsed.rooms) {
+      for (const night of room.nights) {
+        expect(night.amount).not.toBe(perNight);
+      }
+    }
+  });
+
+  it('stamps the CTrip parser version', () => {
+    expect(parsed.parserVersion).toBe(CTRIP_PARSER_VERSION);
+  });
+
+  it('leaves the branch unassigned when CTrip states no Property name', () => {
+    const noProperty = parseCtripBooking(
+      ['Reservation: 777', 'Guest: A B', 'Check-in: 01/08/2026', 'Check-out: 02/08/2026'].join('\n'),
+      branches,
+    );
+    expect(noProperty.ctrip?.propertyName).toBeNull();
+    expect(noProperty.branchConfident).toBe(false);
+    expect(noProperty.requiresManualConfirmation).toBe(true);
   });
 });

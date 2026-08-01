@@ -136,6 +136,41 @@ export interface ParsedBooking {
    * Booking.com and the Agoda guest-confirmation path leave it undefined.
    */
   agoda?: AgodaPartnerExtras;
+  /**
+   * Present only for a CTrip reservation: the structured fields read from the
+   * labels CTrip actually supplies. Optional and additive — Booking.com and
+   * Agoda leave it undefined, so no existing read path changes.
+   */
+  ctrip?: CtripExtras;
+}
+
+/**
+ * Structured CTrip details surfaced alongside a parsed booking.
+ *
+ * The two prices are deliberately separate fields with unambiguous names: CTrip
+ * shows three amounts and confusing them would misstate either what the hotel
+ * is owed or what the guest paid.
+ */
+export interface CtripExtras {
+  reservationCode: string | null;
+  /** Absent means the Admin must choose the branch — it is never guessed. */
+  propertyName: string | null;
+  guestName: string | null;
+  checkIn: string | null;
+  checkOut: string | null;
+  nights: number | null;
+  roomType: string | null;
+  roomQuantity: number | null;
+  /** "Your payout" — what the branch receives. */
+  branchPrice: number | null;
+  /** "Original room rate" — what the guest booked at. */
+  guestBookedPrice: number | null;
+  /** "Final room rate" — kept for review only; never used as a price. */
+  finalRoomRate: number | null;
+  /** Null when CTrip did not state it, rather than assumed. */
+  breakfastIncluded: boolean | null;
+  /** Always empty: CTrip states no per-night breakdown, and none is derived. */
+  nightlyRates: { stayDate: string; amount: number | null }[];
 }
 
 /** Structured Agoda partner details surfaced alongside a parsed booking. */

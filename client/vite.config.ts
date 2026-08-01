@@ -51,6 +51,8 @@ export default defineConfig({
     // Bind to all interfaces so receptionist machines on the LAN can reach the
     // dev server; production is served same-origin by the backend.
     host: true,
+    // Reachable through the operator's tunnel hostname as well as the LAN.
+    allowedHosts: ['kasbookingapp.com'],
     proxy: {
       '/api': {
         target: BACKEND_URL,
