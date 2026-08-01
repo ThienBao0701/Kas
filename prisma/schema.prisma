@@ -151,6 +151,33 @@ enum BranchAliasMatchMode {
   SIMILARITY
 }
 
+/// The external booking platforms a branch can be listed on.
+///
+/// Deliberately a SEPARATE enum from `BranchAliasSource`, not an extension of
+/// it: that enum carries MANUAL/OTHER, which are not platforms and must never
+/// appear as a platform tab or be accepted by the identity API. This enum is
+/// exactly the set an operator can configure — no more, no less — so the
+/// database itself rejects anything else.
+enum OtaPlatform {
+  BOOKING_COM
+  AGODA
+  CTRIP
+  TRIPADVISOR
+  TRAVELOKA
+}
+
+/// What happened to a branch's platform identity. Immutable audit trail.
+/// IDENTITY_MIGRATED records a legacy alias that the one-current-identity
+/// migration did NOT promote, so a superseded name is preserved rather than
+/// discarded.
+enum PlatformIdentityAction {
+  IDENTITY_CREATED
+  IDENTITY_UPDATED
+  IDENTITY_DELETED
+  IDENTITY_MIGRATED
+  IDENTITY_CONFIRMED
+}
+
 /// What changed on a branch (audit trail for Admin branch management).
 /// The ROOM_MAPPING_* / ROOM_CLASS_* members extend the SAME audit trail to
 /// branch room-class configuration — room classes are branch configuration, so
@@ -296,6 +323,7 @@ model User {
   issuesAccepted        HotelIssue[]               @relation("IssueAcceptedBy")
   issuesResolved        HotelIssue[]               @relation("IssueResolvedBy")
   branchChanges         BranchChangeLog[]
+  identityEvents        BranchPlatformIdentityEvent[]
   roomMappingsCreated   BranchRoomMappingVersion[] @relation("RoomMappingCreatedBy")
   roomMappingsActivated BranchRoomMappingVersion[] @relation("RoomMappingActivatedBy")
   bookingAuditEvents    BookingAuditEvent[]
@@ -378,6 +406,8 @@ model Branch {
   bookings            Booking[]
   issues              HotelIssue[]
   aliases             BranchSourceAlias[]
+  platformIdentities  BranchPlatformIdentity[]
+  identityEvents      BranchPlatformIdentityEvent[]
   changeLogs          BranchChangeLog[]
   roomMappingVersions BranchRoomMappingVersion[]
   roomClasses         BranchRoomClass[]
@@ -555,6 +585,73 @@ model BranchSourceAlias {
   @@index([source, normalizedAlias])
   @@index([source, active])
   @@index([branchId])
+}
+
+/// The ONE current hotel name a branch is listed under on one platform.
+///
+/// This supersedes `BranchSourceAlias` for recognition. The alias table allowed
+/// many rows per (branch, platform) with active/inactive toggles, which meant a
+/// name could be ambiguous, an operator had to reason about strikethrough
+/// history in the main table, and "which name is live right now" had no single
+/// answer. Here there is exactly one row per (branch, platform) — enforced by
+/// the database, not by the service — and superseded names live in
+/// BranchPlatformIdentityEvent where they belong.
+///
+/// Two unique constraints carry the whole safety model:
+///   @@unique([branchId, platform])       one current identity per branch/platform
+///   @@unique([platform, normalizedName]) a name resolves to exactly ONE branch
+/// The second is what makes recognition safe: a duplicate cannot be created
+/// even by two concurrent requests, so a booking can never route two ways.
+model BranchPlatformIdentity {
+  id       String      @id @default(cuid())
+  branchId Int
+  platform OtaPlatform
+  /// Exactly as the platform displays it — shown to the operator verbatim.
+  name     String
+  /// Case/accent/whitespace/punctuation-folded form used for lookup.
+  normalizedName String
+  /// True when the migration had to CHOOSE between competing legacy aliases.
+  /// Recognition still works; the Admin is asked to confirm the pick.
+  identityNeedsConfirmation Boolean @default(false)
+
+  createdByUserId Int?
+  updatedByUserId Int?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@unique([branchId, platform])
+  @@unique([platform, normalizedName])
+  @@index([platform, normalizedName])
+  @@index([branchId])
+}
+
+/// Immutable history of every platform-identity change, including the values a
+/// migration or a delete removed from recognition. Never shown in the main
+/// branch table — the whole point of the redesign is that the live list holds
+/// only current values — and reachable through a dedicated history endpoint.
+model BranchPlatformIdentityEvent {
+  id       String                 @id @default(cuid())
+  branchId Int
+  platform OtaPlatform
+  action   PlatformIdentityAction
+  oldValue String?
+  newValue String?
+  /// A stable machine reason (e.g. "LEGACY_COMPETING_ALIAS"), never free text
+  /// that could carry operational or personal data.
+  reason        String?
+  actorUserId   Int?
+  actorRole     UserRole?
+  correlationId String?
+  createdAt     DateTime @default(now())
+
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  actor  User?  @relation(fields: [actorUserId], references: [id])
+
+  @@index([branchId, createdAt])
+  @@index([platform, createdAt])
+  @@index([action])
 }
 
 /// Immutable audit trail of Admin branch/alias configuration changes. Values are

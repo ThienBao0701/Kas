@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { resolveBranchIdentity } from '../src/booking/identityResolver';
 import os from 'node:os';
 import path from 'node:path';
 import request from 'supertest';
@@ -753,19 +754,23 @@ describe('production regressions', () => {
     const id = created.body.branch.id as number;
 
     expect(
-      (await adminAgent.post(`/api/admin/branches/${id}/aliases`)
-        .send({ source: 'AGODA', alias: 'KAS De Tham Hotel' })).status,
-    ).toBe(201);
-    expect(resolveAgodaBranch('KAS De Tham Hotel', await loadBranchConfigs(testPrisma))?.code).toBe('DE_THAM_3');
+      (await adminAgent.put(`/api/admin/branches/${id}/platform-identities/AGODA`)
+        .send({ name: 'KAS De Tham Hotel' })).status,
+    ).toBe(200);
+    expect(
+      resolveBranchIdentity('KAS De Tham Hotel', 'AGODA', await loadBranchConfigs(testPrisma)).branchCode,
+    ).toBe('DE_THAM_3');
 
     await adminAgent.post(`/api/admin/branches/${id}/deactivate`);
 
     // 39. A disabled branch is removed from automatic routing and from dispatch.
     const after = await loadBranchConfigs(testPrisma);
-    expect(resolveAgodaBranch('KAS De Tham Hotel', after)).toBeNull();
+    expect(resolveBranchIdentity('KAS De Tham Hotel', 'AGODA', after).branchId).toBeNull();
     expect(after.some((b) => b.id === id)).toBe(false);
     expect((await adminAgent.get('/api/branches')).body.branches.some((b: { id: number }) => b.id === id)).toBe(false);
 
+    await testPrisma.branchPlatformIdentityEvent.deleteMany({ where: { branchId: id } });
+    await testPrisma.branchPlatformIdentity.deleteMany({ where: { branchId: id } });
     await testPrisma.branchSourceAlias.deleteMany({ where: { branchId: id } });
     await testPrisma.branchChangeLog.deleteMany({ where: { branchId: id } });
     await testPrisma.branch.delete({ where: { id } });

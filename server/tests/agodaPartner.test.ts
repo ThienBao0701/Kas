@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { fixtureBranches } from './helpers/branchFixtures';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
@@ -15,11 +16,10 @@ import {
 import { AGODA_PARSER_VERSION, AGODA_PARTNER_PARSER_VERSION, parseAgodaBooking } from '../src/booking/agoda';
 import { AGODA_HOTEL_NAMES } from '../src/booking/branchMatcher';
 import { allocateEvenly } from '../src/booking/money';
-import { BRANCHES } from '../src/db/branches';
-import type { MatchableBranch } from '../src/booking/types';
 
 // Branch fixtures mirror the seed, with deterministic ids 1..8.
-const branches: MatchableBranch[] = BRANCHES.map((b, i) => ({ id: i + 1, code: b.code, hotelName: b.hotelName, address: b.address }));
+// Seeded branches WITH their current platform identities (see helper).
+const branches = fixtureBranches;
 
 const FIXTURE = path.join(__dirname, 'fixtures', 'agoda', '05-partner-ycs-booking.txt');
 const SAMPLE = fs.readFileSync(FIXTURE, 'utf8');

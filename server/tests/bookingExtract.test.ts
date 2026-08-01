@@ -106,7 +106,11 @@ describe('POST /api/bookings/extract', () => {
       ]);
       expect(room.nights.map((n: { amount: number }) => n.amount)).toEqual([648_000, 891_000]);
     }
-    expect(res.body.warnings).toEqual([]);
+    // The extranet sample's hotel line carries the property id, so the branch
+    // is suggested rather than assigned — that warning must survive.
+    expect(res.body.warnings.map((w: { code: string }) => w.code)).toEqual([
+      'LOW_BRANCH_CONFIDENCE',
+    ]);
 
     // Persisted through the store exactly as previewed.
     const stored = await testPrisma.booking.findUniqueOrThrow({

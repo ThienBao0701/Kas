@@ -1,17 +1,13 @@
 import fs from 'node:fs';
+import { fixtureBranches } from './helpers/branchFixtures';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parseBooking } from '../src/booking/parser';
 import { resolvePaymentStatus } from '../src/booking/paymentStatus';
-import { BRANCHES } from '../src/db/branches';
-import type { MatchableBranch, ParsedBooking } from '../src/booking/types';
+import type { ParsedBooking } from '../src/booking/types';
 
-const branches: MatchableBranch[] = BRANCHES.map((b, i) => ({
-  id: i + 1,
-  code: b.code,
-  hotelName: b.hotelName,
-  address: b.address,
-}));
+// Seeded branches WITH their current platform identities (see helper).
+const branches = fixtureBranches;
 
 const RAW = fs.readFileSync(
   path.join(__dirname, 'fixtures', 'booking', '25-real-sample-two-room-nightly.txt'),
@@ -37,9 +33,13 @@ describe('real Booking.com extranet sample — two rooms, nightly-rate tables', 
     expect(r.hotelName).not.toMatch(/\d/);
   });
 
-  it('2. matches the correct branch confidently', () => {
+  it('2. suggests the correct branch but requires confirmation (name is not exact)', () => {
+    // The sample's hotel line is 'Saigon Hotel & Ben Thanh Market16806954' — not
+    // the branch's current Booking.com identity and not its internal name, so it
+    // may only be SUGGESTED. Nothing is auto-assigned.
     expect(r.suggestedBranch?.address).toBe('05 Trương Định');
-    expect(r.branchConfident).toBe(true);
+    expect(r.branchConfident).toBe(false);
+    expect(r.requiresManualConfirmation).toBe(true);
   });
 
   it('3. takes the main customer name', () => {
@@ -189,8 +189,10 @@ describe('real Booking.com extranet sample — two rooms, nightly-rate tables', 
     expect(codes(r)).not.toContain('ROOM_COUNT_MISMATCH');
   });
 
-  it('34. produces no warnings at all', () => {
-    expect(r.warnings).toEqual([]);
+  it('34. produces only the branch-confirmation warning', () => {
+    // Every extraction warning is gone except the one that exists BECAUSE the
+    // hotel name is not an exact identity — which must never be suppressed.
+    expect(codes(r)).toEqual(['LOW_BRANCH_CONFIDENCE']);
   });
 });
 

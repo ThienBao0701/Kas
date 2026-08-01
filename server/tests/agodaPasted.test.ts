@@ -1,11 +1,10 @@
 import fs from 'node:fs';
+import { fixtureBranches } from './helpers/branchFixtures';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parseAgodaBooking } from '../src/booking/agoda';
 import { buildAgodaPmsNote, isAgodaPartnerEmail, parseAgodaPartnerBooking } from '../src/booking/agodaPartner';
 import { matchBranch } from '../src/booking/branchMatcher';
-import { BRANCHES } from '../src/db/branches';
-import type { MatchableBranch } from '../src/booking/types';
 
 /**
  * Regression suite for the real-world paste.
@@ -21,12 +20,8 @@ import type { MatchableBranch } from '../src/booking/types';
  * a room quantity of 120, a room type carrying the whole table row, and a phone
  * containing the guest's name.
  */
-const branches: MatchableBranch[] = BRANCHES.map((b, i) => ({
-  id: i + 1,
-  code: b.code,
-  hotelName: b.hotelName,
-  address: b.address,
-}));
+// Seeded branches WITH their current platform identities (see helper).
+const branches = fixtureBranches;
 
 const PASTED = fs.readFileSync(path.join(__dirname, 'fixtures', 'agoda', '06-partner-pasted-flattened.txt'), 'utf8');
 const p = () => parseAgodaPartnerBooking(PASTED);

@@ -4,6 +4,7 @@ import { BRANCHES } from './branches';
 import { AGODA_HOTEL_NAMES, BRANCH_ALIASES } from '../booking/branchMatcher';
 import { normalizeText } from '../booking/text';
 import { seedBranchRoomClasses } from '../room/roomClassSeed';
+import { seedPlatformIdentities } from './platformIdentitySeed';
 
 /**
  * Seeds the initial branches. Upserts by `code`, so running it repeatedly updates
@@ -37,6 +38,10 @@ export async function seedBranches(client: PrismaClient = defaultPrisma): Promis
   }
 
   await backfillBranchAliases(client);
+  // The ONE current hotel name per (branch, platform). Runs after the alias
+  // backfill so the legacy rows it migrates from already exist, and it only
+  // ever fills gaps — an Admin-edited identity is never overwritten.
+  await seedPlatformIdentities(client);
   // Version 1 of each branch's room classes. Skips any branch that already has
   // a mapping, so an Admin-edited configuration is never disturbed.
   await seedBranchRoomClasses(client);

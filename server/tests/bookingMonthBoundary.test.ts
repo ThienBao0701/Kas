@@ -1,17 +1,13 @@
 import fs from 'node:fs';
+import { fixtureBranches } from './helpers/branchFixtures';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parseBooking } from '../src/booking/parser';
 import { parseDateRangeStayDate } from '../src/booking/dates';
-import { BRANCHES } from '../src/db/branches';
-import type { MatchableBranch, ParsedBooking } from '../src/booking/types';
+import type { ParsedBooking } from '../src/booking/types';
 
-const branches: MatchableBranch[] = BRANCHES.map((b, i) => ({
-  id: i + 1,
-  code: b.code,
-  hotelName: b.hotelName,
-  address: b.address,
-}));
+// Seeded branches WITH their current platform identities (see helper).
+const branches = fixtureBranches;
 
 const RAW = fs.readFileSync(
   path.join(__dirname, 'fixtures', 'booking', '27-real-sample-month-boundary.txt'),
@@ -110,6 +106,8 @@ describe('real Booking.com month-boundary booking (end to end)', () => {
     expect(r.rooms[0]!.roomTotal).toBe(9_153_000);
     expect(r.totalAmount).toBe(9_153_000);
     expect(r.rooms).toHaveLength(1);
-    expect(r.warnings).toEqual([]);
+    // The only warning is the branch-confirmation one: this sample's hotel line
+    // carries the extranet property id, so the name is not an exact identity.
+    expect(r.warnings.map((w) => w.code)).toEqual(['LOW_BRANCH_CONFIDENCE']);
   });
 });
