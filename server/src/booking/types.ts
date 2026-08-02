@@ -211,6 +211,14 @@ export interface AgodaPartnerExtras {
   ratePlan: string | null;
   cancellationPolicy: string | null;
   countryOfResidence: string | null;
+  /** Descriptive fields kept for the booking record; never used to decide anything. */
+  sourcePropertyId: string | null;
+  bookingStatus: 'CONFIRMED' | 'AMENDED' | 'CANCELLED' | null;
+  websiteLanguage: string | null;
+  paymentType: string | null;
+  benefitsIncluded: string | null;
+  specialRequests: string | null;
+  customerPhone: string | null;
   /**
    * Agoda's own per-night rows (diagnostics only — not the debt schedule).
    * `amount` is what Agoda printed and may cover every room that night;

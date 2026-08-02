@@ -116,6 +116,14 @@ export interface OtaReviewOverrides {
  */
 export const OTA_BREAKFAST_INCLUDED = false;
 
+/**
+ * The review model's own version, stamped onto every dispatched booking.
+ *
+ * Recorded beside `parserVersion` so a booking can be traced to the review
+ * RULES that produced it, not only to the extraction that fed them.
+ */
+export const OTA_REVIEW_VERSION = 'ota-review-1.0.0';
+
 /** Whole nights between two ISO dates, or null. */
 export function nightsBetween(checkIn: string | null, checkOut: string | null): number | null {
   if (!checkIn || !checkOut) return null;

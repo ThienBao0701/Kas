@@ -744,6 +744,14 @@ export interface AgodaPartnerBooking {
   /** CONFIRMED / AMENDED / CANCELLED, from the confirmation heading itself. */
   bookingStatus: 'CONFIRMED' | 'AMENDED' | 'CANCELLED' | null;
   /**
+   * Agoda's own property identifier, from "(Property ID 55198617)".
+   *
+   * Recorded for audit ONLY. Branch resolution goes through the configured
+   * platform identity as it always has — this id never selects a branch, so a
+   * property renumbered on Agoda cannot silently reroute a booking.
+   */
+  sourcePropertyId: string | null;
+  /**
    * Every DISTINCT complete reservation found in the pasted document. More than
    * one means the paste is ambiguous: the parsed booking is the first, and
    * dispatch is blocked until an Admin says which was intended.
@@ -1226,6 +1234,7 @@ export function parseAgodaPartnerBooking(rawText: string): AgodaPartnerBooking {
     extraBeds: extraParsed,
     breakfastIncluded: AGODA_BREAKFAST_INCLUDED,
     bookingStatus: readBookingStatus(all),
+    sourcePropertyId: readPropertyId(all),
     detectedReservationIds,
     paymentType: payment,
     websiteLanguage: labelValue(all, /^website language$/),
@@ -1537,6 +1546,15 @@ function extractHotelName(all: string[]): string | null {
   const labelled = labelValue(all, /property name|hotel name/);
   const candidate = labelled ?? all.find((l) => /^kas\b/i.test(l.trim())) ?? null;
   return candidate ? clean(candidate) : null;
+}
+
+/** Agoda's property id, for the record. Never used to choose a branch. */
+function readPropertyId(all: readonly string[]): string | null {
+  for (const line of all) {
+    const match = /\(\s*property\s*id\s*:?\s*(\d{3,15})\s*\)/i.exec(line);
+    if (match) return match[1]!;
+  }
+  return null;
 }
 
 /** The non-empty line directly above "(Property ID …)", if there is one. */

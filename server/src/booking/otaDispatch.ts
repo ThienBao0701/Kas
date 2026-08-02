@@ -23,9 +23,14 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db/prisma';
 import { ApiError } from '../lib/errors';
 import { getClock, isLastMinute, type Clock } from '../lib/clock';
+import { createHash } from 'node:crypto';
 import { buildOtaReviewFromText, type OtaReviewRequest } from './otaReviewService';
 import { createBranchNotifications } from './dispatch';
+import { parseAgodaBooking } from './agoda';
+import { parseCtripBooking } from './ctrip';
+import { OTA_REVIEW_VERSION } from './otaReview';
 import type { OtaReview } from './otaReview';
+import { collectCorrections } from './otaCorrections';
 
 /** The Admin performing the dispatch. */
 export interface OtaDispatchActor {
@@ -84,6 +89,18 @@ export async function dispatchOtaReview(
   // Re-derive rather than accept. This is the same call the review screen makes.
   const { review } = await buildOtaReviewFromText(request, client);
 
+  // The SAME parse the review is built from, re-run for the DESCRIPTIVE fields
+  // the review does not carry — country, language, benefits, the platform's own
+  // status and identifiers. Those are recorded exactly as the parser read them:
+  // they are not correctable on the review screen, so there is nothing for an
+  // Admin's override to win over, and inventing a value for a field the mail
+  // did not state would be worse than leaving it null.
+  const parsedBooking =
+    request.source === 'AGODA'
+      ? parseAgodaBooking(request.rawText, [])
+      : parseCtripBooking(request.rawText, []);
+  const extras = request.source === 'AGODA' ? parsedBooking.agoda ?? null : null;
+
   if (!review.canDispatch) {
     throw ApiError.bookingNotReady('Đơn chưa đủ điều kiện để gửi chi nhánh.', {
       valid: false,
@@ -122,6 +139,29 @@ export async function dispatchOtaReview(
     return { bookingId: existing.id, created: false, review };
   }
 
+  // What the Admin changed, measured against the UNCORRECTED parse.
+  const { review: uncorrected } = await buildOtaReviewFromText(
+    { source: request.source, rawText: request.rawText },
+    client,
+  );
+  const corrections = collectCorrections(
+    {
+      bookingCode: uncorrected.bookingCode,
+      guestName: uncorrected.guestName,
+      checkIn: uncorrected.checkIn,
+      checkOut: uncorrected.checkOut,
+      branchId: uncorrected.branchId,
+      branchPrice: uncorrected.branchPrice,
+      guestBookedPrice: uncorrected.guestBookedPrice,
+      rooms: uncorrected.rooms.map((r) => ({
+        otaRoomName: r.otaRoomName,
+        quantity: r.quantity,
+        pmsCode: r.pmsCode,
+      })),
+    },
+    review,
+  );
+
   const now = clock.now();
   const lastMinute = review.checkIn !== null && isLastMinute(isoToUtcDate(review.checkIn), now);
 
@@ -149,6 +189,21 @@ export async function dispatchOtaReview(
         sentByUserId: actor.id,
         createdByUserId: actor.id,
         noteGeneratedAt: now,
+        // The full review snapshot. Every value is what the parser read or the
+        // Admin chose — nothing here is inferred or filled in.
+        sourcePropertyId: extras?.sourcePropertyId ?? null,
+        otaBookingStatus: extras?.bookingStatus ?? null,
+        ratePlanName: extras?.ratePlan ?? null,
+        cancellationPolicy: extras?.cancellationPolicy ?? null,
+        countryOfResidence: extras?.countryOfResidence ?? null,
+        websiteLanguage: extras?.websiteLanguage ?? null,
+        paymentType: extras?.paymentType ?? null,
+        benefitsIncluded: extras?.benefitsIncluded ?? null,
+        phone: extras?.customerPhone ?? parsedBooking.phone ?? null,
+        specialRequest: extras?.specialRequests ?? parsedBooking.specialRequest ?? null,
+        parserVersion: parsedBooking.parserVersion,
+        reviewVersion: OTA_REVIEW_VERSION,
+        rawTextSha256: createHash('sha256').update(request.rawText, 'utf8').digest('hex'),
         rooms: {
           create: review.rooms.map((room, index) => ({
             roomIndex: index + 1,
@@ -156,14 +211,23 @@ export async function dispatchOtaReview(
             // name is preserved beside it so the source stays auditable.
             roomType: room.pmsCode ?? room.otaRoomName ?? '',
             roomSubtotal: review.rooms.length === 1 ? review.branchPrice : null,
-            nights: {
-              create: review.nightlyRates.map((night) => ({
-                stayDate: isoToUtcDate(night.stayDate),
-                amount: review.rooms.length === 1 ? night.amount : null,
-                currency: 'VND',
-                isEstimated: false,
-              })),
-            },
+            // EVERY night the platform stated, on the first line only.
+            //
+            // The nightly figures cover the whole reservation, so repeating
+            // them under each room line would multiply the stay's value by the
+            // number of lines. They are attached once and left exactly as
+            // parsed — no night is dropped, merged or recomputed.
+            nights:
+              index === 0
+                ? {
+                    create: review.nightlyRates.map((night) => ({
+                      stayDate: isoToUtcDate(night.stayDate),
+                      amount: night.amount,
+                      currency: 'VND',
+                      isEstimated: false,
+                    })),
+                  }
+                : undefined,
           })),
         },
         // Everything the review flagged is stored with the booking, so the
@@ -177,6 +241,22 @@ export async function dispatchOtaReview(
         },
       },
     });
+
+    // Append-only: written once, never updated, never deleted. What the mail
+    // said survives beside what was dispatched even if the booking is edited
+    // later.
+    if (corrections.length > 0) {
+      await tx.bookingCorrection.createMany({
+        data: corrections.map((c) => ({
+          bookingId: booking.id,
+          field: c.field,
+          oldValue: c.oldValue,
+          newValue: c.newValue,
+          correctedByUserId: actor.id,
+          correctedAt: now,
+        })),
+      });
+    }
 
     await tx.bookingStatusHistory.create({
       data: {

@@ -113,6 +113,13 @@ function fromPartnerEmail(rawText: string, branches: readonly MatchableBranch[])
     ratePlan: p.ratePlan,
     cancellationPolicy: p.cancellationPolicy,
     countryOfResidence: p.countryOfResidence,
+    sourcePropertyId: p.sourcePropertyId,
+    bookingStatus: p.bookingStatus,
+    websiteLanguage: p.websiteLanguage,
+    paymentType: p.paymentType,
+    benefitsIncluded: p.benefitsIncluded,
+    specialRequests: p.specialRequests,
+    customerPhone: p.customerPhone,
     nightlyRates: p.nightlyRates,
     // The authoritative schedule: Net rate split evenly, summing to the total.
     totalDebtAmount: p.netRate,

@@ -353,6 +353,7 @@ model User {
   bookingsCheckedIn     Booking[]                  @relation("BookingCheckedInBy")
   bookingsCheckedOut    Booking[]                  @relation("BookingCheckedOutBy")
   bookingsCancelled     Booking[]                  @relation("BookingCancelledBy")
+  bookingCorrections    BookingCorrection[]        @relation("BookingCorrectionBy")
   bookingsReviewed      Booking[]                  @relation("BookingReviewedBy")
   bookingsCreated       Booking[]                  @relation("BookingCreatedBy")
   proofsSubmitted       BookingCreationProof[]     @relation("ProofSubmittedBy")
@@ -864,6 +865,30 @@ model Booking {
   cancelledByUserId  Int?
   cancellationReason String?
 
+  /// ── OTA REVIEW SNAPSHOT ───────────────────────────────────────────────
+  /// Everything the Admin saw on the review screen, kept with the booking so
+  /// the branch sees exactly what was reviewed and the decision stays auditable
+  /// after the fact. All nullable and all OTA-only: a Booking.com booking
+  /// leaves every one of them NULL and behaves exactly as before.
+  ///
+  /// The OTA's own identifiers and its own status live here. `otaBookingStatus`
+  /// is the PLATFORM's word for the reservation (CONFIRMED / AMENDED /
+  /// CANCELLED) and is deliberately NOT the operational `status` above — the
+  /// two answer different questions and must never be conflated.
+  sourcePropertyId   String?
+  otaBookingStatus   String?
+  ratePlanName       String?
+  cancellationPolicy String?
+  countryOfResidence String?
+  websiteLanguage    String?
+  paymentType        String?
+  benefitsIncluded   String?
+  /// The review model that produced this booking, beside `parserVersion`.
+  reviewVersion      String?
+  /// SHA-256 of the pasted text. Lets two dispatches of the same mail be
+  /// recognised as the same source without storing the body twice.
+  rawTextSha256      String?
+
   /// Proof-of-creation review state. NOT_SUBMITTED until a receptionist submits.
   verificationStatus VerificationStatus @default(NOT_SUBMITTED)
   /// The Admin who approved/rejected the current proof, and when.
@@ -903,6 +928,7 @@ model Booking {
   statusHistory    BookingStatusHistory[]
   notifications    Notification[]
   warnings         BookingExtractWarning[]
+  corrections      BookingCorrection[]
   proofs           BookingCreationProof[]
   proofComparisons BookingProofComparison[]
 
@@ -1118,6 +1144,33 @@ model BookingExtractWarning {
 }
 
 /// Immutable audit trail of every booking status transition.
+/// An Admin correction made on the review screen before dispatch.
+///
+/// APPEND-ONLY. One row per field the Admin changed away from what the parser
+/// read, written once at dispatch and never updated or deleted. The parser's
+/// original value is preserved alongside the corrected one, so "what did the
+/// email actually say, and what did we send instead" stays answerable for the
+/// life of the booking — including after someone edits the booking later.
+model BookingCorrection {
+  id        String @id @default(cuid())
+  bookingId String
+  /// The reviewed field, e.g. "guestName", "branchPrice", "rooms[0].pmsCode".
+  field     String
+  /// What the PARSER read. Null when the parser found nothing at all.
+  oldValue  String?
+  /// What the Admin dispatched instead.
+  newValue  String?
+
+  correctedByUserId Int?
+  correctedAt       DateTime @default(now())
+
+  booking     Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  correctedBy User?   @relation("BookingCorrectionBy", fields: [correctedByUserId], references: [id])
+
+  @@index([bookingId])
+  @@index([correctedAt])
+}
+
 model BookingStatusHistory {
   id              String         @id @default(cuid())
   bookingId       String
