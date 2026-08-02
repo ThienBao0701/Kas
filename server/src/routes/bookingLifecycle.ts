@@ -23,6 +23,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth, requirePasswordChanged } from '../middleware/auth';
 import { applyLifecycleAction, type LifecycleAction } from '../booking/lifecycle';
+import { readRequestOrigin } from '../booking/requestAudit';
 
 /** A reason is optional everywhere, and required nowhere but cancellation. */
 const bodySchema = z
@@ -54,7 +55,12 @@ export function createBookingLifecycleRouter(): Router {
           const result = await applyLifecycleAction(
             req.params.id!,
             action,
-            { id: user.id, role: user.role, branchId: user.branchId ?? null },
+            {
+              id: user.id,
+              role: user.role,
+              branchId: user.branchId ?? null,
+              origin: readRequestOrigin(req),
+            },
             { reason: body.reason },
           );
           res.json(result);

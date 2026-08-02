@@ -24,12 +24,15 @@ import type { BookingStatus, PrismaClient } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db/prisma';
 import { ApiError } from '../lib/errors';
 import { getClock, type Clock } from '../lib/clock';
+import { recordRequestOrigin, type RequestOrigin } from './requestAudit';
 
 /** Who is performing the transition. */
 export interface LifecycleActor {
   id: number;
   role: 'ADMIN' | 'RECEPTIONIST';
   branchId: number | null;
+  /** Where the request came from, recorded beside the transition. */
+  origin?: RequestOrigin;
 }
 
 /**
@@ -143,9 +146,14 @@ export async function applyLifecycleAction(
       });
     }
 
+    const requestAuditId = actor.origin
+      ? await recordRequestOrigin(tx, actor.origin, now)
+      : null;
+
     await tx.bookingStatusHistory.create({
       data: {
         bookingId,
+        requestAuditId,
         oldStatus: booking.status,
         newStatus,
         changedByUserId: actor.id,

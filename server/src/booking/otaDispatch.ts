@@ -31,11 +31,14 @@ import { parseCtripBooking } from './ctrip';
 import { OTA_REVIEW_VERSION } from './otaReview';
 import type { OtaReview } from './otaReview';
 import { collectCorrections } from './otaCorrections';
+import { currentBuildId, recordRequestOrigin, type RequestOrigin } from './requestAudit';
 
 /** The Admin performing the dispatch. */
 export interface OtaDispatchActor {
   id: number;
   fullName: string;
+  /** Where the request came from. Recorded once and shared by every row it writes. */
+  origin?: RequestOrigin;
 }
 
 export interface OtaDispatchResult {
@@ -166,6 +169,11 @@ export async function dispatchOtaReview(
   const lastMinute = review.checkIn !== null && isLastMinute(isoToUtcDate(review.checkIn), now);
 
   const bookingId = await client.$transaction(async (tx) => {
+    // One context row for the whole request; every row below points at it.
+    const requestAuditId = actor.origin
+      ? await recordRequestOrigin(tx as Prisma.TransactionClient, actor.origin, now)
+      : null;
+
     const booking = await tx.booking.create({
       data: {
         bookingCode: review.bookingCode!,
@@ -203,6 +211,8 @@ export async function dispatchOtaReview(
         specialRequest: extras?.specialRequests ?? parsedBooking.specialRequest ?? null,
         parserVersion: parsedBooking.parserVersion,
         reviewVersion: OTA_REVIEW_VERSION,
+        parserCommit: currentBuildId(),
+        reviewBuildId: currentBuildId(),
         rawTextSha256: createHash('sha256').update(request.rawText, 'utf8').digest('hex'),
         rooms: {
           create: review.rooms.map((room, index) => ({
@@ -254,6 +264,7 @@ export async function dispatchOtaReview(
           newValue: c.newValue,
           correctedByUserId: actor.id,
           correctedAt: now,
+          requestAuditId,
         })),
       });
     }
@@ -266,6 +277,7 @@ export async function dispatchOtaReview(
         changedByUserId: actor.id,
         changedAt: now,
         note: `Gửi chi nhánh từ ${review.source}`,
+        requestAuditId,
       },
     });
 

@@ -109,6 +109,14 @@ const envSchema = z
 
     LOG_LEVEL: z.enum(['error', 'warn', 'info', 'debug']).default('info'),
 
+    /**
+     * The git commit or release tag being run, recorded on every dispatched
+     * booking so an extraction can be traced to the exact code that produced
+     * it. `parserVersion` says which RULES applied; this says which BUILD.
+     * Optional: unset simply records nothing rather than inventing a value.
+     */
+    APP_RELEASE_REF: z.string().min(1).max(200).optional(),
+
     /** Maximum accepted upload size in megabytes (proof screenshots, issue photos). */
     MAX_UPLOAD_MB: z.coerce.number().int().positive().max(100).default(10),
 

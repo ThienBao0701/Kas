@@ -20,6 +20,7 @@ import { z } from 'zod';
 import { requireAuth, requireAdmin, requirePasswordChanged } from '../middleware/auth';
 import { buildOtaReviewFromText } from '../booking/otaReviewService';
 import { dispatchOtaReview } from '../booking/otaDispatch';
+import { readRequestOrigin } from '../booking/requestAudit';
 
 /**
  * A room line as the browser sends it back.
@@ -97,7 +98,11 @@ export function createOtaReviewRouter(): Router {
     (async () => {
       const input = reviewSchema.parse(req.body ?? {});
       const actor = req.currentUser!;
-      const result = await dispatchOtaReview(input, { id: actor.id, fullName: actor.fullName });
+      const result = await dispatchOtaReview(input, {
+        id: actor.id,
+        fullName: actor.fullName,
+        origin: readRequestOrigin(req),
+      });
       res.status(result.created ? 201 : 200).json({
         bookingId: result.bookingId,
         created: result.created,

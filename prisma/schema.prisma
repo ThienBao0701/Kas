@@ -354,6 +354,7 @@ model User {
   bookingsCheckedOut    Booking[]                  @relation("BookingCheckedOutBy")
   bookingsCancelled     Booking[]                  @relation("BookingCancelledBy")
   bookingCorrections    BookingCorrection[]        @relation("BookingCorrectionBy")
+  requestAudits         RequestAudit[]             @relation("RequestAuditActor")
   bookingsReviewed      Booking[]                  @relation("BookingReviewedBy")
   bookingsCreated       Booking[]                  @relation("BookingCreatedBy")
   proofsSubmitted       BookingCreationProof[]     @relation("ProofSubmittedBy")
@@ -885,6 +886,12 @@ model Booking {
   benefitsIncluded   String?
   /// The review model that produced this booking, beside `parserVersion`.
   reviewVersion      String?
+  /// The BUILD that ran — a git commit or release tag. `parserVersion` and
+  /// `reviewVersion` name the rules; these name the deployed code, so a
+  /// booking can be traced to an exact revision. Both are written once at
+  /// dispatch and never updated, like the versions and the source hash.
+  parserCommit       String?
+  reviewBuildId      String?
   /// SHA-256 of the pasted text. Lets two dispatches of the same mail be
   /// recognised as the same source without storing the body twice.
   rawTextSha256      String?
@@ -1144,6 +1151,50 @@ model BookingExtractWarning {
 }
 
 /// Immutable audit trail of every booking status transition.
+/// Where a write came FROM: the request that caused it.
+///
+/// One row per REQUEST, not per changed record. A single dispatch writes a
+/// status-history row and several correction rows; they all point at one
+/// context, so the IP, user agent and correlation id are stored once instead of
+/// being copied onto every history row in the system.
+///
+/// Deliberately a separate table rather than columns on each history table:
+/// the same four values would otherwise be duplicated across
+/// BookingStatusHistory, BookingCorrection and anything added later, and each
+/// new history table would have to remember to carry them.
+///
+/// Everything except the actor is nullable, because a value that was not sent
+/// is recorded as absent rather than guessed. Nothing here is used for
+/// authorisation — it is evidence, not identity.
+model RequestAudit {
+  id String @id @default(cuid())
+
+  /// Who made the request. Null only for an unauthenticated action.
+  actorUserId Int?
+  occurredAt  DateTime @default(now())
+
+  /// The client address as the proxy reported it. May be a shared or NAT
+  /// address, so it identifies a request, never a person.
+  ipAddress String?
+  userAgent String?
+  /// The session the request authenticated with, for "same device" questions.
+  sessionId String?
+  /// `x-request-id`, echoed in error responses and logs, so a booking change
+  /// can be joined to the request trace that produced it.
+  correlationId String?
+  /// The route that ran, e.g. "POST /api/admin/ota/dispatch".
+  route String?
+
+  actor User? @relation("RequestAuditActor", fields: [actorUserId], references: [id])
+
+  statusHistory BookingStatusHistory[]
+  corrections   BookingCorrection[]
+
+  @@index([actorUserId])
+  @@index([occurredAt])
+  @@index([correlationId])
+}
+
 /// An Admin correction made on the review screen before dispatch.
 ///
 /// APPEND-ONLY. One row per field the Admin changed away from what the parser
@@ -1164,8 +1215,11 @@ model BookingCorrection {
   correctedByUserId Int?
   correctedAt       DateTime @default(now())
 
+  requestAuditId    String?
+
   booking     Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   correctedBy User?   @relation("BookingCorrectionBy", fields: [correctedByUserId], references: [id])
+  requestAudit RequestAudit? @relation(fields: [requestAuditId], references: [id])
 
   @@index([bookingId])
   @@index([correctedAt])
@@ -1179,9 +1233,11 @@ model BookingStatusHistory {
   changedByUserId Int?
   changedAt       DateTime       @default(now())
   note            String?
+  requestAuditId  String?
 
-  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  changedBy User?   @relation(fields: [changedByUserId], references: [id])
+  booking      Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  changedBy    User?         @relation(fields: [changedByUserId], references: [id])
+  requestAudit RequestAudit? @relation(fields: [requestAuditId], references: [id])
 
   @@index([bookingId])
   @@index([changedAt])
