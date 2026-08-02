@@ -4,6 +4,7 @@ import {
   ClipboardPaste,
   History,
   Inbox,
+  LayoutList,
   LayoutDashboard,
   RotateCcw,
   ScanSearch,
@@ -23,6 +24,7 @@ export interface NavItem {
 export const ADMIN_NAV: NavItem[] = [
   { to: '/app/dashboard', label: 'Tổng quan', icon: LayoutDashboard },
   { to: '/app/dispatch', label: 'Nhập đơn', icon: ClipboardPaste },
+  { to: '/app/inbox', label: 'Hộp thư vận hành', icon: LayoutList },
   { to: '/app/waiting', label: 'Chờ chi nhánh tạo', icon: Inbox },
   { to: '/app/pending-review', label: 'Chờ kiểm tra', icon: ScanSearch },
   { to: '/app/rejected', label: 'Cần tạo lại', icon: RotateCcw },
@@ -36,6 +38,7 @@ export const ADMIN_NAV: NavItem[] = [
 /** Receptionist creates externally, uploads proof, then tracks the verdict. */
 export const RECEPTIONIST_NAV: NavItem[] = [
   { to: '/app/new', label: 'Đơn mới', icon: Inbox },
+  { to: '/app/inbox', label: 'Hộp thư vận hành', icon: LayoutList },
   { to: '/app/pending-review', label: 'Chờ Admin kiểm tra', icon: ScanSearch },
   { to: '/app/rejected', label: 'Cần tạo lại', icon: RotateCcw },
   { to: '/app/completed', label: 'Đã xác nhận đúng', icon: CheckCircle2 },

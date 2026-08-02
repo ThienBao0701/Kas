@@ -91,6 +91,12 @@ const STATUS_LABELS: Record<string, string> = {
   NEW: 'Chờ chi nhánh tạo',
   COMPLETED: 'Đã xác nhận tạo',
   ARCHIVED: 'Đã lưu trữ',
+  // The Phase 5 operational lifecycle, in the receptionist's own words.
+  RECEIVED: 'Đã nhận đơn',
+  CHECKED_IN: 'Khách đã nhận phòng',
+  CHECKED_OUT: 'Khách đã trả phòng',
+  CANCELLED: 'Đã huỷ',
+  NO_SHOW: 'Khách không đến',
 };
 
 export function statusLabel(status: string | null | undefined): string {

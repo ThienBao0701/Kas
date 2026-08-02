@@ -68,6 +68,42 @@ const completedListQuery = z.object({ branchId: z.coerce.number().int().positive
 const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
 /**
+ * An enum filter that also accepts a comma-separated list.
+ *
+ * PURELY ADDITIVE. `status=NEW` parses to `['NEW']` and is applied as the
+ * scalar equality it always was, so every existing caller produces the same
+ * query it produced before. `status=NEW,RECEIVED` is a form that previously
+ * failed validation with a 422 — there is no request whose meaning changes.
+ *
+ * The multi-value form exists because the operation centre needs filters the
+ * single form cannot express: an "OTA" tab is Agoda OR CTrip, and a
+ * multi-select status filter is several statuses at once. The alternative was
+ * merging two paginated responses in the client, which yields a wrong total
+ * and a meaningless second page.
+ */
+function csvEnum<T extends readonly [string, ...string[]]>(values: T) {
+  const single = z.enum(values);
+  return z
+    .string()
+    .transform((raw) => raw.split(',').map((part) => part.trim()).filter((part) => part.length > 0))
+    .pipe(z.array(single).min(1).max(values.length))
+    .optional();
+}
+
+/** `undefined`, a scalar for one value, or a Prisma `in` filter for several. */
+function oneOf<T extends string>(values: T[] | undefined): T | { in: T[] } | undefined {
+  if (!values || values.length === 0) return undefined;
+  return values.length === 1 ? values[0]! : { in: values };
+}
+
+const STATUS_VALUES = [
+  'DRAFT', 'READY', 'NEW', 'COMPLETED', 'ARCHIVED',
+  'RECEIVED', 'CHECKED_IN', 'CHECKED_OUT', 'CANCELLED', 'NO_SHOW',
+] as const;
+const SOURCE_VALUES = ['BOOKING_COM', 'AGODA', 'CTRIP'] as const;
+const VERIFICATION_VALUES = ['NOT_SUBMITTED', 'PENDING_REVIEW', 'APPROVED', 'REJECTED'] as const;
+
+/**
  * The history query, extended into the operational search.
  *
  * Every addition is OPTIONAL and additive: an existing caller that sends none
@@ -81,17 +117,10 @@ const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const historyQuery = z.object({
   search: z.string().trim().min(1).max(100).optional(),
   branchId: z.coerce.number().int().positive().optional(),
-  status: z
-    .enum([
-      'DRAFT', 'READY', 'NEW', 'COMPLETED', 'ARCHIVED',
-      'RECEIVED', 'CHECKED_IN', 'CHECKED_OUT', 'CANCELLED', 'NO_SHOW',
-    ])
-    .optional(),
+  status: csvEnum(STATUS_VALUES),
   /** Which platform the reservation came from. */
-  source: z.enum(['BOOKING_COM', 'AGODA', 'CTRIP']).optional(),
-  verificationStatus: z
-    .enum(['NOT_SUBMITTED', 'PENDING_REVIEW', 'APPROVED', 'REJECTED'])
-    .optional(),
+  source: csvEnum(SOURCE_VALUES),
+  verificationStatus: csvEnum(VERIFICATION_VALUES),
   country: z.string().trim().min(1).max(100).optional(),
   language: z.string().trim().min(1).max(100).optional(),
   paymentStatus: z.enum(['PAY_BEFORE', 'PAY_AFTER']).optional(),
@@ -356,9 +385,11 @@ export function createBookingsRouter(): Router {
           { branch: { code: term } },
         ];
       }
-      if (query.status) where.status = query.status;
-      if (query.source) where.sourcePlatform = query.source;
-      if (query.verificationStatus) where.verificationStatus = query.verificationStatus;
+      // A single value stays a scalar equality, exactly as before; several
+      // become an IN. See csvEnum above.
+      where.status = oneOf(query.status);
+      where.sourcePlatform = oneOf(query.source);
+      where.verificationStatus = oneOf(query.verificationStatus);
       if (query.country) where.countryOfResidence = { contains: query.country, mode: 'insensitive' };
       if (query.language) where.websiteLanguage = { contains: query.language, mode: 'insensitive' };
       if (query.paymentStatus) where.paymentStatus = query.paymentStatus;

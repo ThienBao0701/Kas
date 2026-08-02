@@ -69,7 +69,7 @@ export const EMPTY_OPERATIONAL_BLOCKS = {
   },
   corrections: [],
   timeline: [],
-} as const;
+};
 
 export function jsonResponse(status: number, body?: unknown): Response {
   return new Response(body === undefined ? '' : JSON.stringify(body), {

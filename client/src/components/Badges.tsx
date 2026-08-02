@@ -47,6 +47,13 @@ const STATUS_STYLES: Record<BookingStatus, string> = {
   NEW: 'bg-amber-100 text-amber-800',
   COMPLETED: 'bg-green-100 text-green-700',
   ARCHIVED: 'bg-slate-100 text-slate-500',
+  // Operational states. Cancelled and no-show are the two that cost money, so
+  // they are the two that read as warnings rather than progress.
+  RECEIVED: 'bg-sky-100 text-sky-700',
+  CHECKED_IN: 'bg-indigo-100 text-indigo-700',
+  CHECKED_OUT: 'bg-teal-100 text-teal-700',
+  CANCELLED: 'bg-red-100 text-red-700',
+  NO_SHOW: 'bg-orange-100 text-orange-800',
 };
 
 export function StatusBadge({ status }: { status: BookingStatus }) {

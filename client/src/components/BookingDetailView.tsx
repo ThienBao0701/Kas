@@ -15,6 +15,8 @@ import { formatAmountCopy, formatDate, formatDateTime, formatMoney } from '../li
 import { Card } from './Card';
 import { CopyButton, CopyField } from './CopyButton';
 import { BusinessTypeBadge, LastMinuteBadge, PaymentBadge, SourceBadge, StatusBadge, VerificationBadge } from './Badges';
+import { LifecycleActions } from './LifecycleActions';
+import { Section } from './Section';
 import { ProofSection } from './ProofSection';
 import { Toast } from './Toast';
 
@@ -68,8 +70,17 @@ export function BookingDetailView({
 
   return (
     <div className="space-y-5">
-      {/* Top summary */}
-      <Card className={`p-5 ${b.isLastMinute ? 'border-red-200 bg-red-50/40' : ''}`}>
+      {/*
+        Sticky summary. On a long detail page the operator scrolls into the
+        nightly rates or the timeline and loses which guest they are looking at
+        — and on a phone that is most of the page. The identity and the status
+        stay in view; nothing else is pinned, so the sticky strip cannot grow
+        tall enough to eat a small screen.
+      */}
+      <Card
+        className={`sticky top-0 z-10 p-5 ${b.isLastMinute ? 'border-red-200 bg-red-50/95' : 'bg-white/95'} backdrop-blur`}
+        data-testid="booking-sticky-header"
+      >
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
@@ -124,15 +135,22 @@ export function BookingDetailView({
         ) : null}
       </Card>
 
+      {/* The operational lifecycle: the only way to drive a booking through Phase 5. */}
+      <LifecycleActions booking={b} onChanged={handleProofChanged} />
+
       {/* Generated PMS note */}
       <PmsNoteCard booking={b} />
 
-      {/* Rooms */}
-      <div className="space-y-3">
-        {b.rooms.map((room) => (
-          <RoomCard key={room.id} room={room} />
-        ))}
-      </div>
+      {/* Rooms and their nightly rates */}
+      {b.rooms.length > 0 ? (
+        <Section id="rooms" title="Phòng & giá từng đêm" count={b.rooms.length} testId="rooms-section">
+          <div className="space-y-3">
+            {b.rooms.map((room) => (
+              <RoomCard key={room.id} room={room} />
+            ))}
+          </div>
+        </Section>
+      ) : null}
 
       {/* Warnings (never for a missing phone — that is not a blocking condition) */}
       {b.warnings.length > 0 ? (
@@ -209,14 +227,13 @@ function OtaMetadataCard({ ota }: { ota: OtaMetadata }) {
   const present = OTA_FIELDS.filter((f) => ota[f.key] !== null && ota[f.key] !== '');
   if (present.length === 0) return null;
   return (
-    <Card className="p-5" data-testid="ota-metadata-card">
-      <p className="mb-3 text-sm font-semibold text-slate-700">Thông tin từ OTA</p>
+    <Section id="ota" title="Thông tin từ OTA" count={present.length} testId="ota-metadata-card">
       <div className="grid gap-3 sm:grid-cols-2">
         {present.map((f) => (
           <ReadField key={f.key} label={f.label} value={String(ota[f.key])} />
         ))}
       </div>
-    </Card>
+    </Section>
   );
 }
 
@@ -235,8 +252,7 @@ function OperationalCard({ record }: { record: OperationalRecord }) {
   ].filter((r) => r.at !== null);
   if (rows.length === 0) return null;
   return (
-    <Card className="p-5" data-testid="operational-card">
-      <p className="mb-3 text-sm font-semibold text-slate-700">Diễn biến thực tế</p>
+    <Section id="operational" title="Diễn biến thực tế" count={rows.length} testId="operational-card">
       <div className="grid gap-3 sm:grid-cols-2">
         {rows.map((r) => (
           <ReadField
@@ -251,7 +267,7 @@ function OperationalCard({ record }: { record: OperationalRecord }) {
           <ReadField label="Lý do huỷ" value={record.cancellationReason} />
         </div>
       ) : null}
-    </Card>
+    </Section>
   );
 }
 
@@ -264,10 +280,12 @@ function OperationalCard({ record }: { record: OperationalRecord }) {
 function CorrectionsCard({ corrections }: { corrections: CorrectionEntry[] }) {
   if (corrections.length === 0) return null;
   return (
-    <Card className="p-5" data-testid="corrections-card">
-      <p className="mb-3 text-sm font-semibold text-slate-700">
-        Lịch sử chỉnh sửa ({corrections.length})
-      </p>
+    <Section
+      id="corrections"
+      title="Lịch sử chỉnh sửa"
+      count={corrections.length}
+      testId="corrections-card"
+    >
       <div className="overflow-x-auto">
         <table className="w-full min-w-[32rem] text-left text-sm">
           <thead>
@@ -293,18 +311,32 @@ function CorrectionsCard({ corrections }: { corrections: CorrectionEntry[] }) {
           </tbody>
         </table>
       </div>
-    </Card>
+    </Section>
   );
 }
 
-/** Status changes, proof reviews and amendments merged into one ordered story. */
+/** How many timeline events render before the operator asks for more. */
+const TIMELINE_CHUNK = 20;
+
+/**
+ * Status changes, proof reviews and amendments merged into one ordered story.
+ *
+ * Rendered incrementally. A booking amended a dozen times accumulates a long
+ * tail of events that nobody reads, and mounting all of them costs the same
+ * whether they are looked at or not. The order is never disturbed — the first
+ * chunk is the oldest events, so "show more" extends the story forward rather
+ * than reshuffling it.
+ */
 function TimelineCard({ events }: { events: TimelineEvent[] }) {
+  const [limit, setLimit] = useState(TIMELINE_CHUNK);
   if (events.length === 0) return null;
+  const shown = events.slice(0, limit);
+  const remaining = events.length - shown.length;
+
   return (
-    <Card className="p-5" data-testid="timeline-card">
-      <p className="mb-3 text-sm font-semibold text-slate-700">Nhật ký ({events.length})</p>
+    <Section id="timeline" title="Nhật ký" count={events.length} testId="timeline-card">
       <ol className="space-y-3">
-        {events.map((e, i) => (
+        {shown.map((e, i) => (
           <li key={`${e.at}-${e.type}-${i}`} className="flex gap-3" data-testid="timeline-event">
             <div className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-brand-600" aria-hidden="true" />
             <div className="min-w-0">
@@ -317,7 +349,17 @@ function TimelineCard({ events }: { events: TimelineEvent[] }) {
           </li>
         ))}
       </ol>
-    </Card>
+      {remaining > 0 ? (
+        <button
+          type="button"
+          onClick={() => setLimit((n) => n + TIMELINE_CHUNK)}
+          className="mt-3 min-h-[2.75rem] rounded-xl border border-slate-300 px-4 text-sm font-medium text-slate-600 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+          data-testid="timeline-show-more"
+        >
+          Xem thêm {remaining} sự kiện
+        </button>
+      ) : null}
+    </Section>
   );
 }
 

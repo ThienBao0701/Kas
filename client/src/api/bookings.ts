@@ -1,7 +1,22 @@
 import { api } from './client';
 import type { Branch } from '../auth/types';
 
-export type BookingStatus = 'DRAFT' | 'READY' | 'NEW' | 'COMPLETED' | 'ARCHIVED';
+/**
+ * The dispatch states plus the five operational states added in Phase 5. The
+ * two halves are one enum on the server and must stay one here — a status the
+ * client does not know about renders as a raw enum name to the receptionist.
+ */
+export type BookingStatus =
+  | 'DRAFT'
+  | 'READY'
+  | 'NEW'
+  | 'COMPLETED'
+  | 'ARCHIVED'
+  | 'RECEIVED'
+  | 'CHECKED_IN'
+  | 'CHECKED_OUT'
+  | 'CANCELLED'
+  | 'NO_SHOW';
 export type PaymentStatus = 'PAY_BEFORE' | 'PAY_AFTER';
 export type BookingSource = 'BOOKING_COM' | 'AGODA' | 'CTRIP';
 export type BusinessType = 'DIRECT' | 'PARTNER' | 'UNKNOWN';
@@ -456,7 +471,59 @@ export const bookingsApi = {
     api.get<ListResponse<CompletedListItem>>(`/bookings/completed${query(params)}`),
   history: (params: Record<string, string | number | boolean | undefined>) =>
     api.get<ListResponse<HistoryListItem>>(`/bookings/history${query(params)}`),
+
+  /**
+   * One operational transition. The server owns which transitions are legal —
+   * the client hides buttons it believes are unavailable, but a stale tab that
+   * posts anyway gets a 409 rather than a wrong write.
+   */
+  lifecycle: (id: string, action: LifecycleAction, reason?: string) =>
+    api.post<LifecycleResult>(`/bookings/${id}/${LIFECYCLE_PATH[action]}`, reason ? { reason } : {}),
 };
+
+export type LifecycleAction = 'RECEIVE' | 'CHECK_IN' | 'CHECK_OUT' | 'COMPLETE' | 'CANCEL' | 'NO_SHOW';
+
+export interface LifecycleResult {
+  bookingId: string;
+  oldStatus: BookingStatus;
+  newStatus: BookingStatus;
+}
+
+const LIFECYCLE_PATH: Record<LifecycleAction, string> = {
+  RECEIVE: 'receive',
+  CHECK_IN: 'check-in',
+  CHECK_OUT: 'check-out',
+  COMPLETE: 'complete',
+  CANCEL: 'cancel',
+  NO_SHOW: 'no-show',
+};
+
+/**
+ * Which action each status offers, mirroring the server's ALLOWED_FROM.
+ *
+ * Duplicated deliberately and kept minimal: the client needs it to decide what
+ * to DRAW, and it is not a permission check. The server re-validates every
+ * transition, so a wrong entry here can only hide or offer a button — never
+ * permit an illegal write.
+ */
+export const LIFECYCLE_NEXT: Partial<Record<BookingStatus, LifecycleAction[]>> = {
+  NEW: ['RECEIVE', 'CANCEL'],
+  RECEIVED: ['CHECK_IN', 'NO_SHOW', 'CANCEL'],
+  CHECKED_IN: ['CHECK_OUT'],
+  CHECKED_OUT: ['COMPLETE'],
+};
+
+export const LIFECYCLE_LABEL: Record<LifecycleAction, string> = {
+  RECEIVE: 'Nhận đơn',
+  CHECK_IN: 'Khách nhận phòng',
+  CHECK_OUT: 'Khách trả phòng',
+  COMPLETE: 'Hoàn tất',
+  CANCEL: 'Huỷ đơn',
+  NO_SHOW: 'Khách không đến',
+};
+
+/** The two that cost the hotel money, and so ask before they act. */
+export const LIFECYCLE_DESTRUCTIVE: LifecycleAction[] = ['CANCEL', 'NO_SHOW'];
 
 export const branchesApi = {
   list: () => api.get<{ branches: Branch[] }>('/branches'),
@@ -467,6 +534,45 @@ export interface DashboardSummary {
   branches: { branch: Branch; waiting: number; confirmedToday: number; lastMinute: number }[];
 }
 
+/** A metric the server refuses to compute, with the reason it gives. */
+export interface Unavailable {
+  value: null;
+  reason: string;
+}
+
+export interface StatBreakdown {
+  key: string;
+  label: string;
+  bookings: number;
+  revenue: number;
+  share: number;
+}
+
+/**
+ * The 7b statistics. `adr`, `occupancy` and `revPar` are always
+ * `{ value: null, reason }` until a room inventory exists — the server will not
+ * invent a denominator, and the client must not invent one either.
+ */
+export interface BookingStatistics {
+  range: { from: string; to: string };
+  bookingCount: number;
+  revenue: number;
+  stayNights: number;
+  averageRevenuePerStayNight: number | null;
+  averageStayNights: number | null;
+  adr: Unavailable;
+  occupancy: Unavailable;
+  revPar: Unavailable;
+  cancelledCount: number;
+  noShowCount: number;
+  cancellationRate: number | null;
+  noShowRate: number | null;
+  byOta: StatBreakdown[];
+  byBranch: StatBreakdown[];
+}
+
 export const dashboardApi = {
   summary: () => api.get<DashboardSummary>('/admin/dashboard/summary'),
+  statistics: (params: { from?: string; to?: string; branchId?: number } = {}) =>
+    api.get<BookingStatistics>(`/admin/dashboard/statistics${query(params)}`),
 };

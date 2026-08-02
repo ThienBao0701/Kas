@@ -6,6 +6,7 @@ import { Card } from '../components/Card';
 import { StatCard } from '../components/StatCard';
 import { PageHeader, QueryState } from '../components/PageState';
 import { useIssueSummary } from '../hooks/useIssueSummary';
+import { StatisticsPanel } from '../components/charts/StatisticsPanel';
 
 const POLL_MS = 30_000;
 
@@ -36,7 +37,12 @@ export function DashboardPage() {
     <div>
       <PageHeader title="Tổng quan" description="Tình hình điều phối hôm nay (giờ Việt Nam)." />
 
-      <QueryState isLoading={query.isLoading} isError={query.isError} error={query.error}>
+      <QueryState
+        isLoading={query.isLoading}
+        isError={query.isError}
+        error={query.error}
+        onRetry={() => void query.refetch()}
+      >
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <Link to="/app/waiting" className="focus-visible:outline-none">
             <StatCard label="Chờ chi nhánh tạo" value={totals?.waiting ?? 0} icon={Clock} tone="amber" />
@@ -106,6 +112,9 @@ export function DashboardPage() {
           )}
         </div>
       </QueryState>
+
+      {/* The 7b statistics, which until now had no consumer. */}
+      <StatisticsPanel />
     </div>
   );
 }
