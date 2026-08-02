@@ -21,6 +21,7 @@ import { requireAuth, requireAdmin, requirePasswordChanged } from '../middleware
 import { buildOtaReviewFromText } from '../booking/otaReviewService';
 import { dispatchOtaReview } from '../booking/otaDispatch';
 import { readRequestOrigin } from '../booking/requestAudit';
+import { applyAmendment, buildAmendment } from '../booking/otaAmendment';
 
 /**
  * A room line as the browser sends it back.
@@ -71,6 +72,14 @@ const reviewSchema = z.object({
   overrides: overridesSchema.optional(),
 });
 
+/**
+ * An amendment adds the reviewer's verdict to the review body: which changed
+ * fields they accepted. Omitting it accepts them all.
+ */
+const amendmentSchema = reviewSchema.extend({
+  acceptedFields: z.array(z.string().trim().max(100)).max(50).optional(),
+});
+
 export function createOtaReviewRouter(): Router {
   const router = Router();
   router.use('/admin/ota', requireAuth, requirePasswordChanged, requireAdmin);
@@ -108,6 +117,37 @@ export function createOtaReviewRouter(): Router {
         created: result.created,
         review: result.review,
       });
+    })().catch(next);
+  });
+
+  /**
+   * POST /api/admin/ota/amendment — compare an amended mail with the booking.
+   *
+   * Writes NOTHING. Returns every field that differs so a reviewer can see
+   * exactly what would change before anything does, plus whether the platform
+   * itself says the reservation is cancelled — reported, never acted on.
+   */
+  router.post('/admin/ota/amendment', (req, res, next) => {
+    (async () => {
+      const input = reviewSchema.parse(req.body ?? {});
+      res.json(await buildAmendment(input));
+    })().catch(next);
+  });
+
+  /**
+   * POST /api/admin/ota/amendment/apply — apply the accepted changes.
+   *
+   * `acceptedFields` omitted means every change; an empty array means the
+   * reviewer rejected all of them and the booking is left untouched. Each
+   * applied field becomes an immutable correction row.
+   */
+  router.post('/admin/ota/amendment/apply', (req, res, next) => {
+    (async () => {
+      const input = amendmentSchema.parse(req.body ?? {});
+      const actor = req.currentUser!;
+      res.json(
+        await applyAmendment(input, { id: actor.id, origin: readRequestOrigin(req) }),
+      );
     })().catch(next);
   });
 
