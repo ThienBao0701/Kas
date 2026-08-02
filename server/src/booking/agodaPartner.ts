@@ -144,9 +144,15 @@ const VIETNAMESE_LABEL_PHRASES: readonly string[] = [
   'gia ban tham khao',
   'ngay nhan phong',
   'ngay tra phong',
+  'chinh sach huy phong',
+  'bao gom cac quyen loi',
+  'ten chinh sach gia',
+  'yeu cau dac biet',
+  'ngon ngu website',
   'ten khach',
   'ho khach',
   'khach khac',
+  'thanh pho',
   'nhan phong',
   'tra phong',
   'gia thuc te',
@@ -165,6 +171,67 @@ function words(text: string): string[] {
   return text.split(/\s+/).filter((w) => w.length > 0);
 }
 
+/** A line that opens a reservation: its first cell is the Booking ID label. */
+const BOOKING_ID_LABEL = /^(agoda )?booking id$|^ma so dat phong$/;
+
+/**
+ * Narrows a pasted mail THREAD to the one reservation it is about.
+ *
+ * This is the single most damaging thing the parser got wrong. A real Agoda
+ * mail is opened in Gmail as a thread, and copying it yields every message in
+ * that thread — six separate reservations in one of the supplied samples, each
+ * with its own Booking ID, property, guest, dates, room row and rates.
+ *
+ * Reading fields from the whole document does not fail loudly; it silently
+ * BLENDS the bookings. The supplied amended mail produced the first block's
+ * booking id, the fourth block's guest, and the last block's prices — a
+ * confident, entirely fictitious reservation that would have been dispatched.
+ *
+ * Blocks are split at the Booking ID label. The subject line names the booking
+ * the mail is actually about, so the block whose own id matches it wins; with
+ * no subject id the first block does, because Gmail puts the open message at
+ * the top. Everything above the first block (subject, navigation) is dropped.
+ */
+export function reservationBlock(all: readonly string[]): string[] {
+  const starts: number[] = [];
+  for (let i = 0; i < all.length; i++) {
+    const first = cells(all[i]!)[0];
+    if (first && BOOKING_ID_LABEL.test(fold(first).replace(/\s*:\s*$/, ''))) starts.push(i);
+  }
+  if (starts.length === 0) return [...all];
+
+  // "Booking ID" / "Mã số đặt phòng" / "1756224954" stacks the English and
+  // Vietnamese labels on consecutive lines, and BOTH match. Adjacent hits are
+  // therefore the same heading, not two reservations — treating them as two
+  // made the first "block" a single label line with no booking in it at all.
+  const opens = starts.filter((start, n) => n === 0 || start - starts[n - 1]! >= 3);
+
+  // The FIRST block keeps everything above it. Some layouts print the property
+  // name and "(Property ID …)" ABOVE the Booking ID label rather than below it,
+  // and cutting at the label threw the hotel name away — leaving the branch
+  // unresolved on documents that had always worked. Nothing of another
+  // reservation can be up there, because this is the first one.
+  const blocks = opens.map((start, n) =>
+    all.slice(n === 0 ? 0 : start, opens[n + 1] ?? all.length),
+  );
+
+  // "Agoda Booking ID 1753732591 - AMENDED …" — the subject, above block one.
+  const subject = /agoda booking id\s*[:#]?\s*(\d{6,15})\b/i.exec(all.slice(0, opens[0]).join('\n'));
+  if (subject) {
+    const wanted = subject[1]!;
+    const match = blocks.find((block) => idWithin(block) === wanted);
+    if (match) return [...match];
+  }
+  return [...blocks[0]!];
+}
+
+/** The Booking ID stated INSIDE one block, read from its own label. */
+function idWithin(block: readonly string[]): string | null {
+  const value = labelValue([...block], BOOKING_ID_LABEL);
+  const digits = value ? /^\s*(\d{6,15})\b/.exec(value) : null;
+  return digits ? digits[1]! : null;
+}
+
 /**
  * Reads "English Label + Vietnamese Label + value", all on one line.
  *
@@ -176,6 +243,22 @@ function words(text: string): string[] {
  * the label "Họ" with an empty value, and stripping it would delete the
  * surname — which is exactly how THU UYEN HO lost half its name before.
  */
+/**
+ * True when a cell is exactly "English Label + Vietnamese Label", no value.
+ *
+ * That is the shape Agoda actually sends: the label pair occupies one table
+ * cell and the value sits in the next.
+ */
+function isBilingualLabelCell(cell: string, labelPattern: RegExp): boolean {
+  const parts = words(cell.replace(/\s*:\s*$/, ''));
+  for (let n = 1; n < parts.length; n++) {
+    if (!labelPattern.test(fold(parts.slice(0, n).join(' ')))) continue;
+    const rest = fold(parts.slice(n).join(' '));
+    if (VIETNAMESE_LABEL_PHRASES.includes(rest)) return true;
+  }
+  return false;
+}
+
 function bilingualInline(line: string, labelPattern: RegExp): string | null {
   const parts = words(line);
   if (parts.length < 2) return null;
@@ -263,12 +346,29 @@ function labelValue(all: string[], labelPattern: RegExp): string | null {
       }
 
       if (!labelPattern.test(fold(cell))) {
-        // "Customer First Name Tên Khách Hàng Nga" — label, label, value, all
-        // separated by single spaces, so the whole row is one cell.
-        if (row.length === 1) {
-          const inlineBilingual = bilingualInline(cell, labelPattern);
-          if (inlineBilingual) return inlineBilingual;
+        // "Customer First Name Tên Khách Hàng<TAB>Yunning" — the real layout in
+        // every supplied mail. The cell holds BOTH labels and nothing else, so
+        // the value is the next cell that is not itself a label.
+        //
+        // Checked BEFORE the single-cell reader: that one refuses to consume a
+        // Vietnamese phrase that would leave nothing behind (which is what
+        // protects a guest surnamed "HO" from the label "Họ"), and here the
+        // remainder IS the whole label, with the value in the next cell.
+        if (isBilingualLabelCell(cell, labelPattern)) {
+          for (let k = c + 1; k < row.length; k++) {
+            if (!isKnownLabel(row[k]!)) return row[k]!;
+          }
+          const j = nextNonEmpty(all, i + 1);
+          if (j >= 0) {
+            const value = cells(all[j]!)[0];
+            if (value && !isKnownLabel(value)) return value;
+          }
         }
+
+        // "Customer First Name Tên Khách Hàng Nga" — labels and value all
+        // separated by single spaces, so the whole row arrives as one cell.
+        const inlineBilingual = bilingualInline(cell, labelPattern);
+        if (inlineBilingual) return inlineBilingual;
         continue;
       }
 
@@ -571,6 +671,18 @@ export interface AgodaPartnerBooking {
   roomTypeOriginal: string | null;
   /** The same name with the trailing style marker removed — the mapping key. */
   roomTypeNormalized: string | null;
+  /**
+   * Every room row on the reservation. `roomTypeOriginal` and the fields beside
+   * it describe the FIRST row and are kept for existing callers; this carries
+   * the whole table, so a booking with several room types is not truncated.
+   */
+  roomLines: {
+    roomTypeOriginal: string | null;
+    roomTypeNormalized: string | null;
+    quantity: number;
+    occupancy: string | null;
+    extraBeds: number | null;
+  }[];
   roomCode: string | null;
   roomTypeKnown: boolean;
   roomQuantity: number | null;
@@ -727,17 +839,56 @@ function joinWrappedParts(parts: readonly string[]): string {
  * Collection stops at the next known label, so the following rate row — or a
  * Commission line — can never be absorbed into this one.
  */
-function readWrappedAmount(all: string[], from: number, limit = 4): number | null {
+function readWrappedAmount(all: string[], from: number, limit = 5): number | null {
   const parts: string[] = [];
   for (let i = from; i < all.length && parts.length < limit; i++) {
     const text = all[i]!.trim();
     if (text.length === 0) continue;
-    const firstCell = cells(text)[0];
-    if (parts.length > 0 && firstCell && isKnownLabel(firstCell)) break;
+
+    // A DIFFERENT rate label ends this row. Without this guard, a Net rate with
+    // no amount of its own would happily take the Commission below it.
+    const firstCell = cells(text)[0] ?? '';
+    if (parts.length > 0 && isOtherRateLabel(firstCell, all[from]!)) break;
+
+    // The label's own Vietnamese twin is a continuation, not the value — and it
+    // frequently CARRIES the amount ("Giá bán tham khảo (…)<TAB>VND 5,156,900").
+    // Stopping at it, as this once did, lost the Net rate entirely.
+    //
+    // The whole window is collected before parsing rather than stopping at the
+    // first line containing digits: a rate can wrap INSIDE the number
+    // ("VND" / "2,012,236.0" / "0"), and stopping early reads that as
+    // 20,122,360 — ten times the truth.
     parts.push(text);
   }
   if (parts.length === 0) return null;
   return parseAgodaMoney(joinWrappedParts(parts));
+}
+
+/** The commercial rows, each with its Vietnamese twin. */
+const RATE_LABEL_GROUPS: readonly RegExp[] = [
+  /reference sell rate|gia ban tham khao/,
+  /net rate|gia thuc te/,
+  /commission|tien hoa hong|hoa hong/,
+  /compensation|khoan bu tru/,
+  /withholding tax|thue khau luu/,
+  /tax on commission/,
+  /promotions?|khuyen mai/,
+  /other programs?/,
+];
+
+/**
+ * True when `cell` names a rate row that is NOT the one being read.
+ *
+ * A label and its Vietnamese twin belong to the SAME group, so stepping from
+ * "Net rate (incl. taxes & fees)" onto "Giá thực tế (bao gồm thuế & phí)" is a
+ * continuation, while stepping onto "Commission" is the end of the row.
+ */
+function isOtherRateLabel(cell: string, ownLabelLine: string): boolean {
+  const folded = fold(cell);
+  const own = fold(ownLabelLine);
+  const ownGroup = RATE_LABEL_GROUPS.find((g) => g.test(own));
+  const cellGroup = RATE_LABEL_GROUPS.find((g) => g.test(folded));
+  return cellGroup !== undefined && cellGroup !== ownGroup;
 }
 
 /** Rows that are commercial summaries, never per-night stay rows. */
@@ -805,7 +956,8 @@ function perRoom(amount: number | null, roomQuantity: number | null): number | n
  * and a warning, so the Admin sees exactly what needs manual review.
  */
 export function parseAgodaPartnerBooking(rawText: string): AgodaPartnerBooking {
-  const all = lines(rawText);
+  // ONE reservation, never a whole mail thread. See `reservationBlock`.
+  const all = reservationBlock(lines(rawText));
   const warnings: ExtractWarning[] = [];
 
   const bookingId = extractBookingId(all, rawText);
@@ -850,7 +1002,8 @@ export function parseAgodaPartnerBooking(rawText: string): AgodaPartnerBooking {
 
   // The room table is read as a table first; the labelled form is the fallback for
   // layouts that print "Room Type:" / "No. of Rooms:" on their own lines.
-  const table = parseRoomTable(all);
+  const roomRows = parseRoomRows(all);
+  const table = roomRows[0] ?? parseColumnRoomTable(all);
   const roomTypeRaw = table?.roomType ?? labelValue(all, /^room ?type$|^loai phong$/);
   const room = mapAgodaRoomCode(roomTypeRaw);
   if (!room.original) {
@@ -919,6 +1072,14 @@ export function parseAgodaPartnerBooking(rawText: string): AgodaPartnerBooking {
     nights,
     roomTypeOriginal: room.original,
     roomTypeNormalized: normalizeOtaRoomName(room.original),
+    // Every room row the reservation states, not merely the first.
+    roomLines: roomRows.map((r) => ({
+      roomTypeOriginal: r.roomType,
+      roomTypeNormalized: normalizeOtaRoomName(r.roomType),
+      quantity: countOf(r.rooms) ?? 1,
+      occupancy: r.occupancy,
+      extraBeds: countOf(r.extraBeds),
+    })),
     roomCode: room.code,
     roomTypeKnown: room.known,
     roomQuantity: roomQty,
@@ -1006,10 +1167,6 @@ interface RoomTableRow {
  * When the values were copied as separate logical lines, the following one-cell
  * lines are collected as the row instead.
  */
-function parseRoomTable(all: string[]): RoomTableRow | null {
-  return parseColumnRoomTable(all) ?? parseStackedRoomTable(all);
-}
-
 /** Matches "Room Type" in either language. */
 const ROOM_TYPE_LABEL = /^room ?type$|^loai phong$/;
 /** Matches "No. of Rooms" in either language. */
@@ -1028,25 +1185,75 @@ const ROOM_COUNT_LABEL = /^no\.? of rooms$|^so (?:luong )?phong$/;
  * cell. Read wrongly it yields a room type of "Superior Double Room 1 2 Adults
  * 0" and no quantity at all.
  */
-function parseStackedRoomTable(all: string[]): RoomTableRow | null {
-  for (let i = 0; i < all.length; i++) {
-    if (!ROOM_TYPE_LABEL.test(fold(all[i]!.trim()))) continue;
+/** True when every cell on the line is a known label. */
+function isLabelOnlyLine(line: string): boolean {
+  const row = cells(line);
+  return row.length > 0 && row.every((cell) => isKnownLabel(cell));
+}
 
-    // Walk the run of label-only lines that follows the header.
+/**
+ * Every room row under a header, however the header was wrapped.
+ *
+ * Agoda wraps the bilingual header across lines, pairing a Vietnamese label
+ * with the NEXT English one:
+ *
+ *   Room Type
+ *   Loại Phòng      No. of Rooms
+ *   Số phòng        Occupancy
+ *   Số người        No. of Extra Bed
+ *   Số Giường Thêm :
+ *   Standard Room   1   2 Adults   0
+ *
+ * There is no header ROW to take column positions from, so the run of
+ * label-only lines is skipped wholesale and the data rows are read after it —
+ * every one of them, so a reservation with several room types is not truncated
+ * to its first.
+ */
+export function parseRoomRows(all: string[]): RoomTableRow[] {
+  for (let i = 0; i < all.length; i++) {
+    const first = cells(all[i]!)[0];
+    if (!first || !ROOM_TYPE_LABEL.test(fold(first).replace(/\s*:\s*$/, ''))) continue;
+
     let sawRoomCount = false;
     let j = i;
     for (; j < all.length; j++) {
       const text = all[j]!.trim();
       if (text.length === 0) continue;
-      if (!isKnownLabel(text)) break;
-      if (ROOM_COUNT_LABEL.test(fold(text))) sawRoomCount = true;
+      if (!isLabelOnlyLine(text)) break;
+      if (cells(text).some((cell) => ROOM_COUNT_LABEL.test(fold(cell).replace(/\s*:\s*$/, '')))) {
+        sawRoomCount = true;
+      }
     }
-    if (!sawRoomCount || j >= all.length) continue;
+    if (!sawRoomCount) continue;
 
-    const row = splitSpacedRoomRow(all[j]!.trim());
-    if (row) return row;
+    const rows: RoomTableRow[] = [];
+    for (let k = j; k < all.length; k++) {
+      const text = all[k]!.trim();
+      if (text.length === 0) continue;
+      const row = splitTabbedRoomRow(text) ?? splitSpacedRoomRow(text);
+      if (!row) break;
+      rows.push(row);
+    }
+    if (rows.length > 0) return rows;
   }
-  return null;
+  return [];
+}
+
+/**
+ * "Standard Room<TAB>1<TAB>2 Adults<TAB>0" — the columns survived as cells.
+ *
+ * Requires all four columns in the right shape, so a prose line that merely
+ * follows the table is not mistaken for another room.
+ */
+function splitTabbedRoomRow(line: string): RoomTableRow | null {
+  const row = cells(line);
+  if (row.length < 4) return null;
+  const [roomType, rooms, occupancy, extraBeds] = row;
+  if (!roomType || isKnownLabel(roomType)) return null;
+  if (!/^\d{1,3}$/.test(rooms ?? '')) return null;
+  if (!/^\d{1,3}\b/.test(occupancy ?? '')) return null;
+  if (!/^\d{1,3}$/.test(extraBeds ?? '')) return null;
+  return { roomType, rooms: rooms!, occupancy: occupancy!, extraBeds: extraBeds! };
 }
 
 /**
