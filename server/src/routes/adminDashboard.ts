@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { prisma } from '../db/prisma';
 import { requireAuth, requireAdmin, requirePasswordChanged } from '../middleware/auth';
 import { getClock, hcmDateOnly } from '../lib/clock';
+import { z } from 'zod';
+import { computeStatistics } from '../booking/statistics';
 
 const HCM_OFFSET_MS = 7 * 60 * 60 * 1000;
 
@@ -25,10 +27,19 @@ function countByBranch(groups: { branchId: number | null; _count: { _all: number
   return map;
 }
 
+const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+
+/** Defaults to today when a range is not given. */
+const statisticsQuery = z.object({
+  from: isoDay.optional(),
+  to: isoDay.optional(),
+  branchId: z.coerce.number().int().positive().optional(),
+});
+
 /**
- * One admin-only summary endpoint so the dashboard never downloads all of
- * history to count things on the client. Everything is computed in the database
- * in a single transaction, in the property's timezone.
+ * The admin dashboard endpoints, so it never downloads all of history to count
+ * things on the client. Everything is computed in the database, in the
+ * property's timezone.
  */
 export function createAdminDashboardRouter(): Router {
   const router = Router();
@@ -94,6 +105,27 @@ export function createAdminDashboardRouter(): Router {
           lastMinute: lastMin.get(b.id) ?? 0,
         })),
       });
+    })().catch(next);
+  });
+
+  /**
+   * GET /api/admin/dashboard/statistics — revenue and operational rates.
+   *
+   * A separate endpoint from the summary above, which answers "what needs
+   * attention right now". This answers "how did a period go", so it takes a
+   * range and is not recomputed on every dashboard poll.
+   */
+  router.get('/admin/dashboard/statistics', (req, res, next) => {
+    (async () => {
+      const today = hcmDateOnly(getClock().now());
+      const query = statisticsQuery.parse(req.query);
+      res.json(
+        await computeStatistics({
+          from: query.from ?? today,
+          to: query.to ?? today,
+          branchId: query.branchId,
+        }),
+      );
     })().catch(next);
   });
 
