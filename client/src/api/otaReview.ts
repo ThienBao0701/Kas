@@ -110,6 +110,31 @@ export interface OtaReviewOverrides {
   paymentMode?: OtaPaymentMode;
 }
 
+/** One field an amended reservation states differently. */
+export interface AmendmentChange {
+  field: string;
+  label: string;
+  oldValue: string | null;
+  newValue: string | null;
+}
+
+export interface AmendmentPreview {
+  bookingId: string;
+  review: OtaReview;
+  /** Only the fields that DIFFER. An unchanged field never appears. */
+  changes: AmendmentChange[];
+  /** The platform says the reservation is cancelled. A warning, never an action. */
+  otaCancelled: boolean;
+  currentStatus: string;
+}
+
+export interface AmendmentResult {
+  bookingId: string;
+  applied: AmendmentChange[];
+  rejected: AmendmentChange[];
+  correctionIds: string[];
+}
+
 export interface OtaDispatchResponse {
   bookingId: string;
   /** False when this reservation had already been dispatched. */
@@ -130,4 +155,26 @@ export const otaReviewApi = {
    */
   dispatch: (source: OtaReviewSource, rawText: string, overrides?: OtaReviewOverrides) =>
     api.post<OtaDispatchResponse>('/admin/ota/dispatch', { source, rawText, overrides }),
+
+  /** Compares an amended mail with the dispatched booking. Writes nothing. */
+  amendment: (source: OtaReviewSource, rawText: string, overrides?: OtaReviewOverrides) =>
+    api.post<AmendmentPreview>('/admin/ota/amendment', { source, rawText, overrides }),
+
+  /**
+   * Applies the accepted changes. `acceptedFields` is always sent explicitly —
+   * omitting it means "accept everything" on the server, which must never
+   * happen by accident when a reviewer has deselected rows.
+   */
+  applyAmendment: (
+    source: OtaReviewSource,
+    rawText: string,
+    acceptedFields: string[],
+    overrides?: OtaReviewOverrides,
+  ) =>
+    api.post<AmendmentResult>('/admin/ota/amendment/apply', {
+      source,
+      rawText,
+      overrides,
+      acceptedFields,
+    }),
 };

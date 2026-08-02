@@ -188,6 +188,11 @@ export interface AmendmentResult {
   bookingId: string;
   applied: AmendmentChange[];
   rejected: AmendmentChange[];
+  /**
+   * The correction rows this apply created, so the reviewer is shown the
+   * actual audit records rather than being told to trust that some were made.
+   */
+  correctionIds: string[];
 }
 
 /**
@@ -213,7 +218,7 @@ export async function applyAmendment(
   if (accepted.length === 0) {
     // A rejected amendment leaves the booking exactly as it was — and records
     // nothing, because nothing happened to it.
-    return { bookingId: preview.bookingId, applied: [], rejected };
+    return { bookingId: preview.bookingId, applied: [], rejected, correctionIds: [] };
   }
 
   const now = clock.now();
@@ -236,7 +241,7 @@ export async function applyAmendment(
     }
   }
 
-  await client.$transaction(async (tx) => {
+  const correctionIds = await client.$transaction(async (tx) => {
     const requestAuditId = actor.origin
       ? await recordRequestOrigin(tx as Prisma.TransactionClient, actor.origin, now)
       : null;
@@ -249,7 +254,8 @@ export async function applyAmendment(
     // dispatched room line is what the branch was told, and rewriting it in
     // place would erase that without a trace. The correction row carries the
     // amendment so a human can act on it.
-    await tx.bookingCorrection.createMany({
+    const created = await tx.bookingCorrection.createManyAndReturn({
+      select: { id: true },
       data: accepted.map((c) => ({
         bookingId: preview.bookingId,
         field: c.field,
@@ -260,7 +266,9 @@ export async function applyAmendment(
         requestAuditId,
       })),
     });
+
+    return created.map((row) => row.id);
   });
 
-  return { bookingId: preview.bookingId, applied: accepted, rejected };
+  return { bookingId: preview.bookingId, applied: accepted, rejected, correctionIds };
 }
