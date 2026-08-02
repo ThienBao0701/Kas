@@ -56,6 +56,10 @@ export function OtaReviewPanel({ source, rawText, onDispatch, onBack }: OtaRevie
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [copyState, setCopyState] = useState<'idle' | 'ok' | 'fail'>('idle');
+  /** idle → sending → sent, or duplicate when the booking already existed. */
+  const [dispatchState, setDispatchState] = useState<'idle' | 'sending' | 'sent' | 'duplicate'>(
+    'idle',
+  );
   /**
    * Local text being typed, per field.
    *
@@ -121,6 +125,31 @@ export function OtaReviewPanel({ source, rawText, onDispatch, onBack }: OtaRevie
   const rooms: OtaReviewRoomLine[] = overrides.rooms ?? review?.rooms ?? [];
 
   const patchRooms = (next: OtaReviewRoomLine[]) => patch({ rooms: next });
+
+  /**
+   * Sends the reviewed reservation to its branch.
+   *
+   * The server re-derives the review and refuses anything it would have
+   * blocked, so this reports what actually happened rather than assuming
+   * success. A reservation that was already dispatched comes back as such
+   * instead of creating a second booking, and that is said plainly — an Admin
+   * who clicks twice should learn that, not see two "sent" messages.
+   */
+  const sendToBranch = async () => {
+    if (!review?.canDispatch || dispatchState === 'sending') return;
+    setDispatchState('sending');
+    setError(null);
+    try {
+      const result = await otaReviewApi.dispatch(source, rawText, overrides);
+      setDispatchState(result.created ? 'sent' : 'duplicate');
+      if (result.review.branchId !== null && result.review.note !== null) {
+        onDispatch?.(result.review.branchId, result.review.note);
+      }
+    } catch (err) {
+      setDispatchState('idle');
+      setError(toUserMessage(err));
+    }
+  };
 
   const onCopy = async () => {
     if (!review?.note) return;
@@ -471,29 +500,34 @@ export function OtaReviewPanel({ source, rawText, onDispatch, onBack }: OtaRevie
         </Card>
       ) : null}
 
+      {dispatchState === 'sent' || dispatchState === 'duplicate' ? (
+        <Card>
+          <p
+            data-testid="ota-dispatch-result"
+            className={dispatchState === 'sent' ? 'text-sm text-emerald-700' : 'text-sm text-amber-700'}
+          >
+            {dispatchState === 'sent'
+              ? 'Đã gửi chi nhánh. Đơn đã được lưu và lễ tân sẽ nhận được thông báo.'
+              : 'Đơn này đã được gửi trước đó. Hệ thống giữ nguyên đơn cũ, không tạo đơn trùng.'}
+          </p>
+        </Card>
+      ) : null}
+
       <div className="flex flex-wrap gap-2">
         {onBack ? (
           <Button variant="secondary" onClick={onBack}>Đơn khác</Button>
         ) : null}
         {/*
-          Disabled when no handler is wired, not only when the review is
-          incomplete.
-
-          `onDispatch` is optional and the dispatch page does not supply one, so
-          this button was enabled on every valid booking and did nothing at all
-          when pressed. An Admin would reasonably read that as "sent" and move
-          on, while nothing had been recorded anywhere — the worst kind of
-          silent loss, because it looks like success. Until an OTA dispatch path
-          exists the action is not offered; the note is copied instead.
+          The panel dispatches for itself: it already holds the source, the
+          pasted text and the Admin's corrections, which is exactly what the
+          endpoint needs. `onDispatch` is a SUCCESS notification for the page,
+          not the mechanism — an optional callback was the mechanism once, and
+          because no page supplied one the button silently did nothing.
         */}
         <Button
-          onClick={() => {
-            if (onDispatch && review.canDispatch && review.branchId && review.note) {
-              onDispatch(review.branchId, review.note);
-            }
-          }}
-          disabled={!review.canDispatch || !onDispatch}
-          title={onDispatch ? undefined : 'Chưa có luồng gửi cho Agoda/CTrip — vui lòng sao chép ghi chú.'}
+          onClick={() => void sendToBranch()}
+          disabled={!review.canDispatch || dispatchState === 'sending'}
+          loading={dispatchState === 'sending'}
         >
           <Send className="h-4 w-4" aria-hidden="true" />
           Gửi chi nhánh

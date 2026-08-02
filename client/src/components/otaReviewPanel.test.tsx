@@ -95,9 +95,23 @@ const RESOLVED = response({
  */
 function mockReview(...sequence: OtaReviewResponse[]) {
   const bodies: unknown[] = [];
+  const dispatchBodies: unknown[] = [];
   let call = 0;
-  const fetchMock = vi.fn(async (_url: string | URL, init: RequestInit = {}) => {
-    if (init.body) bodies.push(JSON.parse(String(init.body)));
+  const fetchMock = vi.fn(async (url: string | URL, init: RequestInit = {}) => {
+    const parsedBody = init.body ? JSON.parse(String(init.body)) : undefined;
+
+    // The dispatch endpoint answers with its own shape; routing by URL keeps a
+    // dispatch from being served a review payload and silently misread.
+    if (String(url).includes('/ota/dispatch')) {
+      if (parsedBody) dispatchBodies.push(parsedBody);
+      const review = sequence[Math.min(call - 1, sequence.length - 1)]!.review;
+      return new Response(
+        JSON.stringify({ bookingId: 'bk_1', created: dispatchState.created, review }),
+        { status: dispatchState.created ? 201 : 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+
+    if (parsedBody) bodies.push(parsedBody);
     const payload = sequence[Math.min(call, sequence.length - 1)]!;
     call += 1;
     return new Response(JSON.stringify(payload), {
@@ -106,8 +120,15 @@ function mockReview(...sequence: OtaReviewResponse[]) {
     });
   });
   vi.stubGlobal('fetch', fetchMock);
-  return { bodies, fetchMock };
+  return { bodies, dispatchBodies, fetchMock };
 }
+
+/** Lets a test say whether the next dispatch creates a booking or finds one. */
+const dispatchState = { created: true };
+
+afterEach(() => {
+  dispatchState.created = true;
+});
 
 /**
  * `onDispatch` is OPTIONAL and the dispatch page supplies none today, so the
@@ -535,29 +556,53 @@ describe('copy note', () => {
 /* ================================================================== */
 
 describe('dispatch', () => {
-  it('is enabled only when the server says canDispatch AND a handler is wired', async () => {
+  it('is enabled whenever the server says canDispatch', async () => {
+    // The panel dispatches for itself now, so the action no longer depends on a
+    // page happening to supply a callback — which is what left it dead before.
     mockReview(RESOLVED);
-    mount('CTRIP', () => {});
+    mount();
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /Gửi chi nhánh/ })).toBeEnabled(),
     );
   });
 
-  it('stays disabled when no dispatch handler is wired', async () => {
-    // The button was enabled on every valid booking while calling an undefined
-    // handler: pressing it did nothing, silently, and looked like success.
-    // Until an OTA dispatch path exists the action must not be offered.
+  it('posts the reviewed reservation to the dispatch endpoint', async () => {
+    const { dispatchBodies } = mockReview(RESOLVED);
+    mount();
+
+    await screen.findByTestId('ota-review');
+    await userEvent.click(screen.getByRole('button', { name: /Gửi chi nhánh/ }));
+
+    await waitFor(() => expect(dispatchBodies).toHaveLength(1));
+    // The same body the review takes: the server re-derives and dispatches THAT.
+    const sent = dispatchBodies[0] as { source: string; rawText: string };
+    expect(sent.source).toBe('CTRIP');
+    expect(sent.rawText).toBe('RAW');
+  });
+
+  it('confirms the booking was sent', async () => {
     mockReview(RESOLVED);
     mount();
 
     await screen.findByTestId('ota-review');
-    const send = screen.getByRole('button', { name: /Gửi chi nhánh/ });
-    expect(send).toBeDisabled();
-    // Copying the note remains the supported way to hand the booking over.
-    expect(screen.getByRole('button', { name: /Sao chép note/ })).toBeEnabled();
+    await userEvent.click(screen.getByRole('button', { name: /Gửi chi nhánh/ }));
+
+    expect(await screen.findByTestId('ota-dispatch-result')).toHaveTextContent(/Đã gửi chi nhánh/);
   });
 
-  it('passes the branch and the server note verbatim to the handler', async () => {
+  it('says plainly when the reservation had already been sent', async () => {
+    // Clicking twice must not read as two successful dispatches.
+    dispatchState.created = false;
+    mockReview(RESOLVED);
+    mount();
+
+    await screen.findByTestId('ota-review');
+    await userEvent.click(screen.getByRole('button', { name: /Gửi chi nhánh/ }));
+
+    expect(await screen.findByTestId('ota-dispatch-result')).toHaveTextContent(/đã được gửi trước đó/);
+  });
+
+  it('notifies the page with the branch and the server note verbatim', async () => {
     const calls: [number, string][] = [];
     mockReview(RESOLVED);
     mount('CTRIP', (branchId, note) => calls.push([branchId, note]));
@@ -565,9 +610,29 @@ describe('dispatch', () => {
     await screen.findByTestId('ota-review');
     await userEvent.click(screen.getByRole('button', { name: /Gửi chi nhánh/ }));
 
-    expect(calls).toHaveLength(1);
+    await waitFor(() => expect(calls).toHaveLength(1));
     expect(calls[0]![0]).toBe(RESOLVED.review.branchId);
     expect(calls[0]![1]).toBe(RESOLVED.review.note);
+  });
+
+  it('reports a failed dispatch instead of claiming success', async () => {
+    mockReview(RESOLVED);
+    mount();
+    await screen.findByTestId('ota-review');
+
+    // The endpoint refuses; the panel must not show a sent confirmation.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(JSON.stringify({ error: { code: 'VALIDATION_ERROR', message: 'Đơn chưa hợp lệ.' } }), {
+          status: 422,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    );
+    await userEvent.click(screen.getByRole('button', { name: /Gửi chi nhánh/ }));
+
+    await waitFor(() => expect(screen.queryByTestId('ota-dispatch-result')).not.toBeInTheDocument());
   });
 
   it('requires a branch and says so when recognition failed', async () => {

@@ -110,7 +110,24 @@ export interface OtaReviewOverrides {
   paymentMode?: OtaPaymentMode;
 }
 
+export interface OtaDispatchResponse {
+  bookingId: string;
+  /** False when this reservation had already been dispatched. */
+  created: boolean;
+  review: OtaReview;
+}
+
 export const otaReviewApi = {
   review: (source: OtaReviewSource, rawText: string, overrides?: OtaReviewOverrides) =>
     api.post<OtaReviewResponse>('/admin/ota/review', { source, rawText, overrides }),
+
+  /**
+   * Persists the reviewed reservation and sends it to its branch.
+   *
+   * Deliberately posts the SAME body as the review: the server rebuilds the
+   * review from the pasted text and these corrections and dispatches that, so
+   * the browser cannot submit a booking the review would have refused.
+   */
+  dispatch: (source: OtaReviewSource, rawText: string, overrides?: OtaReviewOverrides) =>
+    api.post<OtaDispatchResponse>('/admin/ota/dispatch', { source, rawText, overrides }),
 };

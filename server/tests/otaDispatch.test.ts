@@ -246,6 +246,59 @@ describe('dispatch permission', () => {
 });
 
 /* ================================================================== */
+/* Reception sees an OTA booking exactly like a Booking.com one        */
+/* ================================================================== */
+describe('reception receives OTA bookings', () => {
+  it('shows the dispatched booking to that branch’s receptionist', async () => {
+    await createReceptionist(cn5, { username: 'letan_recv', mustChangePassword: false });
+    const reception = (await loginAgent(app, 'letan_recv', RECEPTIONIST_PASSWORD)).agent;
+
+    const sent = await dispatch(AGODA);
+    const res = await reception.get('/api/bookings/new');
+
+    expect(res.status).toBe(200);
+    const ids = res.body.bookings.map((b: { id: string }) => b.id);
+    expect(ids).toContain(sent.body.bookingId);
+  });
+
+  it('hides it from every other branch', async () => {
+    await createReceptionist(cn1, { username: 'letan_other', mustChangePassword: false });
+    const otherBranch = (await loginAgent(app, 'letan_other', RECEPTIONIST_PASSWORD)).agent;
+
+    const sent = await dispatch(AGODA);
+    const res = await otherBranch.get('/api/bookings/new');
+
+    expect(res.status).toBe(200);
+    const ids = res.body.bookings.map((b: { id: string }) => b.id);
+    expect(ids).not.toContain(sent.body.bookingId);
+  });
+
+  it('opens the detail with the reviewed values intact', async () => {
+    await createReceptionist(cn5, { username: 'letan_detail', mustChangePassword: false });
+    const reception = (await loginAgent(app, 'letan_detail', RECEPTIONIST_PASSWORD)).agent;
+
+    const sent = await dispatch(AGODA);
+    const res = await reception.get(`/api/bookings/${sent.body.bookingId}`);
+
+    expect(res.status).toBe(200);
+    const booking = res.body.booking;
+    expect(booking.bookingCode).toBe(sent.body.review.bookingCode);
+    expect(booking.customerName).toBe(sent.body.review.guestName);
+    expect(booking.rooms.length).toBe(sent.body.review.rooms.length);
+  });
+
+  it('refuses the detail to a receptionist at another branch', async () => {
+    await createReceptionist(cn1, { username: 'letan_denied', mustChangePassword: false });
+    const otherBranch = (await loginAgent(app, 'letan_denied', RECEPTIONIST_PASSWORD)).agent;
+
+    const sent = await dispatch(AGODA);
+    const res = await otherBranch.get(`/api/bookings/${sent.body.bookingId}`);
+
+    expect([403, 404]).toContain(res.status);
+  });
+});
+
+/* ================================================================== */
 /* Admin corrections are what gets dispatched                          */
 /* ================================================================== */
 describe('dispatch honours the Admin’s corrections', () => {
