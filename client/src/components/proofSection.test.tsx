@@ -13,7 +13,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { ADMIN_USER, installApiMock, renderApp } from '../test/utils';
+import { ADMIN_USER, EMPTY_OPERATIONAL_BLOCKS, installApiMock, renderApp } from '../test/utils';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -78,6 +78,7 @@ const BOOKING = {
   ],
   warnings: [],
   statusHistory: [],
+  ...EMPTY_OPERATIONAL_BLOCKS,
   proofs: [PROOF],
   sourcePlatform: 'BOOKING_COM',
   verificationStatus: 'PENDING_REVIEW',

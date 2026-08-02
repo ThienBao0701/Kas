@@ -1,7 +1,15 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { CalendarCheck2, ClipboardList, StickyNote } from 'lucide-react';
-import { type BookingDetail, type RoomView } from '../api/bookings';
+import {
+  type BookingDetail,
+  type CorrectionEntry,
+  type OperationalRecord,
+  type OtaMetadata,
+  type RequestAuditView,
+  type RoomView,
+  type TimelineEvent,
+} from '../api/bookings';
 import { buildPmsNote } from '../lib/pmsNote';
 import { formatAmountCopy, formatDate, formatDateTime, formatMoney } from '../lib/format';
 import { Card } from './Card';
@@ -138,6 +146,18 @@ export function BookingDetailView({
         </Card>
       ) : null}
 
+      {/* What the OTA said. Empty for a Booking.com booking, which stores none. */}
+      <OtaMetadataCard ota={b.ota} />
+
+      {/* What actually happened, beside what was expected. */}
+      <OperationalCard record={b.operational} />
+
+      {/* Append-only amendment history. */}
+      <CorrectionsCard corrections={b.corrections} />
+
+      {/* Everything that happened, in order. */}
+      <TimelineCard events={b.timeline} />
+
       {/* Proof-of-creation workflow (upload / review / verdict) */}
       <ProofSection booking={b} isAdmin={isAdmin} onChanged={handleProofChanged} />
 
@@ -151,6 +171,7 @@ export function BookingDetailView({
             <span>Tạo lúc: {formatDateTime(b.createdAt)}</span>
             <span>Phiên bản trích xuất: {b.parserVersion ?? '—'}</span>
           </div>
+          {b.requestAudit ? <RequestAuditBlock audit={b.requestAudit} /> : null}
           {b.rawText ? (
             <details className="mt-3">
               <summary className="cursor-pointer text-sm font-medium text-brand-600">Xem nội dung Booking.com gốc</summary>
@@ -161,6 +182,176 @@ export function BookingDetailView({
       ) : null}
 
       <Toast message={toast} onDone={() => setToast(null)} />
+    </div>
+  );
+}
+
+const OTA_FIELDS: { key: keyof OtaMetadata; label: string }[] = [
+  { key: 'otaBookingStatus', label: 'Trạng thái trên OTA' },
+  { key: 'ratePlanName', label: 'Gói giá' },
+  { key: 'cancellationPolicy', label: 'Chính sách huỷ' },
+  { key: 'paymentType', label: 'Hình thức thanh toán' },
+  { key: 'benefitsIncluded', label: 'Ưu đãi kèm theo' },
+  { key: 'countryOfResidence', label: 'Quốc gia cư trú' },
+  { key: 'websiteLanguage', label: 'Ngôn ngữ đặt phòng' },
+  { key: 'sourcePropertyId', label: 'Property ID (chỉ để đối chiếu)' },
+];
+
+/**
+ * What the OTA said, verbatim.
+ *
+ * Rendered only when something was actually stored — a Booking.com booking has
+ * none of these columns filled, and eight "—" rows would suggest data was lost
+ * rather than never sent. Property ID is labelled as reference-only because it
+ * never participates in branch resolution.
+ */
+function OtaMetadataCard({ ota }: { ota: OtaMetadata }) {
+  const present = OTA_FIELDS.filter((f) => ota[f.key] !== null && ota[f.key] !== '');
+  if (present.length === 0) return null;
+  return (
+    <Card className="p-5" data-testid="ota-metadata-card">
+      <p className="mb-3 text-sm font-semibold text-slate-700">Thông tin từ OTA</p>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {present.map((f) => (
+          <ReadField key={f.key} label={f.label} value={String(ota[f.key])} />
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+/**
+ * The real stay, as it happened.
+ *
+ * Hidden until the first operational event exists, so a booking that has only
+ * been dispatched does not display a column of empty promises.
+ */
+function OperationalCard({ record }: { record: OperationalRecord }) {
+  const rows = [
+    { label: 'Đã nhận đơn', at: record.receivedAt, by: record.receivedBy },
+    { label: 'Khách nhận phòng thực tế', at: record.actualCheckInAt, by: record.checkedInBy },
+    { label: 'Khách trả phòng thực tế', at: record.actualCheckOutAt, by: record.checkedOutBy },
+    { label: 'Đã huỷ', at: record.cancelledAt, by: record.cancelledBy },
+  ].filter((r) => r.at !== null);
+  if (rows.length === 0) return null;
+  return (
+    <Card className="p-5" data-testid="operational-card">
+      <p className="mb-3 text-sm font-semibold text-slate-700">Diễn biến thực tế</p>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {rows.map((r) => (
+          <ReadField
+            key={r.label}
+            label={r.label}
+            value={`${formatDateTime(r.at)}${r.by ? ` · ${r.by.fullName}` : ''}`}
+          />
+        ))}
+      </div>
+      {record.cancellationReason ? (
+        <div className="mt-3">
+          <ReadField label="Lý do huỷ" value={record.cancellationReason} />
+        </div>
+      ) : null}
+    </Card>
+  );
+}
+
+/**
+ * Every applied amendment, oldest first.
+ *
+ * No reason column is shown because none is stored; the request that made the
+ * change is the provenance, and that is Admin-only.
+ */
+function CorrectionsCard({ corrections }: { corrections: CorrectionEntry[] }) {
+  if (corrections.length === 0) return null;
+  return (
+    <Card className="p-5" data-testid="corrections-card">
+      <p className="mb-3 text-sm font-semibold text-slate-700">
+        Lịch sử chỉnh sửa ({corrections.length})
+      </p>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[32rem] text-left text-sm">
+          <thead>
+            <tr className="text-xs uppercase tracking-wide text-slate-400">
+              <th className="pb-2 pr-3 font-medium">Trường</th>
+              <th className="pb-2 pr-3 font-medium">Giá trị cũ</th>
+              <th className="pb-2 pr-3 font-medium">Giá trị mới</th>
+              <th className="pb-2 font-medium">Thời điểm</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {corrections.map((c) => (
+              <tr key={c.id} data-testid="correction-row">
+                <td className="py-2 pr-3 font-medium text-slate-700">{c.field}</td>
+                <td className="py-2 pr-3 text-slate-500 line-through">{c.oldValue ?? '—'}</td>
+                <td className="py-2 pr-3 font-medium text-slate-900">{c.newValue ?? '—'}</td>
+                <td className="py-2 text-slate-500">
+                  {formatDateTime(c.appliedAt)}
+                  {c.appliedBy ? ` · ${c.appliedBy.fullName}` : ''}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
+/** Status changes, proof reviews and amendments merged into one ordered story. */
+function TimelineCard({ events }: { events: TimelineEvent[] }) {
+  if (events.length === 0) return null;
+  return (
+    <Card className="p-5" data-testid="timeline-card">
+      <p className="mb-3 text-sm font-semibold text-slate-700">Nhật ký ({events.length})</p>
+      <ol className="space-y-3">
+        {events.map((e, i) => (
+          <li key={`${e.at}-${e.type}-${i}`} className="flex gap-3" data-testid="timeline-event">
+            <div className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-brand-600" aria-hidden="true" />
+            <div className="min-w-0">
+              <p className="break-words text-sm text-slate-900">{e.description}</p>
+              <p className="text-xs text-slate-500">
+                {formatDateTime(e.at)}
+                {e.actor ? ` · ${e.actor.fullName}` : ''}
+              </p>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </Card>
+  );
+}
+
+/**
+ * Request provenance, inside the Admin card. Never rendered for a receptionist
+ * — the server does not send it, so there is nothing to hide in the client.
+ */
+function RequestAuditBlock({ audit }: { audit: RequestAuditView }) {
+  return (
+    <div className="mt-3 border-t border-slate-100 pt-3" data-testid="request-audit">
+      <div className="grid gap-2 text-sm text-slate-600 sm:grid-cols-2">
+        <span>Parser commit: <span className="font-mono text-xs">{audit.parserCommit ?? '—'}</span></span>
+        <span>Build ID: <span className="font-mono text-xs">{audit.reviewBuildId ?? '—'}</span></span>
+      </div>
+      {audit.requests.length > 0 ? (
+        <details className="mt-2">
+          <summary className="cursor-pointer text-sm font-medium text-brand-600">
+            Nguồn yêu cầu ({audit.requests.length})
+          </summary>
+          <ul className="mt-2 space-y-2 text-xs text-slate-600">
+            {audit.requests.map((r) => (
+              <li key={r.id} className="rounded-lg bg-slate-50 p-2 font-mono" data-testid="request-audit-row">
+                <div>Request: {r.id}</div>
+                <div>Correlation: {r.correlationId ?? '—'}</div>
+                <div>Route: {r.route ?? '—'}</div>
+                <div>IP: {r.ipAddress ?? '—'}</div>
+                <div className="break-all">UA: {r.userAgent ?? '—'}</div>
+                <div>Session: {r.sessionId ?? '—'}</div>
+                <div>{formatDateTime(r.occurredAt)}</div>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
     </div>
   );
 }

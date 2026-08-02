@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { ADMIN_USER, installApiMock, renderApp } from '../test/utils';
+import { ADMIN_USER, EMPTY_OPERATIONAL_BLOCKS, installApiMock, renderApp } from '../test/utils';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -49,6 +49,7 @@ function detail(overrides: Record<string, unknown> = {}) {
     ],
     warnings: [],
     statusHistory: [],
+    ...EMPTY_OPERATIONAL_BLOCKS,
     proofs: [],
     createdBy: null,
     sentBy: null,

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { ADMIN_USER, RECEPTIONIST_USER, installApiMock, jsonResponse, renderApp } from '../test/utils';
+import { ADMIN_USER, EMPTY_OPERATIONAL_BLOCKS, RECEPTIONIST_USER, installApiMock, jsonResponse, renderApp } from '../test/utils';
 
 /** Dispatches a document paste event carrying a single PNG clipboard image. */
 function firePasteImage(type = 'image/png') {
@@ -53,6 +53,7 @@ const NEW_BOOKING = {
   ],
   warnings: [],
   statusHistory: [],
+  ...EMPTY_OPERATIONAL_BLOCKS,
   proofs: [],
   sourcePlatform: 'BOOKING_COM',
   verificationStatus: 'NOT_SUBMITTED',

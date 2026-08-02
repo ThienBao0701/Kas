@@ -118,6 +118,76 @@ export interface StatusHistoryEntry {
   note: string | null;
 }
 
+/** What the OTA said about the booking, and which build read it. */
+export interface OtaMetadata {
+  sourcePlatform: BookingSource;
+  sourcePropertyId: string | null;
+  otaBookingStatus: string | null;
+  ratePlanName: string | null;
+  cancellationPolicy: string | null;
+  countryOfResidence: string | null;
+  websiteLanguage: string | null;
+  paymentType: string | null;
+  benefitsIncluded: string | null;
+  parserVersion: string | null;
+  reviewVersion: string | null;
+  rawTextSha256: string | null;
+}
+
+/** What actually happened during the stay, beside what was expected. */
+export interface OperationalRecord {
+  receivedAt: string | null;
+  receivedBy: Actor | null;
+  actualCheckInAt: string | null;
+  checkedInBy: Actor | null;
+  actualCheckOutAt: string | null;
+  checkedOutBy: Actor | null;
+  cancelledAt: string | null;
+  cancelledBy: Actor | null;
+  cancellationReason: string | null;
+}
+
+/**
+ * One applied field change. Append-only on the server.
+ *
+ * There is no `reason`: the database does not store one, and inventing a
+ * plausible sentence for an audit record would be worse than its absence.
+ */
+export interface CorrectionEntry {
+  id: string;
+  field: string;
+  oldValue: string | null;
+  newValue: string | null;
+  appliedBy: Actor | null;
+  appliedAt: string;
+}
+
+/** A derived, ordered event — assembled from records that already exist. */
+export interface TimelineEvent {
+  at: string;
+  type: string;
+  description: string;
+  actor: Actor | null;
+}
+
+/**
+ * Request provenance. ADMIN ONLY — the server omits this key entirely for a
+ * receptionist, so its absence is the permission boundary, not a UI choice.
+ */
+export interface RequestAuditView {
+  parserCommit: string | null;
+  reviewBuildId: string | null;
+  requests: {
+    id: string;
+    correlationId: string | null;
+    route: string | null;
+    ipAddress: string | null;
+    userAgent: string | null;
+    sessionId: string | null;
+    occurredAt: string;
+  }[];
+}
+
 /** The full operational booking (admin form also includes rawText). */
 export interface BookingDetail {
   id: string;
@@ -159,6 +229,12 @@ export interface BookingDetail {
   completedAt: string | null;
   completionNote: string | null;
   reviewedAt: string | null;
+  ota: OtaMetadata;
+  operational: OperationalRecord;
+  corrections: CorrectionEntry[];
+  timeline: TimelineEvent[];
+  /** Absent for receptionists — the server strips it. */
+  requestAudit?: RequestAuditView;
 }
 
 export interface NewListItem {

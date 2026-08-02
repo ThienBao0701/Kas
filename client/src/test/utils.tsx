@@ -32,6 +32,45 @@ export const RECEPTIONIST_USER: AuthUser = {
 };
 
 /** Builds a JSON Response like the backend returns. */
+/**
+ * The Phase 5 operational blocks in their empty state.
+ *
+ * The detail endpoint ALWAYS sends these four keys — a booking with no
+ * amendments sends empty collections, not absent ones — so a fixture that
+ * omits them describes a response the server cannot produce. Spread this into
+ * booking fixtures rather than teaching the components to tolerate a shape
+ * that only exists in tests.
+ */
+export const EMPTY_OPERATIONAL_BLOCKS = {
+  ota: {
+    sourcePlatform: 'BOOKING_COM',
+    sourcePropertyId: null,
+    otaBookingStatus: null,
+    ratePlanName: null,
+    cancellationPolicy: null,
+    countryOfResidence: null,
+    websiteLanguage: null,
+    paymentType: null,
+    benefitsIncluded: null,
+    parserVersion: null,
+    reviewVersion: null,
+    rawTextSha256: null,
+  },
+  operational: {
+    receivedAt: null,
+    receivedBy: null,
+    actualCheckInAt: null,
+    checkedInBy: null,
+    actualCheckOutAt: null,
+    checkedOutBy: null,
+    cancelledAt: null,
+    cancelledBy: null,
+    cancellationReason: null,
+  },
+  corrections: [],
+  timeline: [],
+} as const;
+
 export function jsonResponse(status: number, body?: unknown): Response {
   return new Response(body === undefined ? '' : JSON.stringify(body), {
     status,

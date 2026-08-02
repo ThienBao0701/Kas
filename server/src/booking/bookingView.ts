@@ -18,6 +18,17 @@ export const BOOKING_DETAIL_INCLUDE = {
     include: { submittedBy: true, reviewedBy: true },
     orderBy: { attemptNumber: 'asc' },
   },
+  // Append-only corrections, with the request that produced each one. The
+  // request context is loaded here but reaches ADMINS ONLY — see the ops
+  // serializer, which strips it.
+  corrections: {
+    include: { correctedBy: true, requestAudit: true },
+    orderBy: { correctedAt: 'asc' },
+  },
+  receivedBy: true,
+  checkedInBy: true,
+  checkedOutBy: true,
+  cancelledBy: true,
 } satisfies Prisma.BookingInclude;
 
 export type BookingDetail = Prisma.BookingGetPayload<{ include: typeof BOOKING_DETAIL_INCLUDE }>;
@@ -154,6 +165,147 @@ function proofsView(bookingId: string, proofs: BookingDetail['proofs']) {
 }
 
 /** The full booking detail an Admin sees (includes rawText). */
+/**
+ * What the platform said and which build read it.
+ *
+ * Every value is stored; nothing here is derived. A Booking.com booking leaves
+ * all of them null, exactly as it does in the database.
+ */
+function otaMetadataView(booking: BookingDetail) {
+  return {
+    sourcePlatform: booking.sourcePlatform,
+    sourcePropertyId: booking.sourcePropertyId,
+    otaBookingStatus: booking.otaBookingStatus,
+    ratePlanName: booking.ratePlanName,
+    cancellationPolicy: booking.cancellationPolicy,
+    countryOfResidence: booking.countryOfResidence,
+    websiteLanguage: booking.websiteLanguage,
+    paymentType: booking.paymentType,
+    benefitsIncluded: booking.benefitsIncluded,
+    parserVersion: booking.parserVersion,
+    reviewVersion: booking.reviewVersion,
+    rawTextSha256: booking.rawTextSha256,
+  };
+}
+
+/** What actually happened during the stay, beside what was expected. */
+function operationalView(booking: BookingDetail) {
+  return {
+    receivedAt: iso(booking.receivedAt),
+    receivedBy: actor(booking.receivedBy),
+    actualCheckInAt: iso(booking.actualCheckInAt),
+    checkedInBy: actor(booking.checkedInBy),
+    actualCheckOutAt: iso(booking.actualCheckOutAt),
+    checkedOutBy: actor(booking.checkedOutBy),
+    cancelledAt: iso(booking.cancelledAt),
+    cancelledBy: actor(booking.cancelledBy),
+    cancellationReason: booking.cancellationReason,
+  };
+}
+
+/**
+ * The append-only corrections, exactly as stored.
+ *
+ * `BookingCorrection` has no reason column, so none is reported. The nearest
+ * stored provenance is the request that made the change, and that is admin-only
+ * — it appears in `requestAudit`, not here.
+ */
+function correctionsView(booking: BookingDetail) {
+  return booking.corrections.map((c) => ({
+    id: c.id,
+    field: c.field,
+    oldValue: c.oldValue,
+    newValue: c.newValue,
+    appliedBy: actor(c.correctedBy),
+    appliedAt: c.correctedAt.toISOString(),
+  }));
+}
+
+/**
+ * The request context behind each recorded change. ADMIN ONLY.
+ *
+ * IP, user agent and session identify a device, not a booking. A receptionist
+ * needs none of it to serve a guest, and spreading it to every branch terminal
+ * would turn an audit record into ambient surveillance of colleagues.
+ */
+function adminAuditView(booking: BookingDetail) {
+  const seen = new Map<string, ReturnType<typeof auditRow>>();
+  for (const c of booking.corrections) {
+    if (c.requestAudit && !seen.has(c.requestAudit.id)) {
+      seen.set(c.requestAudit.id, auditRow(c.requestAudit));
+    }
+  }
+  return {
+    parserCommit: booking.parserCommit,
+    reviewBuildId: booking.reviewBuildId,
+    requests: [...seen.values()],
+  };
+}
+
+function auditRow(audit: NonNullable<BookingDetail['corrections'][number]['requestAudit']>) {
+  return {
+    id: audit.id,
+    correlationId: audit.correlationId,
+    route: audit.route,
+    ipAddress: audit.ipAddress,
+    userAgent: audit.userAgent,
+    sessionId: audit.sessionId,
+    occurredAt: audit.occurredAt.toISOString(),
+  };
+}
+
+/**
+ * One ordered story of the booking, assembled from records that already exist.
+ *
+ * Derived, never stored: duplicating these events into a timeline table would
+ * create a second account of the same facts that could drift from the first.
+ */
+function timelineView(booking: BookingDetail) {
+  const events: { at: string; type: string; description: string; actor: ReturnType<typeof actor> }[] = [];
+
+  for (const h of booking.statusHistory) {
+    events.push({
+      at: h.changedAt.toISOString(),
+      type: `STATUS_${h.newStatus}`,
+      description: h.note ?? `${h.oldStatus ?? '—'} → ${h.newStatus}`,
+      actor: actor(h.changedBy),
+    });
+  }
+  for (const p of booking.proofs) {
+    events.push({
+      at: p.submittedAt.toISOString(),
+      type: 'PROOF_SUBMITTED',
+      description: `Nộp ảnh tạo đơn (lần ${p.attemptNumber})`,
+      actor: actor(p.submittedBy),
+    });
+    if (p.reviewedAt) {
+      events.push({
+        at: p.reviewedAt.toISOString(),
+        type: p.status === 'APPROVED' ? 'PROOF_APPROVED' : 'PROOF_REJECTED',
+        description: p.status === 'APPROVED' ? 'Duyệt ảnh tạo đơn' : 'Từ chối ảnh tạo đơn',
+        actor: actor(p.reviewedBy),
+      });
+    }
+  }
+  // Corrections applied in one request are one amendment, not several events.
+  const byRequest = new Map<string, typeof booking.corrections>();
+  for (const c of booking.corrections) {
+    const key = c.requestAuditId ?? c.correctedAt.toISOString();
+    byRequest.set(key, [...(byRequest.get(key) ?? []), c]);
+  }
+  for (const group of byRequest.values()) {
+    const first = group[0]!;
+    events.push({
+      at: first.correctedAt.toISOString(),
+      type: 'AMENDMENT_APPLIED',
+      description: `Áp dụng ${group.length} thay đổi: ${group.map((c) => c.field).join(', ')}`,
+      actor: actor(first.correctedBy),
+    });
+  }
+
+  return events.sort((a, b) => a.at.localeCompare(b.at));
+}
+
 export function serializeAdminBookingDetail(booking: BookingDetail) {
   return {
     id: booking.id,
@@ -195,6 +347,14 @@ export function serializeAdminBookingDetail(booking: BookingDetail) {
     completedAt: iso(booking.completedAt),
     completionNote: booking.completionNote,
     reviewedAt: iso(booking.reviewedAt),
+
+    // Phase 5 operational record, all of it already stored.
+    ota: otaMetadataView(booking),
+    operational: operationalView(booking),
+    corrections: correctionsView(booking),
+    timeline: timelineView(booking),
+    // ADMIN ONLY — stripped for reception below.
+    requestAudit: adminAuditView(booking),
   };
 }
 
@@ -203,15 +363,24 @@ export function serializeAdminBookingDetail(booking: BookingDetail) {
  * structured data minus rawText, so raw Booking.com personal data is not spread
  * further than it needs to be.
  */
-export function serializeOpsBookingDetail(booking: BookingDetail, includeRawText: boolean) {
+export function serializeOpsBookingDetail(booking: BookingDetail, isAdmin: boolean) {
   const full = serializeAdminBookingDetail(booking);
-  if (includeRawText) return full;
+  // An Admin on an operational route sees exactly what the admin route serves.
+  // This flag is the CALLER ROLE, not a display preference: it gates raw text
+  // AND request metadata together, so it can never be flipped on to reveal one
+  // without knowingly revealing the other.
+  if (isAdmin) return full;
   // Receptionists see the final persisted business type only — never the raw
   // text nor the internal detection debug (confidence / detection source).
   const {
     rawText: _omitRaw,
     businessTypeConfidence: _omitConf,
     businessTypeDetectionSource: _omitSource,
+    // Request metadata identifies a DEVICE, not a booking. A receptionist
+    // needs none of it to serve a guest, and spreading IP, user agent and
+    // session to every branch terminal would turn an audit record into
+    // ambient surveillance of colleagues.
+    requestAudit: _omitAudit,
     ...rest
   } = full;
   return rest;

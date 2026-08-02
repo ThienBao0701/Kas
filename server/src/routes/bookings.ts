@@ -476,7 +476,7 @@ export function createBookingsRouter(): Router {
       (async () => {
         const user = req.currentUser!;
         const booking = await approveProof(req.params.id!, req.params.proofId!, actor(user, req.requestId), getClock());
-        res.json({ booking: serializeOpsBookingDetail(booking, true) });
+        res.json({ booking: serializeOpsBookingDetail(booking, /* isAdmin */ true) });
       })().catch(next);
     },
   );
@@ -499,7 +499,7 @@ export function createBookingsRouter(): Router {
           actor(user, req.requestId),
           getClock(),
         );
-        res.json({ booking: serializeOpsBookingDetail(booking, true) });
+        res.json({ booking: serializeOpsBookingDetail(booking, /* isAdmin */ true) });
       })().catch(next);
     },
   );
