@@ -193,12 +193,31 @@ const BOOKING_ID_LABEL = /^(agoda )?booking id$|^ma so dat phong$/;
  * the top. Everything above the first block (subject, navigation) is dropped.
  */
 export function reservationBlock(all: readonly string[]): string[] {
+  const blocks = reservationBlocks(all);
+  if (blocks.length === 0) return [...all];
+
+  // CONTENT decides, never the subject line. A forwarded, edited or translated
+  // subject is common and may be missing altogether, so the reservation that
+  // actually carries a complete structure wins; ties go to the first, because
+  // a mail client puts the message being read at the top.
+  const complete = blocks.find((block) => isCompleteReservation(block));
+  return [...(complete ?? blocks[0]!)];
+}
+
+/**
+ * Every reservation in the document, in the order they appear.
+ *
+ * Split at the Booking ID label. The first block keeps everything above it:
+ * some layouts print the property name and "(Property ID …)" ABOVE that label,
+ * and cutting there threw the hotel name away.
+ */
+export function reservationBlocks(all: readonly string[]): string[][] {
   const starts: number[] = [];
   for (let i = 0; i < all.length; i++) {
     const first = cells(all[i]!)[0];
     if (first && BOOKING_ID_LABEL.test(fold(first).replace(/\s*:\s*$/, ''))) starts.push(i);
   }
-  if (starts.length === 0) return [...all];
+  if (starts.length === 0) return [];
 
   // "Booking ID" / "Mã số đặt phòng" / "1756224954" stacks the English and
   // Vietnamese labels on consecutive lines, and BOTH match. Adjacent hits are
@@ -211,18 +230,46 @@ export function reservationBlock(all: readonly string[]): string[] {
   // and cutting at the label threw the hotel name away — leaving the branch
   // unresolved on documents that had always worked. Nothing of another
   // reservation can be up there, because this is the first one.
-  const blocks = opens.map((start, n) =>
-    all.slice(n === 0 ? 0 : start, opens[n + 1] ?? all.length),
+  return opens.map((start, n) =>
+    all.slice(n === 0 ? headerStart(all, start) : start, opens[n + 1] ?? all.length),
   );
+}
 
-  // "Agoda Booking ID 1753732591 - AMENDED …" — the subject, above block one.
-  const subject = /agoda booking id\s*[:#]?\s*(\d{6,15})\b/i.exec(all.slice(0, opens[0]).join('\n'));
-  if (subject) {
-    const wanted = subject[1]!;
-    const match = blocks.find((block) => idWithin(block) === wanted);
-    if (match) return [...match];
+/**
+ * How far above the Booking ID label the reservation's own header begins.
+ *
+ * Some layouts print the property name and "(Property ID …)" ABOVE that label,
+ * so a little of what precedes it belongs to the reservation. But only a
+ * little: one supplied document is a YCS reservations LIST page followed by the
+ * mail, and taking everything above put a 340-line table in front of the
+ * booking. That table's column headers ("Property name", "Check-in") then
+ * matched as field labels and shadowed the real ones, so the hotel name came
+ * back as "Guest(s)" and the stay dates vanished.
+ */
+function headerStart(all: readonly string[], open: number, lookback = 12): number {
+  let seen = 0;
+  let i = open - 1;
+  for (; i >= 0 && seen < lookback; i--) {
+    if (all[i]!.trim().length > 0) seen += 1;
   }
-  return [...blocks[0]!];
+  return Math.max(0, i + 1);
+}
+
+/**
+ * True when a block is a whole reservation rather than a passing mention.
+ *
+ * A forwarded mail often quotes a booking id in prose, and a thread can carry a
+ * truncated tail block. Requiring the reservation's own STRUCTURE — its id, a
+ * guest, a stay and a rate — is what lets the parser find the real reservation
+ * without ever consulting the subject line.
+ */
+function isCompleteReservation(block: readonly string[]): boolean {
+  const lines = [...block];
+  if (idWithin(block) === null) return false;
+  const hasGuest = labelValue(lines, /^customer first name$/) !== null;
+  const hasStay = labelValue(lines, /^check[- ]?in$|^(?:ngay )?nhan phong$/) !== null;
+  const hasRate = findRate(lines, /net rate|gia thuc te/) !== null;
+  return hasGuest && hasStay && hasRate;
 }
 
 /** The Booking ID stated INSIDE one block, read from its own label. */
@@ -342,7 +389,10 @@ function labelValue(all: string[], labelPattern: RegExp): string | null {
           const first = cells(all[j]!)[0];
           if (first && !isKnownLabel(first)) return first;
         }
-        return null;
+        // Keep looking. A label that carries no value is not proof the field is
+        // absent — a table COLUMN HEADER matches the same text, and giving up
+        // there let a header shadow the real field further down.
+        continue;
       }
 
       if (!labelPattern.test(fold(cell))) {
@@ -413,7 +463,8 @@ function labelValue(all: string[], labelPattern: RegExp): string | null {
           return value;
         }
       }
-      return null;
+      // This occurrence yielded nothing; a later one may still be the field.
+      continue;
     }
   }
   return null;
@@ -690,6 +741,16 @@ export interface AgodaPartnerBooking {
   extraBeds: number | null;
   /** Always false: these branches serve no breakfast on Agoda. */
   breakfastIncluded: boolean;
+  /** CONFIRMED / AMENDED / CANCELLED, from the confirmation heading itself. */
+  bookingStatus: 'CONFIRMED' | 'AMENDED' | 'CANCELLED' | null;
+  /** How Agoda settles the booking, as stated ("PREPAID"). Never the note's mode. */
+  paymentType: string | null;
+  /** "Website Language" — the guest's language / market. */
+  websiteLanguage: string | null;
+  /** "Special Requests" — the guest's own requests, not Agoda's boilerplate. */
+  specialRequests: string | null;
+  /** "Benefits Included" verbatim. Never consulted for breakfast. */
+  benefitsIncluded: string | null;
   payment: string | null;
   ratePlan: string | null;
   cancellationPolicy: string | null;
@@ -960,7 +1021,7 @@ export function parseAgodaPartnerBooking(rawText: string): AgodaPartnerBooking {
   const all = reservationBlock(lines(rawText));
   const warnings: ExtractWarning[] = [];
 
-  const bookingId = extractBookingId(all, rawText);
+  const bookingId = extractBookingId(all, all.join('\n'));
   if (!bookingId) warnings.push(warn('AGODA_MISSING_BOOKING_ID', 'Không đọc được Booking ID của Agoda.', 'ERROR'));
 
   const first = labelValue(all, /^customer first name$|^ten khach( hang)?$/);
@@ -1038,8 +1099,24 @@ export function parseAgodaPartnerBooking(rawText: string): AgodaPartnerBooking {
     warnings.push(warn('AGODA_MISSING_NET_RATE', 'Không đọc được "Net rate" — cần kiểm tra thủ công.', 'ERROR'));
   }
 
+  // Scoped to THIS reservation. `rawText` is the whole pasted document, which
+  // for a thread is every message in it — reading the phone or the payment
+  // wording from there attributes another booking's details to this one.
+  const blockText = all.join('\n');
+
   const paymentRaw = labelValue(all, /^payment|payment (?:type|model|method)/);
-  const payment = paymentRaw ? paymentRaw.trim().toUpperCase().slice(0, 40) : /\bprepaid\b/.test(fold(rawText)) ? 'PREPAID' : null;
+  // Card rows are explicitly not the payment type ("Card Type" / "LOẠI THẺ"),
+  // and a value must actually read as a word — a stray table separator "|" is
+  // not a payment method.
+  const usable =
+    paymentRaw !== null &&
+    /[a-z]{3}/i.test(removeDiacritics(paymentRaw)) &&
+    !/^(loai the|card type|card number|card holder name)$/.test(fold(paymentRaw));
+  const payment = usable
+    ? paymentRaw!.trim().toUpperCase().slice(0, 40)
+    : /\bprepaid\b|\btra truoc\b/.test(fold(blockText))
+      ? 'PREPAID'
+      : null;
 
   // The authoritative debt schedule: the TOTAL Net rate split evenly per night.
   // Agoda's own nightly rows are never used for this; they are only cross-checked.
@@ -1049,6 +1126,27 @@ export function parseAgodaPartnerBooking(rawText: string): AgodaPartnerBooking {
       ? allocateEvenly(netRate, stayDates.length).map((amount, i) => ({ stayDate: stayDates[i]!, amount }))
       : [];
   const nightlyRates = extractNightlyRates(all, roomQty);
+
+  // Consistency check, never a repair. When Agoda lists one row per stay night,
+  // those rows should add up to the Net rate. A mismatch is Agoda's own
+  // inconsistency: it is reported at INFO so an Admin can look, and NEITHER
+  // figure is adjusted — a silently "corrected" total would be pasted into the
+  // hotel PMS as though Agoda had stated it.
+  if (netRate != null && nights != null && nightlyRates.length === nights) {
+    const stated = nightlyRates.map((n) => n.amount);
+    if (stated.every((a): a is number => a != null)) {
+      const sum = stated.reduce((total, a) => total + a, 0);
+      if (sum !== netRate) {
+        warnings.push(
+          warn(
+            'AGODA_NIGHTLY_SUM_MISMATCH',
+            `Tổng giá từng đêm (${formatVndDots(sum)}) khác Net rate (${formatVndDots(netRate)}) — vui lòng kiểm tra.`,
+            'INFO',
+          ),
+        );
+      }
+    }
+  }
   if (nightlyDebt.length > 0 && nightlyRates.length > 0 && differsFromAgodaRows(nightlyDebt, nightlyRates)) {
     warnings.push(
       warn(
@@ -1086,10 +1184,15 @@ export function parseAgodaPartnerBooking(rawText: string): AgodaPartnerBooking {
     occupancy: table?.occupancy ?? labelValue(all, /^occupancy$|^suc chua$/),
     extraBeds: extraParsed,
     breakfastIncluded: AGODA_BREAKFAST_INCLUDED,
+    bookingStatus: readBookingStatus(all),
+    paymentType: payment,
+    websiteLanguage: labelValue(all, /^website language$/),
+    specialRequests: valueUnderLabelPrefix(all, /^special requests\b|^yeu cau dac biet\b/),
+    benefitsIncluded: valueUnderLabelPrefix(all, /^benefits included\b|^bao gom cac quyen loi\b/),
     payment,
     ratePlan: cleanRatePlan(labelValue(all, /^rate ?plan(?: name)?$/)),
     cancellationPolicy: labelValue(all, /^cancellation policy$/),
-    customerPhone: extractPhone(rawText),
+    customerPhone: extractPhone(blockText),
     customerNotes: guestRequestNote(labelValue(all, /^(customer notes?|special requests?|remarks?)$/)),
     nightlyRates,
     referenceSellRate,
@@ -1114,6 +1217,50 @@ export function parseAgodaPartnerBooking(rawText: string): AgodaPartnerBooking {
  * configuration change — not a parser change.
  */
 export const AGODA_BREAKFAST_INCLUDED = false;
+
+/**
+ * The booking's own status, read from the confirmation heading.
+ *
+ * The heading is part of the reservation, so this survives a forwarded,
+ * translated or missing subject line. An amended confirmation is still a
+ * confirmation and is parsed identically — the status is recorded, not acted on.
+ */
+function readBookingStatus(all: readonly string[]): 'CONFIRMED' | 'AMENDED' | 'CANCELLED' | null {
+  for (const line of all) {
+    const folded = fold(line);
+    if (/\bcancell?ed\b/.test(folded) && /booking|reservation/.test(folded)) return 'CANCELLED';
+    if (/amended booking confirmation|booking confirmation.*amended/.test(folded)) return 'AMENDED';
+    if (/\bamended\b/.test(folded) && /booking id/.test(folded)) return 'AMENDED';
+    if (/booking confirmation/.test(folded)) return 'CONFIRMED';
+    if (/\bconfirmed\b/.test(folded) && /booking id/.test(folded)) return 'CONFIRMED';
+  }
+  return null;
+}
+
+/**
+ * The value BELOW a label line, matched by prefix rather than whole cell.
+ *
+ * Agoda appends its own boilerplate to some labels — "Special Requests Yêu cầu
+ * đặc biệt ( All special requests are subject to availability… )" — so the cell
+ * is neither the label alone nor a bilingual pair. The label is therefore
+ * recognised by its opening words and the value taken from the next line that
+ * is not itself a label or a parenthetical aside.
+ */
+function valueUnderLabelPrefix(all: readonly string[], prefix: RegExp): string | null {
+  for (let i = 0; i < all.length; i++) {
+    const first = cells(all[i]!)[0];
+    if (!first || !prefix.test(fold(first))) continue;
+    for (let j = i + 1; j < all.length && j <= i + 3; j++) {
+      const text = all[j]!.trim();
+      if (text.length === 0) continue;
+      if (/^\(.*\)$/.test(text)) continue;
+      const value = cells(text)[0];
+      if (!value || isKnownLabel(value)) break;
+      return text.replace(/\s{2,}/g, ' ').trim();
+    }
+  }
+  return null;
+}
 
 /** "Non-Refundable ()" → "Non-Refundable". */
 function cleanRatePlan(raw: string | null): string | null {
@@ -1338,11 +1485,37 @@ function extractPhone(rawText: string): string | null {
  * the id is deliberately ignored — it is never read, stored, shown or tested.
  */
 function extractHotelName(all: string[]): string | null {
+  // Agoda always prints the property name IMMEDIATELY ABOVE "(Property ID …)",
+  // and that pairing is what identifies it. Taking the first hotel-looking line
+  // instead picked up a neighbouring row when a reservations LIST preceded the
+  // booking — naming the wrong property, and so resolving the wrong branch.
+  const anchored = hotelAbovePropertyId(all);
+  if (anchored) return clean(anchored);
+
   const labelled = labelValue(all, /property name|hotel name/);
   const candidate = labelled ?? all.find((l) => /^kas\b/i.test(l.trim())) ?? null;
-  if (!candidate) return null;
+  return candidate ? clean(candidate) : null;
+}
+
+/** The non-empty line directly above "(Property ID …)", if there is one. */
+function hotelAbovePropertyId(all: readonly string[]): string | null {
+  for (let i = 0; i < all.length; i++) {
+    if (!/\(\s*property\s*id\b/i.test(all[i]!)) continue;
+    for (let j = i - 1; j >= 0 && j >= i - 3; j--) {
+      const text = all[j]!.trim();
+      if (text.length === 0) continue;
+      const first = cells(text)[0];
+      if (!first || isKnownLabel(first)) break;
+      return text;
+    }
+  }
+  return null;
+}
+
+/** Strips any "(Property ID …)" fragment and collapses whitespace. */
+function clean(candidate: string): string | null {
   const cleaned = candidate
-    .replace(/\(\s*property\s*id[^)]*\)/gi, ' ') // drop "(Property ID 245858)"
+    .replace(/\(\s*property\s*id[^)]*\)/gi, ' ')
     .replace(/\bproperty\s*id\b\s*:?\s*\d+/gi, ' ')
     .replace(/\s{2,}/g, ' ')
     .trim();
