@@ -7,6 +7,7 @@ import { createAdminRoomMappingRouter } from './adminRoomMapping';
 import { createBookingGuestsRouter } from './bookingGuests';
 import { createAdminUsersRouter } from './adminUsers';
 import { createBookingsRouter } from './bookings';
+import { createBookingLifecycleRouter } from './bookingLifecycle';
 import { createAdminBookingsRouter } from './adminBookings';
 import { createOtaReviewRouter } from './otaReview';
 import { createAdminDashboardRouter } from './adminDashboard';
@@ -33,8 +34,10 @@ export function createApiRouter(): Router {
   router.use(createAdminBookingsRouter());
   router.use(createOtaReviewRouter());
   router.use(createAdminDashboardRouter());
-  // Guest routes are more specific than /bookings/:id, so they mount first.
+  // Guest and lifecycle routes are more specific than /bookings/:id, so they
+  // mount first — otherwise /bookings/:id would swallow /bookings/:id/receive.
   router.use(createBookingGuestsRouter());
+  router.use(createBookingLifecycleRouter());
   router.use(createBookingsRouter());
   router.use(createNotificationsRouter());
   router.use(createIssuesRouter());

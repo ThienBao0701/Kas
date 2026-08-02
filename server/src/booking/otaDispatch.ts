@@ -40,6 +40,23 @@ export interface OtaDispatchResult {
   review: OtaReview;
 }
 
+/**
+ * Every state a booking that HAS been dispatched can hold.
+ *
+ * DRAFT and READY are deliberately absent: those are Booking.com's pre-send
+ * states, and a reservation sitting in one has not reached a branch.
+ */
+const DISPATCHED_STATES = [
+  'NEW',
+  'RECEIVED',
+  'CHECKED_IN',
+  'CHECKED_OUT',
+  'COMPLETED',
+  'CANCELLED',
+  'NO_SHOW',
+  'ARCHIVED',
+] as const;
+
 /** ISO "YYYY-MM-DD" to a UTC midnight Date, matching the rest of the store. */
 function isoToUtcDate(iso: string): Date {
   return new Date(`${iso}T00:00:00.000Z`);
@@ -87,11 +104,17 @@ export async function dispatchOtaReview(
   const sourcePlatform = review.source === 'AGODA' ? 'AGODA' : 'CTRIP';
 
   // Already dispatched? Return it. Never a second booking for one reservation.
+  //
+  // The list is every state a DISPATCHED booking can be in, including the
+  // operational ones. Naming only NEW/COMPLETED/ARCHIVED would have meant that
+  // the moment reception acknowledged a booking it stopped counting as
+  // dispatched — and a re-send would have created a duplicate for a reservation
+  // the branch was already working on.
   const existing = await client.booking.findFirst({
     where: {
       bookingCode: review.bookingCode,
       sourcePlatform,
-      status: { in: ['NEW', 'COMPLETED', 'ARCHIVED'] },
+      status: { in: [...DISPATCHED_STATES] },
     },
     select: { id: true },
   });

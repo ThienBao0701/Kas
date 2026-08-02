@@ -49,12 +49,31 @@ enum UserRole {
   RECEPTIONIST
 }
 
+/// The booking lifecycle.
+///
+/// The first five members are the ORIGINAL Booking.com machine and keep their
+/// exact meanings — NEW has always meant "dispatched, awaiting the branch", not
+/// "newly created". Renaming or re-ordering them would silently change what
+/// every existing query, dashboard and notification means, so nothing here is
+/// redefined; the operational states are appended instead.
+///
+/// Booking.com:  DRAFT -> READY -> NEW -> COMPLETED -> ARCHIVED
+/// Operational:  NEW -> RECEIVED -> CHECKED_IN -> CHECKED_OUT -> COMPLETED
+///
+/// A Booking.com booking never enters the appended states, so its behaviour is
+/// unchanged. Proof approval stays an INDEPENDENT workflow: it may complete a
+/// booking on its own and never defines these states.
 enum BookingStatus {
   DRAFT
   READY
   NEW
   COMPLETED
   ARCHIVED
+  RECEIVED
+  CHECKED_IN
+  CHECKED_OUT
+  CANCELLED
+  NO_SHOW
 }
 
 enum PaymentStatus {
@@ -330,6 +349,10 @@ model User {
   branch                Branch?                    @relation(fields: [branchId], references: [id])
   bookingsSent          Booking[]                  @relation("BookingSentBy")
   bookingsCompleted     Booking[]                  @relation("BookingCompletedBy")
+  bookingsReceived      Booking[]                  @relation("BookingReceivedBy")
+  bookingsCheckedIn     Booking[]                  @relation("BookingCheckedInBy")
+  bookingsCheckedOut    Booking[]                  @relation("BookingCheckedOutBy")
+  bookingsCancelled     Booking[]                  @relation("BookingCancelledBy")
   bookingsReviewed      Booking[]                  @relation("BookingReviewedBy")
   bookingsCreated       Booking[]                  @relation("BookingCreatedBy")
   proofsSubmitted       BookingCreationProof[]     @relation("ProofSubmittedBy")
@@ -825,6 +848,22 @@ model Booking {
   completedByUserId Int?
   completionNote    String?
 
+  /// ── OPERATIONAL TIMESTAMPS ────────────────────────────────────────────
+  /// What ACTUALLY happened, recorded by the receptionist. Deliberately kept
+  /// apart from `checkInDate` / `checkOutDate`, which are the dates the OTA
+  /// reservation EXPECTS. Overloading those would destroy the distinction
+  /// between "the reservation says the guest arrives today" and "the guest
+  /// arrived", and with it any hope of measuring no-shows or late arrivals.
+  receivedAt         DateTime?
+  receivedByUserId   Int?
+  actualCheckInAt    DateTime?
+  checkedInByUserId  Int?
+  actualCheckOutAt   DateTime?
+  checkedOutByUserId Int?
+  cancelledAt        DateTime?
+  cancelledByUserId  Int?
+  cancellationReason String?
+
   /// Proof-of-creation review state. NOT_SUBMITTED until a receptionist submits.
   verificationStatus VerificationStatus @default(NOT_SUBMITTED)
   /// The Admin who approved/rejected the current proof, and when.
@@ -852,6 +891,10 @@ model Booking {
   branch           Branch?                  @relation(fields: [branchId], references: [id])
   sentBy           User?                    @relation("BookingSentBy", fields: [sentByUserId], references: [id])
   completedBy      User?                    @relation("BookingCompletedBy", fields: [completedByUserId], references: [id])
+  receivedBy       User?                    @relation("BookingReceivedBy", fields: [receivedByUserId], references: [id])
+  checkedInBy      User?                    @relation("BookingCheckedInBy", fields: [checkedInByUserId], references: [id])
+  checkedOutBy     User?                    @relation("BookingCheckedOutBy", fields: [checkedOutByUserId], references: [id])
+  cancelledBy      User?                    @relation("BookingCancelledBy", fields: [cancelledByUserId], references: [id])
   reviewedBy       User?                    @relation("BookingReviewedBy", fields: [reviewedByUserId], references: [id])
   createdBy        User?                    @relation("BookingCreatedBy", fields: [createdByUserId], references: [id])
   rooms            BookingRoom[]
