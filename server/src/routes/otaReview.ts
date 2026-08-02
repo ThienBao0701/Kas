@@ -19,6 +19,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth, requireAdmin, requirePasswordChanged } from '../middleware/auth';
 import { buildOtaReviewFromText } from '../booking/otaReviewService';
+import { dispatchOtaReview } from '../booking/otaDispatch';
 
 /**
  * A room line as the browser sends it back.
@@ -78,6 +79,30 @@ export function createOtaReviewRouter(): Router {
     (async () => {
       const input = reviewSchema.parse(req.body ?? {});
       res.json(await buildOtaReviewFromText(input));
+    })().catch(next);
+  });
+
+  /**
+   * POST /api/admin/ota/dispatch — persist the reviewed reservation.
+   *
+   * Takes the same body as the review, deliberately: the server rebuilds the
+   * review from the pasted text and the Admin's corrections and dispatches THAT
+   * — a client cannot submit a booking the review screen would have blocked.
+   *
+   * Idempotent by (booking code, platform), so a double click, a retry or a
+   * resubmitted form returns the booking already dispatched rather than
+   * creating a second one. 200 for an existing booking, 201 for a new one.
+   */
+  router.post('/admin/ota/dispatch', (req, res, next) => {
+    (async () => {
+      const input = reviewSchema.parse(req.body ?? {});
+      const actor = req.currentUser!;
+      const result = await dispatchOtaReview(input, { id: actor.id, fullName: actor.fullName });
+      res.status(result.created ? 201 : 200).json({
+        bookingId: result.bookingId,
+        created: result.created,
+        review: result.review,
+      });
     })().catch(next);
   });
 

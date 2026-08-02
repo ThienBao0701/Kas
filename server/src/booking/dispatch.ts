@@ -183,22 +183,53 @@ async function createSendNotifications(
   booking: BookingDetail,
   lastMinute: boolean,
 ): Promise<void> {
+  await createBranchNotifications(tx, {
+    bookingId,
+    branchId,
+    customerName: booking.customerName,
+    checkInDate: booking.checkInDate,
+    lastMinute,
+  });
+}
+
+/**
+ * Tells a branch's receptionists that a booking has arrived.
+ *
+ * Extracted verbatim from the Booking.com send path so the OTA dispatch raises
+ * exactly the same notification — same wording, same recipients, same
+ * last-minute emphasis. Taking a plain value object rather than a full
+ * `BookingDetail` is what lets a freshly-created OTA booking use it inside the
+ * same transaction, before any detail view exists to load.
+ */
+export async function createBranchNotifications(
+  tx: Prisma.TransactionClient,
+  input: {
+    bookingId: string;
+    branchId: number;
+    customerName: string;
+    checkInDate: Date | null;
+    lastMinute: boolean;
+  },
+): Promise<void> {
   const receptionists = await tx.user.findMany({
-    where: { role: 'RECEPTIONIST', branchId, active: true },
+    where: { role: 'RECEPTIONIST', branchId: input.branchId, active: true },
     select: { id: true },
   });
   if (receptionists.length === 0) return;
 
-  const branch = await tx.branch.findUnique({ where: { id: branchId }, select: { hotelName: true } });
+  const branch = await tx.branch.findUnique({
+    where: { id: input.branchId },
+    select: { hotelName: true },
+  });
   const branchName = branch?.hotelName ?? '';
-  const customer = booking.customerName.length > 0 ? booking.customerName : 'Khách';
-  const title = lastMinute ? 'ĐƠN LAST MINUTE' : 'Có đơn mới';
-  const body = lastMinute
+  const customer = input.customerName.length > 0 ? input.customerName : 'Khách';
+  const title = input.lastMinute ? 'ĐƠN LAST MINUTE' : 'Có đơn mới';
+  const body = input.lastMinute
     ? `${customer} nhận phòng hôm nay\n${branchName}\nVui lòng ưu tiên xử lý`
-    : `${customer} – nhận phòng ${isoDate(booking.checkInDate)}\n${branchName}`;
+    : `${customer} – nhận phòng ${isoDate(input.checkInDate)}\n${branchName}`;
 
   await tx.notification.createMany({
-    data: receptionists.map((r) => ({ userId: r.id, bookingId, title, body })),
+    data: receptionists.map((r) => ({ userId: r.id, bookingId: input.bookingId, title, body })),
   });
 }
 
