@@ -36,12 +36,24 @@ describe('GET /api/admin/dashboard/summary', () => {
     await createDraftBooking({ status: 'NEW', branchId: branch1, bookingCode: 'W111111111', sentAt: '2026-07-15T02:00:00.000Z' });
     // Waiting AND last-minute (check-in today), sent today.
     await createDraftBooking({ status: 'NEW', branchId: branch2, bookingCode: 'LM22222222', checkIn: '2026-07-15', checkOut: '2026-07-17', sentAt: '2026-07-15T02:00:00.000Z' });
-    // Confirmed today.
-    await createDraftBooking({ status: 'COMPLETED', branchId: branch1, bookingCode: 'C333333333', sentAt: '2026-07-15T02:00:00.000Z', completedAt: '2026-07-15T03:00:00.000Z' });
+    // Confirmed today: an APPROVED PROOF, reviewed today. "Confirmed" has
+    // always meant the branch entered the reservation and an Admin verified it.
+    // Since the booking and proof lifecycles were separated that is no longer
+    // the same event as COMPLETED, which now means the guest's stay has ended.
+    const confirmed = await createDraftBooking({ status: 'NEW', branchId: branch1, bookingCode: 'C333333333', sentAt: '2026-07-15T02:00:00.000Z' });
+    await testPrisma.booking.update({
+      where: { id: confirmed.id },
+      data: { verificationStatus: 'APPROVED', reviewedAt: new Date('2026-07-15T03:00:00.000Z') },
+    });
+    // A COMPLETED stay is deliberately NOT counted as confirmed: no proof was
+    // ever approved for it.
+    await createDraftBooking({ status: 'COMPLETED', branchId: branch1, bookingCode: 'D444444444', sentAt: '2026-07-15T02:00:00.000Z', completedAt: '2026-07-15T03:00:00.000Z' });
 
     const res = await adminAgent.get('/api/admin/dashboard/summary');
     expect(res.status).toBe(200);
-    expect(res.body.totals).toEqual({ waiting: 2, confirmedToday: 1, lastMinute: 1, sentToday: 3 });
+    // waiting counts bookings at NEW that are NOT yet approved, so the
+    // confirmed one has left that queue. sentToday counts all four.
+    expect(res.body.totals).toEqual({ waiting: 2, confirmedToday: 1, lastMinute: 1, sentToday: 4 });
 
     const b1 = res.body.branches.find((x: { branch: { id: number } }) => x.branch.id === branch1);
     const b2 = res.body.branches.find((x: { branch: { id: number } }) => x.branch.id === branch2);

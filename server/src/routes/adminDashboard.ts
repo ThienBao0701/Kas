@@ -37,7 +37,23 @@ export function createAdminDashboardRouter(): Router {
   router.get('/admin/dashboard/summary', (_req, res, next) => {
     (async () => {
       const { start, end, checkInToday } = hcmDayRange(getClock().now());
-      const completedToday = { status: 'COMPLETED' as const, completedAt: { gte: start, lt: end } };
+      // "Confirmed today" counts PROOF APPROVALS, which is what it has always
+      // meant to an operator: the branch entered the reservation and an Admin
+      // verified it. It is deliberately NOT `status: COMPLETED` — since the two
+      // lifecycles were separated, COMPLETED means the guest's stay has ended,
+      // which is a different event that happens days later. Reading the status
+      // here would have shown zero all day and then a spike at check-out.
+      const confirmedToday = {
+        verificationStatus: 'APPROVED' as const,
+        reviewedAt: { gte: start, lt: end },
+      };
+      // Still waiting on the BRANCH to create the reservation. An approved
+      // booking is no longer waiting for that — it is waiting to be received,
+      // which is reception's operational queue, not this counter.
+      const awaitingCreation = {
+        status: 'NEW' as const,
+        verificationStatus: { not: 'APPROVED' as const },
+      };
       const lastMinute = { status: 'NEW' as const, checkInDate: checkInToday };
 
       const [
@@ -51,11 +67,11 @@ export function createAdminDashboardRouter(): Router {
         lastMinuteTotal,
       ] = await Promise.all([
         prisma.branch.findMany({ where: { active: true }, orderBy: { id: 'asc' } }),
-        prisma.booking.groupBy({ by: ['branchId'], where: { status: 'NEW' }, _count: { _all: true }, orderBy: { branchId: 'asc' } }),
-        prisma.booking.groupBy({ by: ['branchId'], where: completedToday, _count: { _all: true }, orderBy: { branchId: 'asc' } }),
+        prisma.booking.groupBy({ by: ['branchId'], where: awaitingCreation, _count: { _all: true }, orderBy: { branchId: 'asc' } }),
+        prisma.booking.groupBy({ by: ['branchId'], where: confirmedToday, _count: { _all: true }, orderBy: { branchId: 'asc' } }),
         prisma.booking.groupBy({ by: ['branchId'], where: lastMinute, _count: { _all: true }, orderBy: { branchId: 'asc' } }),
-        prisma.booking.count({ where: { status: 'NEW' } }),
-        prisma.booking.count({ where: completedToday }),
+        prisma.booking.count({ where: awaitingCreation }),
+        prisma.booking.count({ where: confirmedToday }),
         prisma.booking.count({ where: { sentAt: { gte: start, lt: end } } }),
         prisma.booking.count({ where: lastMinute }),
       ]);

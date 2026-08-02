@@ -205,20 +205,36 @@ export function createBookingsRouter(): Router {
   /**
    * Shared handler for the three "still operationally NEW" verification lists,
    * distinguished only by verificationStatus:
-   *   NOT_SUBMITTED  -> "Đơn mới" / "Chờ chi nhánh tạo"
-   *   PENDING_REVIEW -> "Chờ Admin kiểm tra" / "Chờ kiểm tra"
-   *   REJECTED       -> "Cần tạo lại"
+   *   NOT_SUBMITTED + APPROVED -> "Đơn mới" / "Chờ chi nhánh tạo"
+   *   PENDING_REVIEW           -> "Chờ Admin kiểm tra" / "Chờ kiểm tra"
+   *   REJECTED                 -> "Cần tạo lại"
+   *
+   * WHY APPROVED SITS IN THE FIRST LIST:
+   * proof approval no longer completes a booking — the two lifecycles are
+   * independent — so an approved booking stays at NEW until reception receives
+   * it. Filtering on a single verificationStatus meant APPROVED matched none of
+   * the three lists and the booking was not in "completed" either: it vanished
+   * from every reception screen while still needing to be received and checked
+   * in. Both NOT_SUBMITTED and APPROVED mean the same thing to a receptionist —
+   * nothing is pending from an Admin, the branch must act — so they share a
+   * list. A booking is therefore visible on some reception screen at every
+   * point in its life.
    * Branch isolation is enforced through branchScope, so a receptionist can never
    * widen the list to another branch via the query string.
    */
-  function newStageList(verificationStatus: 'NOT_SUBMITTED' | 'PENDING_REVIEW' | 'REJECTED') {
+  function newStageList(
+    verificationStatuses: readonly ('NOT_SUBMITTED' | 'PENDING_REVIEW' | 'REJECTED' | 'APPROVED')[],
+  ) {
     return (req: Request, res: Response, next: NextFunction) => {
       (async () => {
         const user = req.currentUser!;
         const query = newListQuery.parse(req.query);
         const branchId = branchScope(user, query.branchId);
 
-        const where: Prisma.BookingWhereInput = { status: 'NEW', verificationStatus };
+        const where: Prisma.BookingWhereInput = {
+          status: 'NEW',
+          verificationStatus: { in: [...verificationStatuses] },
+        };
         if (branchId !== undefined) where.branchId = branchId;
 
         const { skip, take } = paginate(query.page, query.pageSize);
@@ -238,12 +254,13 @@ export function createBookingsRouter(): Router {
     };
   }
 
-  // GET /api/bookings/new — dispatched work still awaiting external creation.
-  router.get('/bookings/new', requireAuth, requirePasswordChanged, newStageList('NOT_SUBMITTED'));
+  // GET /api/bookings/new — dispatched work the BRANCH must act on: no proof
+  // submitted yet, or a proof already approved and the stay still to be run.
+  router.get('/bookings/new', requireAuth, requirePasswordChanged, newStageList(['NOT_SUBMITTED', 'APPROVED']));
   // GET /api/bookings/pending-review — proof submitted, awaiting admin verdict.
-  router.get('/bookings/pending-review', requireAuth, requirePasswordChanged, newStageList('PENDING_REVIEW'));
+  router.get('/bookings/pending-review', requireAuth, requirePasswordChanged, newStageList(['PENDING_REVIEW']));
   // GET /api/bookings/rejected — proof rejected, needs recreation ("Cần tạo lại").
-  router.get('/bookings/rejected', requireAuth, requirePasswordChanged, newStageList('REJECTED'));
+  router.get('/bookings/rejected', requireAuth, requirePasswordChanged, newStageList(['REJECTED']));
 
   // GET /api/bookings/completed — the "Đã hoàn thành" list.
   router.get('/bookings/completed', requireAuth, requirePasswordChanged, (req, res, next) => {
