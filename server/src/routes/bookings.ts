@@ -65,19 +65,57 @@ const paginationSchema = {
 const newListQuery = z.object({ branchId: z.coerce.number().int().positive().optional(), ...paginationSchema });
 const completedListQuery = z.object({ branchId: z.coerce.number().int().positive().optional(), ...paginationSchema });
 
+const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+
+/**
+ * The history query, extended into the operational search.
+ *
+ * Every addition is OPTIONAL and additive: an existing caller that sends none
+ * of the new parameters gets exactly the results it did before. The one
+ * behavioural change is that `search` is now case-insensitive — see the handler.
+ *
+ * `status` accepts the operational states as well as the original five. Without
+ * them a dispatched OTA booking could never be filtered to "checked in", which
+ * is the state an operator most often looks for.
+ */
 const historyQuery = z.object({
   search: z.string().trim().min(1).max(100).optional(),
   branchId: z.coerce.number().int().positive().optional(),
-  status: z.enum(['DRAFT', 'READY', 'NEW', 'COMPLETED', 'ARCHIVED']).optional(),
+  status: z
+    .enum([
+      'DRAFT', 'READY', 'NEW', 'COMPLETED', 'ARCHIVED',
+      'RECEIVED', 'CHECKED_IN', 'CHECKED_OUT', 'CANCELLED', 'NO_SHOW',
+    ])
+    .optional(),
+  /** Which platform the reservation came from. */
+  source: z.enum(['BOOKING_COM', 'AGODA', 'CTRIP']).optional(),
+  verificationStatus: z
+    .enum(['NOT_SUBMITTED', 'PENDING_REVIEW', 'APPROVED', 'REJECTED'])
+    .optional(),
+  country: z.string().trim().min(1).max(100).optional(),
+  language: z.string().trim().min(1).max(100).optional(),
   paymentStatus: z.enum(['PAY_BEFORE', 'PAY_AFTER']).optional(),
   isLastMinute: z.enum(['true', 'false']).optional(),
-  sentFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  sentTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  checkInFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  checkInTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  completedFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  completedTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  sort: z.enum(['sentAt', 'checkInDate', 'completedAt', 'createdAt']).optional(),
+  sentFrom: isoDay.optional(),
+  sentTo: isoDay.optional(),
+  checkInFrom: isoDay.optional(),
+  checkInTo: isoDay.optional(),
+  checkOutFrom: isoDay.optional(),
+  checkOutTo: isoDay.optional(),
+  createdFrom: isoDay.optional(),
+  createdTo: isoDay.optional(),
+  updatedFrom: isoDay.optional(),
+  updatedTo: isoDay.optional(),
+  completedFrom: isoDay.optional(),
+  completedTo: isoDay.optional(),
+  sort: z
+    .enum([
+      'sentAt', 'checkInDate', 'checkOutDate', 'completedAt', 'createdAt',
+      'updatedAt', 'customerName', 'totalAmount', 'status', 'sourcePlatform',
+    ])
+    .optional(),
+  /** Ascending is opt-in; every existing caller keeps newest-first. */
+  order: z.enum(['asc', 'desc']).optional(),
   ...paginationSchema,
 });
 
@@ -301,13 +339,28 @@ export function createBookingsRouter(): Router {
       if (user.role !== 'ADMIN') where.sentAt = { not: null };
 
       if (query.search) {
+        // Case-INSENSITIVE, deliberately. `contains` is case-sensitive on
+        // PostgreSQL, so searching "khuyen" found nothing for a guest stored as
+        // "Khuyen" — an operator typing a name from memory would conclude the
+        // booking did not exist. Widened at the same time from three fields to
+        // the ones people actually search by; the hotel name is included
+        // because a branch is often remembered by its hotel, not its code.
+        const term = { contains: query.search, mode: 'insensitive' as const };
         where.OR = [
-          { bookingCode: { contains: query.search } },
-          { customerName: { contains: query.search } },
-          { phone: { contains: query.search } },
+          { bookingCode: term },
+          { customerName: term },
+          { phone: term },
+          { hotelName: term },
+          { countryOfResidence: term },
+          { branch: { hotelName: term } },
+          { branch: { code: term } },
         ];
       }
       if (query.status) where.status = query.status;
+      if (query.source) where.sourcePlatform = query.source;
+      if (query.verificationStatus) where.verificationStatus = query.verificationStatus;
+      if (query.country) where.countryOfResidence = { contains: query.country, mode: 'insensitive' };
+      if (query.language) where.websiteLanguage = { contains: query.language, mode: 'insensitive' };
       if (query.paymentStatus) where.paymentStatus = query.paymentStatus;
       if (query.isLastMinute) where.isLastMinute = query.isLastMinute === 'true';
 
@@ -315,14 +368,22 @@ export function createBookingsRouter(): Router {
       if (sentAt) where.sentAt = { ...(where.sentAt as object), ...sentAt };
       const checkIn = rangeFilter(query.checkInFrom, query.checkInTo);
       if (checkIn) where.checkInDate = checkIn;
+      const checkOut = rangeFilter(query.checkOutFrom, query.checkOutTo);
+      if (checkOut) where.checkOutDate = checkOut;
+      const createdAt = rangeFilter(query.createdFrom, query.createdTo);
+      if (createdAt) where.createdAt = createdAt;
+      const updatedAt = rangeFilter(query.updatedFrom, query.updatedTo);
+      if (updatedAt) where.updatedAt = updatedAt;
       const completedAt = rangeFilter(query.completedFrom, query.completedTo);
       if (completedAt) where.completedAt = completedAt;
 
+      // Newest-first stays the default for every existing caller.
       const sortKey = query.sort ?? 'sentAt';
+      const direction = query.order ?? 'desc';
       const orderBy: Prisma.BookingOrderByWithRelationInput[] =
         sortKey === 'sentAt'
-          ? [{ sentAt: 'desc' }, { createdAt: 'desc' }]
-          : [{ [sortKey]: 'desc' }, { createdAt: 'desc' }];
+          ? [{ sentAt: direction }, { createdAt: 'desc' }]
+          : [{ [sortKey]: direction }, { createdAt: 'desc' }];
 
       const { skip, take } = paginate(query.page, query.pageSize);
       const [total, rows] = await prisma.$transaction([
