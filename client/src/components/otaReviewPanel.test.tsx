@@ -109,8 +109,15 @@ function mockReview(...sequence: OtaReviewResponse[]) {
   return { bodies, fetchMock };
 }
 
-const mount = (source: 'AGODA' | 'CTRIP' = 'CTRIP') =>
-  render(<OtaReviewPanel source={source} rawText="RAW" />);
+/**
+ * `onDispatch` is OPTIONAL and the dispatch page supplies none today, so the
+ * default mount reflects production: no dispatch handler is wired. Tests that
+ * exercise the send action pass one explicitly.
+ */
+const mount = (
+  source: 'AGODA' | 'CTRIP' = 'CTRIP',
+  onDispatch?: (branchId: number, note: string) => void,
+) => render(<OtaReviewPanel source={source} rawText="RAW" onDispatch={onDispatch} />);
 
 /* ================================================================== */
 /* Rendering what the server said                                      */
@@ -185,9 +192,8 @@ describe('unresolved room mapping', () => {
     await userEvent.selectOptions(screen.getByLabelText('Mã nội bộ dòng 1'), 'STAN');
 
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: /Gửi chi nhánh/ })).toBeEnabled(),
+      expect(screen.getByTestId('ota-note')).toHaveTextContent('1STAN_7DEM'),
     );
-    expect(screen.getByTestId('ota-note')).toHaveTextContent('1STAN_7DEM');
 
     // The correction really was sent to the server.
     const last = bodies[bodies.length - 1] as { overrides?: { rooms?: { pmsCode: string }[] } };
@@ -529,12 +535,39 @@ describe('copy note', () => {
 /* ================================================================== */
 
 describe('dispatch', () => {
-  it('is enabled only when the server says canDispatch', async () => {
+  it('is enabled only when the server says canDispatch AND a handler is wired', async () => {
     mockReview(RESOLVED);
-    mount();
+    mount('CTRIP', () => {});
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /Gửi chi nhánh/ })).toBeEnabled(),
     );
+  });
+
+  it('stays disabled when no dispatch handler is wired', async () => {
+    // The button was enabled on every valid booking while calling an undefined
+    // handler: pressing it did nothing, silently, and looked like success.
+    // Until an OTA dispatch path exists the action must not be offered.
+    mockReview(RESOLVED);
+    mount();
+
+    await screen.findByTestId('ota-review');
+    const send = screen.getByRole('button', { name: /Gửi chi nhánh/ });
+    expect(send).toBeDisabled();
+    // Copying the note remains the supported way to hand the booking over.
+    expect(screen.getByRole('button', { name: /Sao chép note/ })).toBeEnabled();
+  });
+
+  it('passes the branch and the server note verbatim to the handler', async () => {
+    const calls: [number, string][] = [];
+    mockReview(RESOLVED);
+    mount('CTRIP', (branchId, note) => calls.push([branchId, note]));
+
+    await screen.findByTestId('ota-review');
+    await userEvent.click(screen.getByRole('button', { name: /Gửi chi nhánh/ }));
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]![0]).toBe(RESOLVED.review.branchId);
+    expect(calls[0]![1]).toBe(RESOLVED.review.note);
   });
 
   it('requires a branch and says so when recognition failed', async () => {

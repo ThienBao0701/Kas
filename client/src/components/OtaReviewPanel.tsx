@@ -475,13 +475,25 @@ export function OtaReviewPanel({ source, rawText, onDispatch, onBack }: OtaRevie
         {onBack ? (
           <Button variant="secondary" onClick={onBack}>Đơn khác</Button>
         ) : null}
+        {/*
+          Disabled when no handler is wired, not only when the review is
+          incomplete.
+
+          `onDispatch` is optional and the dispatch page does not supply one, so
+          this button was enabled on every valid booking and did nothing at all
+          when pressed. An Admin would reasonably read that as "sent" and move
+          on, while nothing had been recorded anywhere — the worst kind of
+          silent loss, because it looks like success. Until an OTA dispatch path
+          exists the action is not offered; the note is copied instead.
+        */}
         <Button
           onClick={() => {
-            if (review.canDispatch && review.branchId && review.note) {
-              onDispatch?.(review.branchId, review.note);
+            if (onDispatch && review.canDispatch && review.branchId && review.note) {
+              onDispatch(review.branchId, review.note);
             }
           }}
-          disabled={!review.canDispatch}
+          disabled={!review.canDispatch || !onDispatch}
+          title={onDispatch ? undefined : 'Chưa có luồng gửi cho Agoda/CTrip — vui lòng sao chép ghi chú.'}
         >
           <Send className="h-4 w-4" aria-hidden="true" />
           Gửi chi nhánh
