@@ -47,6 +47,14 @@ export interface OtaReviewResponse {
   validPmsCodes: string[];
   /** The branch's configured OTA room names, to help the Admin recognise one. */
   knownOtaRoomNames: { otaRoomName: string; pmsCode: string }[];
+  /**
+   * Set when this reservation has ALREADY been dispatched.
+   *
+   * The screen routes to the amendment comparison instead of offering dispatch
+   * again: re-sending would return the existing booking untouched and the
+   * amended details would be silently discarded.
+   */
+  existingBookingId: string | null;
 }
 
 /** The PMS codes a branch's ACTIVE room-class catalogue defines. */
@@ -151,12 +159,22 @@ export async function buildOtaReviewFromText(
     select: { id: true, code: true, branchNumber: true, address: true, hotelName: true },
   });
 
+  // Has this reservation already been sent? The screen needs to know before it
+  // offers a dispatch button that would quietly discard the amended details.
+  const existing = review.bookingCode
+    ? await client.booking.findFirst({
+        where: { bookingCode: review.bookingCode, sourcePlatform: platform },
+        select: { id: true },
+      })
+    : null;
+
   return {
     review,
     branchOptions,
     validPmsCodes: branch?.validPmsCodes.slice() ?? [],
     knownOtaRoomNames:
       branch?.mappings.map((m) => ({ otaRoomName: m.otaRoomName, pmsCode: m.pmsCode })) ?? [],
+    existingBookingId: existing?.id ?? null,
   };
 }
 

@@ -87,7 +87,12 @@ export function AmendmentReviewPanel({
     setApplying(true);
     setError(null);
     try {
-      const applied = await otaReviewApi.applyAmendment(source, rawText, fields);
+      const applied = await otaReviewApi.applyAmendment(
+        source,
+        rawText,
+        fields,
+        preview.expectedVersion,
+      );
       setResult(applied);
       onApplied?.(applied);
     } catch (err) {

@@ -269,3 +269,59 @@ describe('Booking.com is unreachable from this path', () => {
     expect(res.status).toBe(422);
   });
 });
+
+/* ================================================================== */
+/* Two tabs cannot both apply the same amendment                       */
+/* ================================================================== */
+describe('concurrent applies', () => {
+  it('lets exactly one of two simultaneous applies succeed', async () => {
+    const id = await dispatchOne();
+    // Both tabs opened the same comparison and hold the same version token.
+    const a = await preview(AMENDED);
+    const b = await preview(AMENDED);
+    expect(a.body.expectedVersion).toBe(b.body.expectedVersion);
+
+    const [first, second] = await Promise.all([
+      apply({ ...AMENDED, expectedVersion: a.body.expectedVersion }),
+      apply({ ...AMENDED, expectedVersion: b.body.expectedVersion }),
+    ]);
+
+    const codes = [first.status, second.status].sort();
+    expect(codes).toEqual([200, 409]);
+
+    // One amendment, one set of corrections — not two.
+    const corrections = await testPrisma.bookingCorrection.findMany({
+      where: { bookingId: id, field: 'checkOut' },
+    });
+    expect(corrections).toHaveLength(1);
+  });
+
+  it('refuses an apply built on a stale comparison', async () => {
+    const id = await dispatchOne();
+    const stale = await preview(AMENDED);
+
+    // Someone else changes the booking in between.
+    await apply(AMENDED);
+
+    const res = await apply({ ...AMENDED, expectedVersion: stale.body.expectedVersion });
+    expect(res.status).toBe(409);
+
+    const corrections = await testPrisma.bookingCorrection.findMany({
+      where: { bookingId: id, field: 'checkOut' },
+    });
+    expect(corrections).toHaveLength(1);
+  });
+
+  it('advances the version even when only a status change is applied', async () => {
+    await dispatchOne();
+    const before = await preview(AMENDED);
+
+    await apply({ ...AMENDED, acceptedFields: ['otaBookingStatus'] });
+
+    const after = await preview(AMENDED);
+    // A status-only amendment writes no business column, but the token must
+    // still move — otherwise the guard could be bypassed by choosing fields
+    // that happen to touch nothing.
+    expect(after.body.expectedVersion).not.toBe(before.body.expectedVersion);
+  });
+});

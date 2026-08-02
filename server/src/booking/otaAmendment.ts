@@ -55,6 +55,14 @@ export interface AmendmentPreview {
   otaCancelled: boolean;
   /** The booking's current operational status, for context on the screen. */
   currentStatus: string;
+  /**
+   * Optimistic-concurrency token: the booking row as this comparison saw it.
+   *
+   * Sent back with the apply so a SECOND tab, comparing the same mail against
+   * the same booking, loses. Without it both tabs would compute an identical
+   * diff and both write it, doubling the corrections for one amendment.
+   */
+  expectedVersion: string;
 }
 
 /** The fields an amendment may change, with the labels the screen shows. */
@@ -81,6 +89,7 @@ interface StoredBooking {
   totalAmount: number | null;
   branchId: number | null;
   otaBookingStatus: string | null;
+  updatedAt: Date;
   rooms: { roomIndex: number; roomType: string | null }[];
 }
 
@@ -109,6 +118,7 @@ async function findDispatched(
       totalAmount: true,
       branchId: true,
       otaBookingStatus: true,
+      updatedAt: true,
       rooms: { select: { roomIndex: true, roomType: true }, orderBy: { roomIndex: 'asc' } },
     },
   });
@@ -173,6 +183,7 @@ export async function buildAmendment(
     // parser matched a word is not a decision this code may make.
     otaCancelled: amendedStatus === 'CANCELLED',
     currentStatus: booking.status,
+    expectedVersion: booking.updatedAt.toISOString(),
   };
 }
 
@@ -182,6 +193,12 @@ export interface ApplyAmendmentInput extends OtaReviewRequest {
    * means the reviewer rejected every change, and nothing is written.
    */
   acceptedFields?: string[];
+  /**
+   * The version the reviewer was looking at. Omitted falls back to the version
+   * read during this call, which still protects two SIMULTANEOUS applies but
+   * not a stale tab; the screen always sends it.
+   */
+  expectedVersion?: string;
 }
 
 export interface AmendmentResult {
@@ -246,8 +263,29 @@ export async function applyAmendment(
       ? await recordRequestOrigin(tx as Prisma.TransactionClient, actor.origin, now)
       : null;
 
-    if (Object.keys(data).length > 0) {
-      await tx.booking.update({ where: { id: preview.bookingId }, data });
+    // Conditional on the row this comparison was computed FROM.
+    //
+    // Two tabs holding the same amendment produce an identical diff, and both
+    // would happily write it — doubling the corrections and applying the change
+    // twice. Guarding on the version the preview saw means the second one
+    // matches no row and is reported as a conflict.
+    //
+    // `updatedAt` is always advanced, even when no business field changed
+    // (a status-only amendment writes corrections but no column), so the token
+    // moves for every apply and the guard cannot be bypassed by choosing fields
+    // that happen to touch nothing.
+    const expected = input.expectedVersion
+      ? new Date(input.expectedVersion)
+      : new Date(preview.expectedVersion);
+    const touched = await tx.booking.updateMany({
+      where: { id: preview.bookingId, updatedAt: expected },
+      data: { ...data, updatedAt: now },
+    });
+    if (touched.count === 0) {
+      throw ApiError.conflict(
+        'Đơn vừa được cập nhật bởi người khác. Vui lòng tải lại nội dung sửa đổi.',
+        { bookingId: preview.bookingId },
+      );
     }
 
     // Room changes are recorded but NOT written back onto the room rows: a

@@ -37,6 +37,7 @@ function preview(over: Partial<AmendmentPreview> = {}): AmendmentPreview {
     changes: CHANGES,
     otaCancelled: false,
     currentStatus: 'NEW',
+    expectedVersion: '2026-08-02T00:00:00.000Z',
     ...over,
   };
 }

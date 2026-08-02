@@ -94,6 +94,8 @@ export interface OtaReviewResponse {
   /** Only these may be offered in the manual PMS-code selector. */
   validPmsCodes: string[];
   knownOtaRoomNames: { otaRoomName: string; pmsCode: string }[];
+  /** Set when this reservation was already dispatched — amend, do not re-send. */
+  existingBookingId: string | null;
 }
 
 /** The Admin's corrections. Only what changed needs sending. */
@@ -126,6 +128,8 @@ export interface AmendmentPreview {
   /** The platform says the reservation is cancelled. A warning, never an action. */
   otaCancelled: boolean;
   currentStatus: string;
+  /** Concurrency token; returned with the apply so a stale tab loses. */
+  expectedVersion: string;
 }
 
 export interface AmendmentResult {
@@ -169,6 +173,7 @@ export const otaReviewApi = {
     source: OtaReviewSource,
     rawText: string,
     acceptedFields: string[],
+    expectedVersion?: string,
     overrides?: OtaReviewOverrides,
   ) =>
     api.post<AmendmentResult>('/admin/ota/amendment/apply', {
@@ -176,5 +181,6 @@ export const otaReviewApi = {
       rawText,
       overrides,
       acceptedFields,
+      expectedVersion,
     }),
 };

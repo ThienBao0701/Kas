@@ -76,6 +76,7 @@ function response(over: Partial<OtaReviewResponse['review']> = {}, codes = CN5_C
     branchOptions: BRANCHES,
     validPmsCodes: codes,
     knownOtaRoomNames: [],
+    existingBookingId: null,
   };
 }
 
@@ -651,5 +652,97 @@ describe('dispatch', () => {
     expect(await screen.findByText(/Không nhận diện được chi nhánh/)).toBeInTheDocument();
     expect(screen.getByTestId('ota-blocking')).toHaveTextContent('Chưa chọn chi nhánh.');
     expect(screen.getByRole('button', { name: /Gửi chi nhánh/ })).toBeDisabled();
+  });
+});
+
+/* ================================================================== */
+/* An already-dispatched reservation amends, never re-dispatches       */
+/* ================================================================== */
+
+describe('routing to the amendment flow', () => {
+  /** The review says this reservation already exists as a booking. */
+  const EXISTING: OtaReviewResponse = { ...RESOLVED, existingBookingId: 'bk_existing' };
+
+  /** Mocks review → amendment, so the panel can route between them. */
+  function mockExisting(changes: { field: string; label: string; oldValue: string | null; newValue: string | null }[]) {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL) => {
+        const target = String(url);
+        calls.push(target);
+        if (target.includes('/ota/amendment')) {
+          return new Response(
+            JSON.stringify({
+              bookingId: 'bk_existing',
+              review: EXISTING.review,
+              changes,
+              otaCancelled: false,
+              currentStatus: 'NEW',
+              expectedVersion: '2026-08-02T00:00:00.000Z',
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        return new Response(JSON.stringify(EXISTING), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }),
+    );
+    return { calls };
+  }
+
+  it('shows the amendment comparison instead of the dispatch screen', async () => {
+    mockExisting([
+      { field: 'checkOut', label: 'Ngày trả phòng', oldValue: '2026-08-08', newValue: '2026-08-10' },
+    ]);
+    mount();
+
+    // The comparison, not the review form.
+    expect(await screen.findByTestId('amendment-review')).toBeInTheDocument();
+    expect(screen.queryByTestId('ota-review')).not.toBeInTheDocument();
+  });
+
+  it('never offers a dispatch button for an existing booking', async () => {
+    mockExisting([
+      { field: 'checkOut', label: 'Ngày trả phòng', oldValue: '2026-08-08', newValue: '2026-08-10' },
+    ]);
+    mount();
+
+    await screen.findByTestId('amendment-review');
+    // Re-sending would return the existing booking and discard the amendment.
+    expect(screen.queryByRole('button', { name: /Gửi chi nhánh/ })).not.toBeInTheDocument();
+  });
+
+  it('calls the amendment endpoint automatically', async () => {
+    const { calls } = mockExisting([]);
+    mount();
+
+    await screen.findByTestId('amendment-no-changes');
+    expect(calls.some((c) => c.includes('/ota/amendment'))).toBe(true);
+    // And never the dispatch endpoint.
+    expect(calls.some((c) => c.includes('/ota/dispatch'))).toBe(false);
+  });
+
+  it('says "no changes" and lets the reviewer close without writing', async () => {
+    const onBack = vi.fn();
+    const { calls } = mockExisting([]);
+    render(<OtaReviewPanel source="CTRIP" rawText="RAW" onBack={onBack} />);
+
+    expect(await screen.findByTestId('amendment-no-changes')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Huỷ' }));
+
+    expect(onBack).toHaveBeenCalledOnce();
+    expect(calls.some((c) => c.includes('/amendment/apply'))).toBe(false);
+  });
+
+  it('keeps the normal review for a reservation that does not exist yet', async () => {
+    mockReview(RESOLVED);
+    mount();
+
+    expect(await screen.findByTestId('ota-review')).toBeInTheDocument();
+    expect(screen.queryByTestId('amendment-review')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Gửi chi nhánh/ })).toBeInTheDocument();
   });
 });

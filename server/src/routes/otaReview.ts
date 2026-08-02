@@ -78,6 +78,7 @@ const reviewSchema = z.object({
  */
 const amendmentSchema = reviewSchema.extend({
   acceptedFields: z.array(z.string().trim().max(100)).max(50).optional(),
+  expectedVersion: z.string().trim().max(40).optional(),
 });
 
 export function createOtaReviewRouter(): Router {

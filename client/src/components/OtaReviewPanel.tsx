@@ -22,12 +22,14 @@ import {
   type OtaReviewResponse,
   type OtaReviewRoomLine,
   type OtaReviewSource,
+  type AmendmentResult,
 } from '../api/otaReview';
 import { toUserMessage } from '../api/errors';
 import { Card } from './Card';
 import { Button } from './Button';
 import { ErrorAlert } from './ErrorAlert';
 import { copyText } from '../lib/copy';
+import { AmendmentReviewPanel } from './AmendmentReviewPanel';
 
 const inputClass =
   'w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600';
@@ -47,10 +49,12 @@ export interface OtaReviewPanelProps {
   rawText: string;
   /** Called when the Admin dispatches a review the server marked valid. */
   onDispatch?: (branchId: number, note: string) => void;
+  /** Called after an amendment is applied to an already-dispatched booking. */
+  onAmended?: (result: AmendmentResult) => void;
   onBack?: () => void;
 }
 
-export function OtaReviewPanel({ source, rawText, onDispatch, onBack }: OtaReviewPanelProps) {
+export function OtaReviewPanel({ source, rawText, onDispatch, onAmended, onBack }: OtaReviewPanelProps) {
   const [overrides, setOverrides] = useState<OtaReviewOverrides>({});
   const [data, setData] = useState<OtaReviewResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -157,6 +161,25 @@ export function OtaReviewPanel({ source, rawText, onDispatch, onBack }: OtaRevie
     setCopyState(ok ? 'ok' : 'fail');
     window.setTimeout(() => setCopyState('idle'), 2500);
   };
+
+  /*
+    ALREADY DISPATCHED → AMEND, never dispatch again.
+
+    Re-sending returns the existing booking untouched, so the amended details
+    would be silently discarded and the branch would keep working from the
+    superseded ones. The comparison replaces the dispatch screen entirely for
+    these reservations; there is no path from here back to a send button.
+  */
+  if (data?.existingBookingId) {
+    return (
+      <AmendmentReviewPanel
+        source={source}
+        rawText={rawText}
+        onApplied={onAmended}
+        onCancel={onBack}
+      />
+    );
+  }
 
   if (!review) {
     return (
