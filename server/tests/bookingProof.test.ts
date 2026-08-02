@@ -142,15 +142,21 @@ describe('POST /api/bookings/:id/proofs/:proofId/approve', () => {
     return { bookingId: b.id, proofId: res.body.booking.proofs[0].id as string };
   }
 
-  it('lets an admin approve, completing the booking', async () => {
+  it('lets an admin approve the proof WITHOUT completing the booking', async () => {
+    // Proof state and booking state are independent. Approving a proof says the
+    // reservation was entered into the hotel system correctly; it says nothing
+    // about whether the guest's stay has finished. Completing the booking here
+    // would have marked a stay complete while the guest was still in the room,
+    // and skipped every operational state beneath it.
     const { bookingId, proofId } = await submit();
     const res = await adminAgent.post(`/api/bookings/${bookingId}/proofs/${proofId}/approve`).send({});
     expect(res.status).toBe(200);
-    expect(res.body.booking.status).toBe('COMPLETED');
     expect(res.body.booking.verificationStatus).toBe('APPROVED');
+    // The lifecycle is untouched: the booking is still awaiting its branch.
+    expect(res.body.booking.status).toBe('NEW');
 
     const history = await testPrisma.bookingStatusHistory.findMany({ where: { bookingId, newStatus: 'COMPLETED' } });
-    expect(history).toHaveLength(1);
+    expect(history).toHaveLength(0);
 
     // The submitting receptionist is notified of the approval.
     const notes = await testPrisma.notification.findMany({ where: { userId: ownReceptionistId, bookingId } });

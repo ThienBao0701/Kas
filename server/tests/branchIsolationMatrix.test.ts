@@ -260,7 +260,10 @@ describe('Admin operates across all branches', () => {
 
       const approved = await adminAgent.post(`/api/bookings/${bookingId}/proofs/${proof.id}/approve`);
       expect(approved.status).toBe(200);
-      expect(approved.body.booking.status).toBe('COMPLETED');
+      // Approval records the PROOF's outcome. The booking's lifecycle is
+      // independent and is not advanced by it.
+      expect(approved.body.booking.verificationStatus).toBe('APPROVED');
+      expect(approved.body.booking.status).toBe('NEW');
 
       // The audit trail is identical in shape for every branch.
       const events = await testPrisma.bookingAuditEvent.findMany({

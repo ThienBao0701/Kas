@@ -202,15 +202,21 @@ describe('end-to-end operational workflow', () => {
       `/api/bookings/${draft.id}/proofs/${proof.id}/approve`,
     );
     expect(approved.status).toBe(200);
-    expect(approved.body.booking.status).toBe('COMPLETED');
     expect(approved.body.booking.verificationStatus).toBe('APPROVED');
+    // Approving the proof confirms the reservation was entered correctly. It
+    // does NOT end the stay: the booking stays where the lifecycle left it, and
+    // reaches COMPLETED only after the guest has checked out.
+    expect(approved.body.booking.status).toBe('NEW');
 
     /* -------- 9. The trail is complete -------------------------------- */
     const statusHistory = await testPrisma.bookingStatusHistory.findMany({
       where: { bookingId: draft.id },
       orderBy: { changedAt: 'asc' },
     });
-    expect(statusHistory.map((h) => h.newStatus)).toEqual(['NEW', 'COMPLETED']);
+    // Dispatch is the only lifecycle transition this flow performs. Approving
+    // the proof adds no status row, because it changes no status — the
+    // operational transitions have their own coverage in bookingLifecycle.
+    expect(statusHistory.map((h) => h.newStatus)).toEqual(['NEW']);
 
     const auditActions = (
       await testPrisma.bookingAuditEvent.findMany({

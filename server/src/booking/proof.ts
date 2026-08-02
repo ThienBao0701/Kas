@@ -233,23 +233,23 @@ export async function approveProof(
     });
     if (updated.count === 0) throw ApiError.proofAlreadyReviewed('Ảnh này đã được duyệt trước đó.');
 
+    // PROOF STATE ONLY — the booking's LIFECYCLE is deliberately untouched.
+    //
+    // Approving a proof used to move the booking straight to COMPLETED. That
+    // conflated two independent things: whether the reservation was correctly
+    // entered into the hotel system, and whether the guest's stay has actually
+    // finished. A booking could be marked complete while the guest was still in
+    // the room, and the operational states below it were skipped entirely.
+    //
+    // `verificationStatus` is the proof's own outcome and is still recorded
+    // here. `status` now moves only through the operational lifecycle, reaching
+    // COMPLETED after CHECKED_OUT. See `booking/lifecycle.ts`.
     await tx.booking.update({
       where: { id: bookingId },
       data: {
-        status: 'COMPLETED',
         verificationStatus: 'APPROVED',
         reviewedByUserId: admin.id,
         reviewedAt: clock.now(),
-      },
-    });
-
-    await tx.bookingStatusHistory.create({
-      data: {
-        bookingId,
-        oldStatus: 'NEW',
-        newStatus: 'COMPLETED',
-        changedByUserId: admin.id,
-        note: `Duyệt ảnh (lần ${proof.attemptNumber})`,
       },
     });
 

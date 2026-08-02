@@ -269,6 +269,46 @@ describe('re-dispatch never duplicates a booking in progress', () => {
 });
 
 /* ================================================================== */
+/* Proof state and booking state are independent                       */
+/* ================================================================== */
+describe('the proof workflow never moves the booking lifecycle', () => {
+  it('reaches COMPLETED only after CHECKED_OUT', async () => {
+    const id = await dispatched();
+
+    // Approving a proof records the proof's outcome and nothing else, so the
+    // booking cannot be completed while the guest is still in the room.
+    await testPrisma.booking.update({
+      where: { id },
+      data: { verificationStatus: 'APPROVED' },
+    });
+    expect(await statusOf(id)).toBe('NEW');
+
+    // The only route to COMPLETED is the operational one.
+    expect((await act(id, 'complete')).status).toBe(409);
+    await act(id, 'receive');
+    expect((await act(id, 'complete')).status).toBe(409);
+    await act(id, 'check-in');
+    expect((await act(id, 'complete')).status).toBe(409);
+    await act(id, 'check-out');
+    expect((await act(id, 'complete')).status).toBe(200);
+    expect(await statusOf(id)).toBe('COMPLETED');
+  });
+
+  it('lets a verified booking still run its whole lifecycle', async () => {
+    const id = await dispatched();
+    await testPrisma.booking.update({ where: { id }, data: { verificationStatus: 'APPROVED' } });
+
+    for (const action of ['receive', 'check-in', 'check-out', 'complete']) {
+      expect((await act(id, action)).status, action).toBe(200);
+    }
+    const booking = await testPrisma.booking.findUniqueOrThrow({ where: { id } });
+    expect(booking.status).toBe('COMPLETED');
+    // Both facts are recorded, separately.
+    expect(booking.verificationStatus).toBe('APPROVED');
+  });
+});
+
+/* ================================================================== */
 /* Booking.com is unaffected                                           */
 /* ================================================================== */
 describe('Booking.com semantics are unchanged', () => {
