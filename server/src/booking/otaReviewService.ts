@@ -183,24 +183,45 @@ export function agodaParsedFields(
       ? nightlyAmounts[0]!
       : null;
 
-  const rooms = a?.roomTypeOriginal
-    ? [
-        {
-          quantity,
-          // The NORMALISED name: Agoda's trailing "(2)" is a style marker, and
-          // the branch's mappings are keyed by the name without it.
-          otaRoomName: a.roomTypeNormalized ?? a.roomTypeOriginal,
-          // The name exactly as Agoda printed it, kept for audit.
-          rawOtaRoomName: a.roomTypeOriginal,
-          otaRoomTypeId: null,
-          sourceNightlyTotal: uniformNightly,
-          perRoomNightlyRate:
-            uniformNightly != null && uniformNightly % quantity === 0
-              ? uniformNightly / quantity
-              : null,
-        },
-      ]
-    : [];
+  // EVERY room row the reservation states, not just the first. A booking with
+  // three room types reached the review as one line, silently dropping the
+  // others — and the note built from it would have understated the booking.
+  const parsedLines = a?.roomLines ?? [];
+  const single = parsedLines.length === 1;
+
+  const rooms = parsedLines.length > 0
+    ? parsedLines.map((line) => ({
+        quantity: line.quantity > 0 ? line.quantity : 1,
+        // The NORMALISED name: Agoda's trailing "(2)" is a style marker, and
+        // the branch's mappings are keyed by the name without it.
+        otaRoomName: line.roomTypeNormalized ?? line.roomTypeOriginal,
+        // The name exactly as Agoda printed it, kept for audit.
+        rawOtaRoomName: line.roomTypeOriginal,
+        otaRoomTypeId: null,
+        // The nightly figure covers the WHOLE reservation, so it can only be
+        // attributed to a line when there is exactly one. With several types
+        // there is no stated per-line nightly, and none is invented.
+        sourceNightlyTotal: single ? uniformNightly : null,
+        perRoomNightlyRate:
+          single && uniformNightly != null && uniformNightly % quantity === 0
+            ? uniformNightly / quantity
+            : null,
+      }))
+    : a?.roomTypeOriginal
+      ? [
+          {
+            quantity,
+            otaRoomName: a.roomTypeNormalized ?? a.roomTypeOriginal,
+            rawOtaRoomName: a.roomTypeOriginal,
+            otaRoomTypeId: null,
+            sourceNightlyTotal: uniformNightly,
+            perRoomNightlyRate:
+              uniformNightly != null && uniformNightly % quantity === 0
+                ? uniformNightly / quantity
+                : null,
+          },
+        ]
+      : [];
 
   return {
     bookingCode: a?.bookingId ?? parsed.bookingCode,
@@ -219,6 +240,12 @@ export function agodaParsedFields(
     branchPrice: a?.netRate ?? null,
     guestBookedPrice: a?.referenceSellRate ?? null,
     breakfastIncluded: false,
+    // What the parser had to CHOOSE between. The review cannot see the discarded
+    // reservations, so an ambiguous paste would otherwise look like a perfectly
+    // clean booking that happens to be the wrong one.
+    parserWarnings: parsed.warnings
+      .filter((w) => w.code === 'AGODA_MULTIPLE_RESERVATIONS')
+      .map((w) => ({ code: w.code, message: w.message, severity: w.severity })),
     resolvedBranchId,
   };
 }

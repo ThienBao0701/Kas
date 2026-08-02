@@ -101,6 +101,7 @@ function fromPartnerEmail(rawText: string, branches: readonly MatchableBranch[])
     nights: p.nights,
     roomTypeOriginal: p.roomTypeOriginal,
     roomTypeNormalized: p.roomTypeNormalized,
+    roomLines: p.roomLines,
     roomCode: p.roomCode,
     roomTypeKnown: p.roomTypeKnown,
     roomQuantity: p.roomQuantity,

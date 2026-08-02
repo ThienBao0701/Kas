@@ -743,6 +743,12 @@ export interface AgodaPartnerBooking {
   breakfastIncluded: boolean;
   /** CONFIRMED / AMENDED / CANCELLED, from the confirmation heading itself. */
   bookingStatus: 'CONFIRMED' | 'AMENDED' | 'CANCELLED' | null;
+  /**
+   * Every DISTINCT complete reservation found in the pasted document. More than
+   * one means the paste is ambiguous: the parsed booking is the first, and
+   * dispatch is blocked until an Admin says which was intended.
+   */
+  detectedReservationIds: string[];
   /** How Agoda settles the booking, as stated ("PREPAID"). Never the note's mode. */
   paymentType: string | null;
   /** "Website Language" — the guest's language / market. */
@@ -1018,8 +1024,43 @@ function perRoom(amount: number | null, roomQuantity: number | null): number | n
  */
 export function parseAgodaPartnerBooking(rawText: string): AgodaPartnerBooking {
   // ONE reservation, never a whole mail thread. See `reservationBlock`.
-  const all = reservationBlock(lines(rawText));
+  const documentLines = lines(rawText);
+  const all = reservationBlock(documentLines);
   const warnings: ExtractWarning[] = [];
+
+  // AMBIGUITY IS NEVER RESOLVED SILENTLY.
+  //
+  // A paste routinely holds several DISTINCT complete reservations: every real
+  // mail collected so far is a Gmail thread carrying between two and six. The
+  // parser takes the first complete one, because a mail client puts the message
+  // being read at the top — but it says so, and it reports every reservation it
+  // found, so a wrong pick is visible rather than silent.
+  //
+  // This is a WARNING, not a blocker. Blocking would reject every production
+  // mail collected to date and make the intake unusable, which is a worse
+  // failure than a visible, correctable choice: the review screen shows the
+  // guest, dates and prices of whichever booking was taken, so the wrong one
+  // does not look right.
+  //
+  // The same reservation quoted twice is NOT ambiguous: identity is by booking
+  // id, so quoted history and forwarded copies stay silent.
+  const detectedReservationIds = [
+    ...new Set(
+      reservationBlocks(documentLines)
+        .filter((block) => isCompleteReservation(block))
+        .map((block) => idWithin(block))
+        .filter((id): id is string => id !== null),
+    ),
+  ];
+  if (detectedReservationIds.length > 1) {
+    warnings.push(
+      warn(
+        'AGODA_MULTIPLE_RESERVATIONS',
+        `Nội dung chứa ${detectedReservationIds.length} đơn đặt phòng khác nhau (${detectedReservationIds.join(', ')}). Đang xử lý đơn ${detectedReservationIds[0]}. Nếu cần đơn khác, vui lòng dán riêng đơn đó.`,
+        'WARNING',
+      ),
+    );
+  }
 
   const bookingId = extractBookingId(all, all.join('\n'));
   if (!bookingId) warnings.push(warn('AGODA_MISSING_BOOKING_ID', 'Không đọc được Booking ID của Agoda.', 'ERROR'));
@@ -1185,6 +1226,7 @@ export function parseAgodaPartnerBooking(rawText: string): AgodaPartnerBooking {
     extraBeds: extraParsed,
     breakfastIncluded: AGODA_BREAKFAST_INCLUDED,
     bookingStatus: readBookingStatus(all),
+    detectedReservationIds,
     paymentType: payment,
     websiteLanguage: labelValue(all, /^website language$/),
     specialRequests: valueUnderLabelPrefix(all, /^special requests\b|^yeu cau dac biet\b/),

@@ -157,6 +157,16 @@ export interface BuildOtaReviewInput {
     branchPrice: number | null;
     guestBookedPrice: number | null;
     breakfastIncluded: boolean | null;
+    /**
+     * Warnings raised by the PARSER that the Admin must see — most importantly,
+     * that the paste held several distinct reservations and which one was used.
+     *
+     * The review derives everything else itself and cannot see what the parser
+     * had to choose between, so these are carried through rather than
+     * recomputed. They are surfaced, not blocking: the review's own checks
+     * decide dispatch.
+     */
+    parserWarnings?: OtaReviewWarning[];
     /** Non-null only when the platform name resolved EXACTLY to a branch. */
     resolvedBranchId: number | null;
   };
@@ -171,7 +181,7 @@ export interface BuildOtaReviewInput {
  */
 export function buildOtaReview(input: BuildOtaReviewInput): OtaReview {
   const o = input.overrides ?? {};
-  const warnings: OtaReviewWarning[] = [];
+  const warnings: OtaReviewWarning[] = [...(input.parsed.parserWarnings ?? [])];
 
   const bookingCode = o.bookingCode !== undefined ? o.bookingCode : input.parsed.bookingCode;
   const guestName = o.guestName !== undefined ? o.guestName : input.parsed.guestName;

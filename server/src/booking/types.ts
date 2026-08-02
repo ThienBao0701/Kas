@@ -192,6 +192,14 @@ export interface AgodaPartnerExtras {
   roomTypeOriginal: string | null;
   /** The same name without that marker — the key the mappings are looked up by. */
   roomTypeNormalized: string | null;
+  /** Every room row the reservation states. The fields above describe the first. */
+  roomLines: {
+    roomTypeOriginal: string | null;
+    roomTypeNormalized: string | null;
+    quantity: number;
+    occupancy: string | null;
+    extraBeds: number | null;
+  }[];
   roomCode: string | null;
   roomTypeKnown: boolean;
   roomQuantity: number | null;
