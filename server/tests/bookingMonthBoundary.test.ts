@@ -106,8 +106,9 @@ describe('real Booking.com month-boundary booking (end to end)', () => {
     expect(r.rooms[0]!.roomTotal).toBe(9_153_000);
     expect(r.totalAmount).toBe(9_153_000);
     expect(r.rooms).toHaveLength(1);
-    // The only warning is the branch-confirmation one: this sample's hotel line
-    // carries the extranet property id, so the name is not an exact identity.
-    expect(r.warnings.map((w) => w.code)).toEqual(['LOW_BRANCH_CONFIDENCE']);
+    // No warnings at all since 5.1: this sample's hotel line carries the
+    // extranet property id around the internal name, which the resolver now
+    // matches by containment instead of leaving for an Admin to confirm.
+    expect(r.warnings.map((w) => w.code)).toEqual([]);
   });
 });

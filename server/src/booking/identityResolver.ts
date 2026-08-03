@@ -21,6 +21,7 @@
  * fully testable without a database.
  */
 import { normalizeText } from './text';
+import { hotelNameContains, hotelNameKey } from './hotelNameKey';
 import type { MatchableBranch } from './types';
 
 /** The five platforms an identity can belong to. */
@@ -47,6 +48,10 @@ export type IdentityMatchReason =
   | 'EXACT_PLATFORM_IDENTITY'
   | 'EXACT_INTERNAL_NAME'
   | 'EXACT_BRANCH_CODE'
+  /** Booking.com only: matched once generic words were dropped. */
+  | 'NORMALIZED_NAME'
+  /** Booking.com only: one name is contained in the other, word-aligned. */
+  | 'NAME_CONTAINS'
   | 'AMBIGUOUS'
   | 'UNKNOWN'
   | 'NO_INPUT';
@@ -274,9 +279,87 @@ export function resolveBranchIdentity(
     return unresolved('AMBIGUOUS', rankCandidates(hotelName, platform, branches), 100);
   }
 
-  // 3. Nothing exact. Suggest, never assign.
+  // 3. BOOKING.COM ONLY — the relaxed pass added in the 5.1 hotfix.
+  //
+  // Booking.com prints whatever public name the listing carries, which is
+  // rarely character-equal to the internal name. Dropping generic words and
+  // then allowing word-aligned containment resolves the real production
+  // failures without loosening anything else.
+  //
+  // Agoda and CTrip deliberately do NOT get this. Every Agoda property name
+  // shares the tokens "KAS" and "Hotel", so relaxed matching there could rate
+  // two different properties alike and dispatch a guest to the wrong hotel —
+  // the exact failure the exact-only rule was introduced to prevent.
+  //
+  // Every step below still refuses to guess: two branches matching means
+  // AMBIGUOUS and no assignment, exactly as above.
+  if (platform === 'BOOKING_COM') {
+    const relaxed = resolveRelaxed(hotelName, platform, branches);
+    if (relaxed) return relaxed;
+  }
+
+  // 4. Nothing matched. Suggest, never assign.
   const candidates = rankCandidates(hotelName, platform, branches);
   return unresolved('UNKNOWN', candidates, candidates[0]?.confidence ?? 0);
+}
+
+/** Every name a Booking.com booking may legitimately be recognised by. */
+function recognisableNames(branch: IdentityBranch, platform: IdentityPlatform): string[] {
+  const identities = (branch.identities ?? [])
+    .filter((i) => i.platform === platform)
+    .map((i) => i.name);
+  // The alias table when the Admin has configured one. No alias is created
+  // here and none is inferred — this only reads what already exists.
+  const aliases = (branch.aliases ?? [])
+    .filter((a) => a.source === 'BOOKING_COM')
+    .map((a) => a.alias);
+  return [...identities, branch.hotelName, ...aliases];
+}
+
+/**
+ * The relaxed ladder, in strict precedence: normalised equality, then the
+ * candidate containing a configured name, then a configured name containing the
+ * candidate.
+ *
+ * Each rung is evaluated across ALL branches before moving down, so a weaker
+ * match on one branch can never beat a stronger match on another. A rung with
+ * two or more distinct branches is ambiguous and stops the ladder — falling
+ * through to a looser rung after a tie would resolve by luck.
+ */
+function resolveRelaxed(
+  hotelName: string,
+  platform: IdentityPlatform,
+  branches: readonly IdentityBranch[],
+): IdentityResolution | null {
+  const key = hotelNameKey(hotelName);
+  if (key.length === 0) return null;
+
+  const rungs: { reason: IdentityMatchReason; hit: (branchKey: string) => boolean }[] = [
+    { reason: 'NORMALIZED_NAME', hit: (b) => b === key },
+    // The mail carries extra words around the configured name.
+    { reason: 'NAME_CONTAINS', hit: (b) => hotelNameContains(key, b) },
+    // The mail carries a shortened form of the configured name.
+    { reason: 'NAME_CONTAINS', hit: (b) => hotelNameContains(b, key) },
+  ];
+
+  for (const rung of rungs) {
+    const hits: { branch: IdentityBranch; matched: string }[] = [];
+    for (const branch of branches) {
+      if (!routable(branch)) continue;
+      const matched = recognisableNames(branch, platform).find((name) => {
+        const branchKey = hotelNameKey(name);
+        return branchKey.length > 0 && rung.hit(branchKey);
+      });
+      if (matched !== undefined) hits.push({ branch, matched });
+    }
+
+    if (hits.length === 1) return resolved(hits[0]!.branch, hits[0]!.matched, rung.reason);
+    if (hits.length > 1) {
+      return unresolved('AMBIGUOUS', rankCandidates(hotelName, platform, branches), 100);
+    }
+  }
+
+  return null;
 }
 
 /**

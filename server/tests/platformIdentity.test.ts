@@ -333,11 +333,18 @@ describe('recognition', () => {
     }
   });
 
-  it('13. similarity NEVER auto-assigns, however close the name is', async () => {
+  it('13. SIMILARITY still never auto-assigns, however close the name is', async () => {
+    // The 5.1 hotfix let Booking.com resolve by normalised equality and by
+    // word-aligned containment. It did NOT loosen similarity SCORING, and this
+    // is the test that keeps that true.
+    //
+    // The input misspells one word in the middle of the configured name. That
+    // is enough to break every containment rung — no configured name, alias or
+    // internal name survives as a contiguous run of these words — while the
+    // prefix-tolerant scorer still rates it highly. High score, no assignment.
     const configs = await loadBranchConfigs(testPrisma);
     const entry = BOOKING_COM_IDENTITIES.find((b) => b.branchCode === 'BUI_THI_XUAN_40')!;
-    // One token short of the real name — a very high similarity score.
-    const near = entry.name.split(' ').slice(0, -1).join(' ');
+    const near = entry.name.replace('Thanh', 'Thanhh');
 
     const r = resolveBranchIdentity(near, 'BOOKING_COM', configs);
     expect(r.branchId).toBeNull();
@@ -348,18 +355,29 @@ describe('recognition', () => {
     expect(r.candidates[0]!.confidence).toBeGreaterThan(50);
   });
 
-  it('13b. the parser leaves the branch unassigned for a similarity-only match', async () => {
+  it('13b. a Booking.com name carrying the configured name IS assigned (5.1)', async () => {
+    // The production symptom: Booking.com prints the configured name with the
+    // property id or a district glued on, and the booking used to arrive with
+    // no branch. Containment resolves it — to the SAME branch, never another.
     const configs = await loadBranchConfigs(testPrisma);
     const entry = BOOKING_COM_IDENTITIES[0]!;
-    const near = `${entry.name} Extra Words Here`;
 
-    const parsed = parseBooking(bookingText(near), configs, 'BOOKING_COM');
+    const parsed = parseBooking(bookingText(`${entry.name} Extra Words Here`), configs, 'BOOKING_COM');
+    expect(parsed.branchConfident).toBe(true);
+    expect(parsed.requiresManualConfirmation).toBe(false);
+    expect(parsed.suggestedBranch?.code).toBe(entry.branchCode);
+    // Resolved means resolved: no "please confirm the branch" warning remains.
+    const codes = parsed.warnings.map((w) => w.code);
+    expect(codes).not.toContain('LOW_BRANCH_CONFIDENCE');
+    expect(codes).not.toContain('UNKNOWN_HOTEL');
+  });
+
+  it('13c. a name that matches nothing is still never assigned', async () => {
+    const configs = await loadBranchConfigs(testPrisma);
+    const parsed = parseBooking(bookingText('Some Unrecognised Property'), configs, 'BOOKING_COM');
     expect(parsed.branchConfident).toBe(false);
     expect(parsed.requiresManualConfirmation).toBe(true);
-    // Whether the extra words leave it above or below the suggestion threshold,
-    // the Admin is always told the branch is unconfirmed.
-    const codes = parsed.warnings.map((w) => w.code);
-    expect(codes.some((c) => c === 'LOW_BRANCH_CONFIDENCE' || c === 'UNKNOWN_HOTEL')).toBe(true);
+    expect(parsed.warnings.map((w) => w.code)).toContain('UNKNOWN_HOTEL');
   });
 
   it('14. dispatch is blocked until an Admin supplies the branch', async () => {

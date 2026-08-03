@@ -32,6 +32,7 @@ import { OTA_REVIEW_VERSION } from './otaReview';
 import type { OtaReview } from './otaReview';
 import { collectCorrections } from './otaCorrections';
 import { currentBuildId, recordRequestOrigin, type RequestOrigin } from './requestAudit';
+import { allocateCtripNightly } from './ctripNightly';
 
 /** The Admin performing the dispatch. */
 export interface OtaDispatchActor {
@@ -168,6 +169,20 @@ export async function dispatchOtaReview(
   const now = clock.now();
   const lastMinute = review.checkIn !== null && isLastMinute(isoToUtcDate(review.checkIn), now);
 
+  // Parser -> Review -> ALLOCATOR -> Dispatch.
+  //
+  // A CTrip mail that states only a total gets its nights derived here, marked
+  // as estimates. Every other case — Agoda, Booking.com, or a CTrip mail that
+  // did state its nights — passes through untouched, so this call is safe to
+  // make unconditionally.
+  const allocation = allocateCtripNightly({
+    source: review.source,
+    nightlyRates: review.nightlyRates,
+    checkIn: review.checkIn,
+    checkOut: review.checkOut,
+    total: review.branchPrice,
+  });
+
   const bookingId = await client.$transaction(async (tx) => {
     // One context row for the whole request; every row below points at it.
     const requestAuditId = actor.origin
@@ -230,11 +245,13 @@ export async function dispatchOtaReview(
             nights:
               index === 0
                 ? {
-                    create: review.nightlyRates.map((night) => ({
+                    create: allocation.nights.map((night) => ({
                       stayDate: isoToUtcDate(night.stayDate),
                       amount: night.amount,
                       currency: 'VND',
-                      isEstimated: false,
+                      // False for every night the platform stated; true only
+                      // for the CTrip nights derived from a bare total.
+                      isEstimated: night.isEstimated,
                     })),
                   }
                 : undefined,
@@ -243,7 +260,7 @@ export async function dispatchOtaReview(
         // Everything the review flagged is stored with the booking, so the
         // reasons an Admin saw remain visible after dispatch.
         warnings: {
-          create: review.warnings.map((warning) => ({
+          create: [...review.warnings, ...allocation.warnings].map((warning) => ({
             code: warning.code,
             message: warning.message,
             severity: warning.severity,

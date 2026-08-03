@@ -327,17 +327,32 @@ describe('recognition across the three operational platforms', () => {
     expect(r.branchId).toBeNull();
   });
 
-  it('9. a near-miss name never auto-assigns on any of the three platforms', async () => {
+  it('9. a near-miss name never auto-assigns on AGODA or CTRIP', async () => {
+    // These two keep exact-only resolution. Every Agoda/CTrip property here
+    // shares the tokens "KAS" and "Hotel", so relaxed matching could rate two
+    // different properties alike and send a guest to the wrong hotel. The 5.1
+    // hotfix deliberately did not touch them.
     const configs = await loadBranchConfigs(testPrisma);
     for (const [platform, name] of [
-      ['BOOKING_COM', 'Market Ben Thanh Kas Hotel'],
       ['AGODA', 'KAS Passion Boutique'],
       ['CTRIP', 'KAS Passion Hotel'],
+      ['AGODA', 'KAS Passion Boutique Hotel & Spa'],
+      ['CTRIP', 'KAS Passion Boutique Hotel Saigon'],
     ] as const) {
       const r = resolveBranchIdentity(name, platform, configs);
       expect(r.branchId, `${platform} ${name}`).toBeNull();
       expect(r.requiresManualBranch, `${platform} ${name}`).toBe(true);
     }
+  });
+
+  it('9b. BOOKING_COM resolves a shortened form of its configured name (5.1)', async () => {
+    // "Market Ben Thanh Kas Hotel" is the configured name minus "Passion".
+    // Before the hotfix this reached an Admin for manual assignment; it now
+    // resolves — to the same branch the suggestion always pointed at.
+    const configs = await loadBranchConfigs(testPrisma);
+    const r = resolveBranchIdentity('Market Ben Thanh Kas Hotel', 'BOOKING_COM', configs);
+    expect(r.branchCode).toBe('TRUONG_DINH_05');
+    expect(r.requiresManualBranch).toBe(false);
   });
 
   it('10. a historical booking is unchanged by identity edits and deletes', async () => {

@@ -38,16 +38,17 @@ describe('branch confidence (0–100 scale)', () => {
     expect(r.suggestedBranch?.address).toBe('05 Trương Định');
   });
 
-  it('suggests, but never auto-assigns, a property-ID-suffixed hotel name', () => {
-    // The extranet glues the property id onto the name. Stripping it still does
-    // not produce an EXACT identity or internal name, so the branch is offered
-    // as a ranked suggestion and an Admin must confirm it before dispatch.
+  it('assigns a property-ID-suffixed hotel name to its branch (5.1)', () => {
+    // The extranet glues the property id onto the name. This is THE production
+    // symptom the 5.1 hotfix addresses: the name carries the configured
+    // internal name as a whole word sequence, so containment resolves it — to
+    // the branch the suggestion always pointed at, never a different one.
     const r = parseBooking(mini({ hotel: 'Saigon Hotel & Ben Thanh Market16806954' }), branches);
     expect(r.suggestedBranch?.code).toBe('TRUONG_DINH_05');
-    expect(r.branchConfident).toBe(false);
-    expect(r.requiresManualConfirmation).toBe(true);
+    expect(r.branchConfident).toBe(true);
+    expect(r.requiresManualConfirmation).toBe(false);
     expect(r.branchConfidence).toBeGreaterThan(0);
-    expect(r.warnings.map((w) => w.code)).toContain('LOW_BRANCH_CONFIDENCE');
+    expect(r.warnings.map((w) => w.code)).not.toContain('LOW_BRANCH_CONFIDENCE');
     expect(r.hotelName).toBe('Saigon Hotel & Ben Thanh Market');
     expect(r.bookingCode).toBe('1234567890'); // property ID never used as booking code
   });

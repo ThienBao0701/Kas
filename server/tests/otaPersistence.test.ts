@@ -189,7 +189,11 @@ describe('nightly rates are preserved night by night', () => {
     expect(rooms[2]!.nights).toHaveLength(0);
   });
 
-  it('stores no nights when the platform stated none', async () => {
+  it('allocates estimated nights for a CTrip mail that stated none (5.1)', async () => {
+    // CTrip often sends a payout, a check-in and a check-out and no per-night
+    // breakdown, which used to leave the branch with no nightly rows at all.
+    // The allocator fills them AFTER review, marks them as estimates, and must
+    // sum to exactly the stored total — money is never created or lost.
     const CTRIP_RAW = fs.readFileSync(
       path.join(__dirname, 'fixtures', 'ctrip', '06-real-page-property-above.txt'),
       'utf8',
@@ -199,7 +203,11 @@ describe('nightly rates are preserved night by night', () => {
     const nights = await testPrisma.bookingNightPrice.findMany({
       where: { bookingRoom: { bookingId: res.body.bookingId } },
     });
-    expect(nights).toEqual([]);
+    expect(nights.length).toBeGreaterThan(0);
+    for (const night of nights) expect(night.isEstimated).toBe(true);
+
+    const booking = await testPrisma.booking.findUniqueOrThrow({ where: { id: res.body.bookingId } });
+    expect(nights.reduce((t, n) => t + (n.amount ?? 0), 0)).toBe(booking.totalAmount);
   });
 });
 

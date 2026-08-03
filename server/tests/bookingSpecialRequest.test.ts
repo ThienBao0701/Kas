@@ -144,7 +144,9 @@ describe('three numbered physical rooms + reservation-level guest protection', (
     );
   });
 
-  it('produces only the branch-confirmation warning', () => {
-    expect(r.warnings.map((w) => w.code)).toEqual(['LOW_BRANCH_CONFIDENCE']);
+  it('produces no warnings at all', () => {
+    // Since 5.1 the hotel name resolves outright, so the branch-confirmation
+    // warning that used to be the only one left is gone too.
+    expect(r.warnings.map((w) => w.code)).toEqual([]);
   });
 });

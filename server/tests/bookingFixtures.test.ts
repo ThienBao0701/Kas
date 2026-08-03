@@ -11,12 +11,16 @@ const branches = fixtureBranches;
 const FIXTURE_DIR = path.join(__dirname, 'fixtures', 'booking');
 
 /** Fixtures that may only ever SUGGEST a branch, never auto-assign one. */
-const NON_EXACT_HOTEL_FIXTURES = new Set([
-  '09-hotel-name-truncated.txt',
-  '25-real-sample-two-room-nightly.txt',
-  '26-real-sample-three-rooms.txt',
-  '27-real-sample-month-boundary.txt',
-]);
+/**
+ * Fixtures whose hotel line the resolver still cannot assign on its own.
+ *
+ * Since the 5.1 hotfix this is ONE file. The three real extranet samples used
+ * to sit here too: their hotel line is the internal name with the property id
+ * glued on, which now resolves by containment. 09 stays because its name is
+ * genuinely truncated mid-word — a fragment that half-spells a property is
+ * exactly what should reach an operator rather than be guessed.
+ */
+const NON_EXACT_HOTEL_FIXTURES = new Set(['09-hotel-name-truncated.txt']);
 
 function load(name: string): string {
   return fs.readFileSync(path.join(FIXTURE_DIR, name), 'utf8');

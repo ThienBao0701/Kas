@@ -33,13 +33,14 @@ describe('real Booking.com extranet sample — two rooms, nightly-rate tables', 
     expect(r.hotelName).not.toMatch(/\d/);
   });
 
-  it('2. suggests the correct branch but requires confirmation (name is not exact)', () => {
-    // The sample's hotel line is 'Saigon Hotel & Ben Thanh Market16806954' — not
-    // the branch's current Booking.com identity and not its internal name, so it
-    // may only be SUGGESTED. Nothing is auto-assigned.
+  it('2. resolves the correct branch from the property-ID-suffixed name (5.1)', () => {
+    // The sample's hotel line is 'Saigon Hotel & Ben Thanh Market16806954'. It
+    // carries the branch's internal name as a whole word sequence, so the 5.1
+    // resolver assigns it. The branch is the same one that was previously
+    // suggested — the hotfix changed whether it is assigned, never which.
     expect(r.suggestedBranch?.address).toBe('05 Trương Định');
-    expect(r.branchConfident).toBe(false);
-    expect(r.requiresManualConfirmation).toBe(true);
+    expect(r.branchConfident).toBe(true);
+    expect(r.requiresManualConfirmation).toBe(false);
   });
 
   it('3. takes the main customer name', () => {
@@ -189,10 +190,10 @@ describe('real Booking.com extranet sample — two rooms, nightly-rate tables', 
     expect(codes(r)).not.toContain('ROOM_COUNT_MISMATCH');
   });
 
-  it('34. produces only the branch-confirmation warning', () => {
-    // Every extraction warning is gone except the one that exists BECAUSE the
-    // hotel name is not an exact identity — which must never be suppressed.
-    expect(codes(r)).toEqual(['LOW_BRANCH_CONFIDENCE']);
+  it('34. produces no warnings at all', () => {
+    // The branch-confirmation warning was the last one standing; since 5.1
+    // resolves this hotel name outright, a clean sample extracts cleanly.
+    expect(codes(r)).toEqual([]);
   });
 });
 
