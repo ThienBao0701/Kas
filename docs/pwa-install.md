@@ -22,6 +22,14 @@ bên trái thay vì im lặng.
 [production-deployment.md](production-deployment.md), hoặc cài trực tiếp trên
 máy chủ bằng `http://localhost:3001`.
 
+### Cách nhanh nhất trên máy chủ: `Kas.cmd`
+
+Nhấn đúp **`Kas.cmd`** ở thư mục gốc của Kas. Trình khởi động sẽ kiểm tra
+Node/cổng/bản build/cấu hình, khởi động máy chủ nếu chưa chạy, rồi mở trình
+duyệt tại **`http://localhost:3001`** — đúng địa chỉ mà Chrome và Edge cho phép
+cài ứng dụng. Nếu Kas đã chạy sẵn, trình khởi động chỉ mở trình duyệt chứ không
+khởi động thêm tiến trình nào. Nhật ký nằm ở `logs/launcher.log`.
+
 ## Cài đặt
 
 1. Mở Kas trong **Chrome** hoặc **Edge** bằng địa chỉ **`https://`** của máy chủ
