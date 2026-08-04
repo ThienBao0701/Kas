@@ -79,13 +79,23 @@ function paymentStatusOf(review: OtaReview): 'PAY_BEFORE' | 'PAY_AFTER' {
 }
 
 /**
+ * A dispatch request: the review body plus the one value only a human supplies.
+ *
+ * `adminPmsNote` is who created the reservation in the hotel's PMS. The route
+ * requires it; this type makes it impossible to reach the write without one.
+ */
+export interface OtaDispatchRequest extends OtaReviewRequest {
+  adminPmsNote: string;
+}
+
+/**
  * Rebuilds the review, then persists it as a dispatched booking.
  *
  * The whole write is one transaction: booking, rooms, nightly prices, warnings,
  * status history and notifications either all land or none do.
  */
 export async function dispatchOtaReview(
-  request: OtaReviewRequest,
+  request: OtaDispatchRequest,
   actor: OtaDispatchActor,
   client: PrismaClient = defaultPrisma,
   clock: Clock = getClock(),
@@ -221,6 +231,11 @@ export async function dispatchOtaReview(
         countryOfResidence: extras?.countryOfResidence ?? null,
         websiteLanguage: extras?.websiteLanguage ?? null,
         paymentType: extras?.paymentType ?? null,
+        // What the ADMIN typed and reviewed, beside what the mail said. Both
+        // land in this create, so they share the dispatch transaction and a
+        // rollback takes them with everything else.
+        adminPmsNote: request.adminPmsNote.trim(),
+        reviewedPaymentMode: review.paymentMode,
         benefitsIncluded: extras?.benefitsIncluded ?? null,
         phone: extras?.customerPhone ?? parsedBooking.phone ?? null,
         specialRequest: extras?.specialRequests ?? parsedBooking.specialRequest ?? null,

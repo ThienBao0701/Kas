@@ -411,7 +411,7 @@ export function HistoryPage() {
                       <th scope="col" className="px-4 py-3">Hạng phòng (SL)</th>
                       <th scope="col" className="px-4 py-3">Giá tổng</th>
                       <th scope="col" className="px-4 py-3">Nguồn</th>
-                      <th scope="col" className="px-4 py-3">Người gửi</th>
+                      <th scope="col" className="px-4 py-3">Người tạo PMS</th>
                       <th scope="col" className="px-4 py-3">Thời gian gửi</th>
                     </tr>
                   </thead>
@@ -435,7 +435,9 @@ export function HistoryPage() {
                         <td className="px-4 py-3 text-slate-700"><RoomSummary summary={b.roomSummary} /></td>
                         <td className="px-4 py-3 font-bold text-slate-900">{totalDisplay(b.totalAmount, b.currency)}</td>
                         <td className="px-4 py-3"><SourceBadge source={b.sourcePlatform} /></td>
-                        <td className="px-4 py-3 text-slate-600">{b.sentBy?.fullName ?? '—'}</td>
+                        {/* The stored Admin note, not the dispatching account: the account is
+                            whoever was logged in, which is not necessarily who did the work. */}
+                        <td className="px-4 py-3 whitespace-pre-wrap text-slate-600">{b.adminPmsNote ?? '—'}</td>
                         <td className="px-4 py-3 text-slate-500">{formatDateTime(b.sentAt)}</td>
                       </tr>
                     ))}

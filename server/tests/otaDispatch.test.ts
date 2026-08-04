@@ -56,10 +56,18 @@ beforeEach(async () => {
 
 afterAll(async () => testPrisma.$disconnect());
 
+// Every dispatch needs the Admin PMS note since 5.2b. Supplied as a default so
+// each case still states only what it is actually about; a body may override it.
 const dispatch = (body: Record<string, unknown>) =>
-  admin.post('/api/admin/ota/dispatch').send(body);
+  admin.post('/api/admin/ota/dispatch').send({ adminPmsNote: 'Nguyen Van A\nCa sáng', ...body });
 
-const AGODA = { source: 'AGODA', rawText: AGODA_RAW, overrides: { paymentMode: 'CN' } };
+const AGODA = {
+  source: 'AGODA',
+  rawText: AGODA_RAW,
+  // Required since 5.2b: who created the reservation in the hotel PMS.
+  adminPmsNote: 'Nguyen Van A\nCa sáng',
+  overrides: { paymentMode: 'CN' },
+};
 
 /* ================================================================== */
 /* The booking is really created                                       */

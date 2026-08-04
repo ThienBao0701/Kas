@@ -348,6 +348,11 @@ export function serializeAdminBookingDetail(booking: BookingDetail) {
     completionNote: booking.completionNote,
     reviewedAt: iso(booking.reviewedAt),
 
+    // What a HUMAN decided at dispatch. Null for Booking.com, which does not
+    // collect a note, and for everything dispatched before these existed.
+    adminPmsNote: booking.adminPmsNote,
+    reviewedPaymentMode: booking.reviewedPaymentMode,
+
     // Phase 5 operational record, all of it already stored.
     ota: otaMetadataView(booking),
     operational: operationalView(booking),
@@ -500,5 +505,10 @@ export function serializeHistoryListItem(booking: BookingListItem) {
     reviewedBy: actor(booking.reviewedBy),
     reviewedAt: iso(booking.reviewedAt),
     createdAt: booking.createdAt.toISOString(),
+    // Who created the reservation in the PMS, as the Admin typed it. History
+    // shows this rather than the dispatching account: the account is whoever
+    // was logged in, which is not necessarily who did the work.
+    adminPmsNote: booking.adminPmsNote,
+    reviewedPaymentMode: booking.reviewedPaymentMode,
   };
 }

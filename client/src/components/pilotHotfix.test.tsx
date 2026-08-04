@@ -61,6 +61,8 @@ function booking(over: Partial<BookingDetail> = {}): BookingDetail {
     completedAt: null,
     completionNote: null,
     reviewedAt: null,
+    adminPmsNote: null,
+    reviewedPaymentMode: null,
     ...EMPTY_OPERATIONAL_BLOCKS,
     ...over,
   } as BookingDetail;
@@ -283,5 +285,62 @@ describe('Booking.com is unchanged by every hotfix', () => {
   it('still generates its PMS note', () => {
     mount(booking({ rooms: [ROOM] }));
     expect(screen.getByText(/Ghi chú tạo đơn/)).toBeInTheDocument();
+  });
+});
+
+/* ================================================================== */
+/* 5.2b — the Admin PMS note and the reviewed payment                  */
+/* ================================================================== */
+describe('5.2b Admin PMS note', () => {
+  it('shows the stored note verbatim, over the lines the Admin typed', () => {
+    mount(otaBooking('AGODA', null, { adminPmsNote: 'Nguyen Van A\nCa sáng' }));
+    const card = screen.getByTestId('admin-pms-note-card');
+    expect(card).toHaveTextContent('Người tạo PMS');
+    expect(card).toHaveTextContent('Nguyen Van A');
+    expect(card).toHaveTextContent('Ca sáng');
+    // The generated note is replaced, not shown alongside.
+    expect(screen.queryByText(/Ghi chú tạo đơn/)).toBeNull();
+  });
+
+  it('preserves the line break rather than collapsing name and shift', () => {
+    mount(otaBooking('AGODA', null, { adminPmsNote: 'Nguyen Van A\nCa sáng' }));
+    const paragraph = screen.getByTestId('admin-pms-note-card').querySelector('p:last-of-type');
+    expect(paragraph?.className).toContain('whitespace-pre-wrap');
+  });
+
+  it('keeps the generated note for Booking.com, which collects none', () => {
+    // Its dispatch deliberately does not ask for a note; removing the note it
+    // has today would take away the text reception copies for every booking.
+    mount(booking({ rooms: [ROOM], adminPmsNote: null }));
+    expect(screen.getByText(/Ghi chú tạo đơn/)).toBeInTheDocument();
+    expect(screen.queryByTestId('admin-pms-note-card')).toBeNull();
+  });
+});
+
+describe('5.2b reviewed payment', () => {
+  it('shows the mode the Admin reviewed, not the mail wording', () => {
+    mount(otaBooking('AGODA', 'Pay at Hotel', { reviewedPaymentMode: 'CN' }));
+    expect(screen.getByText('CN')).toBeInTheDocument();
+    expect(screen.queryByText('Pay at Hotel')).toBeNull();
+  });
+
+  it('shows the reviewed mode for CTrip, which used to show nothing', () => {
+    mount(otaBooking('CTRIP', null, { reviewedPaymentMode: 'HOTEL_PAYMENT' }));
+    expect(screen.getByText('THANH TOÁN KHÁCH SẠN')).toBeInTheDocument();
+  });
+
+  it('falls back to the mail wording for a booking dispatched before 5.2b', () => {
+    mount(otaBooking('AGODA', 'CN', { reviewedPaymentMode: null }));
+    expect(screen.getByText('CN')).toBeInTheDocument();
+  });
+
+  it('still shows nothing when neither exists', () => {
+    mount(otaBooking('CTRIP', null, { reviewedPaymentMode: null }));
+    expect(screen.queryByText('Thanh toán')).toBeNull();
+  });
+
+  it('leaves Booking.com on its own badge', () => {
+    mount(booking({ paymentStatus: 'PAY_BEFORE', reviewedPaymentMode: null }));
+    expect(screen.getByText('PAY BEFORE CHECK-IN')).toBeInTheDocument();
   });
 });

@@ -244,6 +244,10 @@ export interface BookingDetail {
   completedAt: string | null;
   completionNote: string | null;
   reviewedAt: string | null;
+  /** Who created the PMS reservation, typed by the Admin. Null for Booking.com. */
+  adminPmsNote: string | null;
+  /** The payment mode the Admin accepted at dispatch. */
+  reviewedPaymentMode: string | null;
   ota: OtaMetadata;
   operational: OperationalRecord;
   corrections: CorrectionEntry[];
@@ -324,6 +328,8 @@ export interface HistoryListItem {
   reviewedBy: Actor | null;
   reviewedAt: string | null;
   createdAt: string;
+  adminPmsNote: string | null;
+  reviewedPaymentMode: string | null;
 }
 
 export interface ListResponse<T> {

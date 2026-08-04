@@ -41,7 +41,13 @@ beforeEach(async () => {
 
 afterAll(async () => testPrisma.$disconnect());
 
-const AGODA = { source: 'AGODA', rawText: AGODA_RAW, overrides: { paymentMode: 'CN' } };
+const AGODA = {
+  source: 'AGODA',
+  rawText: AGODA_RAW,
+  // Required since 5.2b: who created the reservation in the hotel PMS.
+  adminPmsNote: 'Nguyen Van A\nCa sáng',
+  overrides: { paymentMode: 'CN' },
+};
 
 /** The same reservation with a later check-out and a higher price. */
 const AMENDED_RAW = AGODA_RAW

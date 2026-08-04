@@ -52,7 +52,13 @@ beforeEach(async () => {
 
 afterAll(async () => testPrisma.$disconnect());
 
-const AGODA = { source: 'AGODA', rawText: AGODA_RAW, overrides: { paymentMode: 'CN' } };
+const AGODA = {
+  source: 'AGODA',
+  rawText: AGODA_RAW,
+  // Required since 5.2b: who created the reservation in the hotel PMS.
+  adminPmsNote: 'Nguyen Van A\nCa sáng',
+  overrides: { paymentMode: 'CN' },
+};
 
 describe('a dispatch records where it came from', () => {
   it('captures actor, address, agent, session and correlation id', async () => {
@@ -95,6 +101,7 @@ describe('a dispatch records where it came from', () => {
       .send({
         source: 'AGODA',
         rawText: AGODA_RAW,
+        adminPmsNote: 'Nguyen Van A\nCa sáng',
         overrides: { guestName: 'CHANGED', branchPrice: 999_999, paymentMode: 'CN' },
       });
     expect(res.status).toBe(201);

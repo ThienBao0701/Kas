@@ -66,7 +66,7 @@ afterAll(async () => testPrisma.$disconnect());
 async function dispatched(): Promise<string> {
   const res = await admin
     .post('/api/admin/ota/dispatch')
-    .send({ source: 'AGODA', rawText: AGODA_RAW, overrides: { paymentMode: 'CN' } });
+    .send({ source: 'AGODA', rawText: AGODA_RAW, adminPmsNote: 'Nguyen Van A\nCa sáng', overrides: { paymentMode: 'CN' } });
   expect(res.status).toBe(201);
   return res.body.bookingId as string;
 }
@@ -258,7 +258,7 @@ describe('re-dispatch never duplicates a booking in progress', () => {
 
       const again = await admin
         .post('/api/admin/ota/dispatch')
-        .send({ source: 'AGODA', rawText: AGODA_RAW, overrides: { paymentMode: 'CN' } });
+        .send({ source: 'AGODA', rawText: AGODA_RAW, adminPmsNote: 'Nguyen Van A\nCa sáng', overrides: { paymentMode: 'CN' } });
 
       expect(again.status).toBe(200);
       expect(again.body.created).toBe(false);

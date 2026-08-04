@@ -73,6 +73,27 @@ const reviewSchema = z.object({
 });
 
 /**
+ * Dispatch takes everything the review takes, plus the one thing only a human
+ * can supply: who created the reservation in the hotel's PMS.
+ *
+ * REQUIRED, and required HERE rather than on the review, because the review is
+ * a preview an Admin runs repeatedly while correcting fields — demanding the
+ * note to look at a parse would train people to type a placeholder. Dispatch is
+ * the moment the branch is told, and that is the moment a name must exist.
+ *
+ * The Booking.com send endpoint is deliberately NOT changed: its contract is
+ * production-certified and a newly-required field would reject requests that
+ * succeed today.
+ */
+const dispatchSchema = reviewSchema.extend({
+  adminPmsNote: z
+    .string()
+    .trim()
+    .min(1, 'Vui lòng nhập người tạo PMS.')
+    .max(500, 'Ghi chú người tạo PMS quá dài.'),
+});
+
+/**
  * An amendment adds the reviewer's verdict to the review body: which changed
  * fields they accepted. Omitting it accepts them all.
  */
@@ -106,7 +127,7 @@ export function createOtaReviewRouter(): Router {
    */
   router.post('/admin/ota/dispatch', (req, res, next) => {
     (async () => {
-      const input = reviewSchema.parse(req.body ?? {});
+      const input = dispatchSchema.parse(req.body ?? {});
       const actor = req.currentUser!;
       const result = await dispatchOtaReview(input, {
         id: actor.id,

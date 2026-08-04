@@ -60,11 +60,19 @@ beforeEach(async () => {
 afterAll(async () => testPrisma.$disconnect());
 
 async function dispatch(body: Record<string, unknown>) {
-  const res = await admin.post('/api/admin/ota/dispatch').send(body);
+  const res = await admin
+    .post('/api/admin/ota/dispatch')
+    .send({ adminPmsNote: 'Nguyen Van A\nCa sáng', ...body });
   return res;
 }
 
-const AGODA = { source: 'AGODA', rawText: AGODA_RAW, overrides: { paymentMode: 'CN' } };
+const AGODA = {
+  source: 'AGODA',
+  rawText: AGODA_RAW,
+  // Required since 5.2b: who created the reservation in the hotel PMS.
+  adminPmsNote: 'Nguyen Van A\nCa sáng',
+  overrides: { paymentMode: 'CN' },
+};
 
 /* ================================================================== */
 /* Every reviewed field reaches the database                           */

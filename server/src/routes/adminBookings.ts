@@ -7,12 +7,28 @@ import { loadBookingDetail } from '../booking/bookingRepo';
 import { serializeAdminBookingDetail } from '../booking/bookingView';
 import { updateBookingDraft, updateBookingSchema } from '../booking/adminEdit';
 import { markBookingReady, sendBooking } from '../booking/dispatch';
+import { editOtaFields } from '../booking/adminOtaFields';
+import { readRequestOrigin } from '../booking/requestAudit';
 import { confirmBusinessType } from '../booking/businessTypeService';
 import { latestAnalysis, listAnalyses, reanalyzeProof } from '../booking/ocr/analysisService';
 import { compareLatest, latestComparison, listComparisons } from '../booking/compare/compareService';
 import type { UserWithBranch } from '../auth/serialize';
 
 const readySchema = z.object({ note: z.string().trim().max(500).optional() });
+
+/**
+ * The two values an Admin may correct after dispatch. Both optional: an edit
+ * that names only one leaves the other exactly as it is.
+ */
+const otaFieldsSchema = z
+  .object({
+    adminPmsNote: z.string().trim().min(1, 'Vui lòng nhập người tạo PMS.').max(500).optional(),
+    reviewedPaymentMode: z.enum(['CN', 'HOTEL_PAYMENT']).optional(),
+  })
+  .strict()
+  .refine((v) => v.adminPmsNote !== undefined || v.reviewedPaymentMode !== undefined, {
+    message: 'Không có thay đổi nào được gửi.',
+  });
 
 const businessTypeSchema = z.object({ businessType: z.enum(['DIRECT', 'PARTNER']) });
 
@@ -85,6 +101,25 @@ export function createAdminBookingsRouter(): Router {
         getClock(),
       );
       res.status(200).json({ booking: serializeAdminBookingDetail(booking) });
+    })().catch(next);
+  });
+
+  /**
+   * PATCH /api/admin/bookings/:id/ota-fields — edit the two values an Admin owns.
+   *
+   * Additive: a NEW route beside the existing ones. No existing endpoint changed
+   * URL, body or meaning. Every accepted change writes an immutable correction.
+   */
+  router.patch('/admin/bookings/:id/ota-fields', (req, res, next) => {
+    (async () => {
+      const user = req.currentUser!;
+      const input = otaFieldsSchema.parse(req.body ?? {});
+      const result = await editOtaFields(bookingId(req.params.id), input, {
+        id: user.id,
+        origin: readRequestOrigin(req),
+      });
+      const booking = await loadBookingDetail(result.bookingId);
+      res.json({ booking: serializeAdminBookingDetail(booking), changed: result.changed });
     })().catch(next);
   });
 

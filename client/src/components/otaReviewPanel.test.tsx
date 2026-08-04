@@ -572,6 +572,8 @@ describe('dispatch', () => {
     mount();
 
     await screen.findByTestId('ota-review');
+    // Required since 5.2b: dispatch refuses without a named PMS creator.
+    await userEvent.type(screen.getByTestId('admin-pms-note'), 'Nguyen Van A');
     await userEvent.click(screen.getByRole('button', { name: /Gửi chi nhánh/ }));
 
     await waitFor(() => expect(dispatchBodies).toHaveLength(1));
@@ -586,6 +588,8 @@ describe('dispatch', () => {
     mount();
 
     await screen.findByTestId('ota-review');
+    // Required since 5.2b: dispatch refuses without a named PMS creator.
+    await userEvent.type(screen.getByTestId('admin-pms-note'), 'Nguyen Van A');
     await userEvent.click(screen.getByRole('button', { name: /Gửi chi nhánh/ }));
 
     expect(await screen.findByTestId('ota-dispatch-result')).toHaveTextContent(/Đã gửi chi nhánh/);
@@ -598,6 +602,8 @@ describe('dispatch', () => {
     mount();
 
     await screen.findByTestId('ota-review');
+    // Required since 5.2b: dispatch refuses without a named PMS creator.
+    await userEvent.type(screen.getByTestId('admin-pms-note'), 'Nguyen Van A');
     await userEvent.click(screen.getByRole('button', { name: /Gửi chi nhánh/ }));
 
     expect(await screen.findByTestId('ota-dispatch-result')).toHaveTextContent(/đã được gửi trước đó/);
@@ -609,6 +615,8 @@ describe('dispatch', () => {
     mount('CTRIP', (branchId, note) => calls.push([branchId, note]));
 
     await screen.findByTestId('ota-review');
+    // Required since 5.2b: dispatch refuses without a named PMS creator.
+    await userEvent.type(screen.getByTestId('admin-pms-note'), 'Nguyen Van A');
     await userEvent.click(screen.getByRole('button', { name: /Gửi chi nhánh/ }));
 
     await waitFor(() => expect(calls).toHaveLength(1));
@@ -631,6 +639,8 @@ describe('dispatch', () => {
         }),
       ),
     );
+    // Required since 5.2b: dispatch refuses without a named PMS creator.
+    await userEvent.type(screen.getByTestId('admin-pms-note'), 'Nguyen Van A');
     await userEvent.click(screen.getByRole('button', { name: /Gửi chi nhánh/ }));
 
     await waitFor(() => expect(screen.queryByTestId('ota-dispatch-result')).not.toBeInTheDocument());

@@ -47,7 +47,7 @@ afterAll(async () => testPrisma.$disconnect());
 async function dispatch(source: 'CTRIP' | 'AGODA', rawText: string) {
   const res = await admin
     .post('/api/admin/ota/dispatch')
-    .send({ source, rawText, overrides: { paymentMode: 'CN' } });
+    .send({ source, rawText, adminPmsNote: 'Nguyen Van A\nCa sáng', overrides: { paymentMode: 'CN' } });
   expect(res.status).toBe(201);
   return testPrisma.booking.findUniqueOrThrow({
     where: { id: res.body.bookingId as string },

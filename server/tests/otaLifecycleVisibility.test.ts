@@ -76,7 +76,7 @@ async function expectVisible(bookingId: string, step: string): Promise<void> {
 async function dispatchOne(): Promise<string> {
   const res = await admin
     .post('/api/admin/ota/dispatch')
-    .send({ source: 'AGODA', rawText: AGODA_RAW, overrides: { paymentMode: 'CN' } });
+    .send({ source: 'AGODA', rawText: AGODA_RAW, adminPmsNote: 'Nguyen Van A\nCa sáng', overrides: { paymentMode: 'CN' } });
   expect(res.status).toBe(201);
   return res.body.bookingId as string;
 }

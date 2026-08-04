@@ -884,6 +884,22 @@ model Booking {
   websiteLanguage    String?
   paymentType        String?
   benefitsIncluded   String?
+
+  /// ── WHAT THE ADMIN REVIEWED AND TYPED AT DISPATCH ─────────────────────
+  /// Deliberately separate from the fields above, which record what the OTA
+  /// SAID. These record what a human decided, and the two must never be
+  /// conflated: `paymentType` is the mail's wording, `reviewedPaymentMode` is
+  /// the mode the Admin accepted in the review screen.
+  ///
+  /// Who created the reservation in the hotel's PMS, typed by the Admin —
+  /// e.g. "Nguyen Van A / Morning Shift". Never generated, never inferred.
+  /// Required by the OTA dispatch endpoint; null for Booking.com bookings and
+  /// for every booking dispatched before this field existed.
+  adminPmsNote        String?
+  /// The payment mode the Admin accepted in the review ("CN" /
+  /// "HOTEL_PAYMENT"). Stored verbatim so reception shows exactly what was
+  /// reviewed rather than a value re-derived from the mail.
+  reviewedPaymentMode String?
   /// The review model that produced this booking, beside `parserVersion`.
   reviewVersion      String?
   /// The BUILD that ran — a git commit or release tag. `parserVersion` and

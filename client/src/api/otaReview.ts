@@ -157,8 +157,19 @@ export const otaReviewApi = {
    * review from the pasted text and these corrections and dispatches that, so
    * the browser cannot submit a booking the review would have refused.
    */
-  dispatch: (source: OtaReviewSource, rawText: string, overrides?: OtaReviewOverrides) =>
-    api.post<OtaDispatchResponse>('/admin/ota/dispatch', { source, rawText, overrides }),
+  /** `adminPmsNote` is required by the server: who created the PMS reservation. */
+  dispatch: (
+    source: OtaReviewSource,
+    rawText: string,
+    adminPmsNote: string,
+    overrides?: OtaReviewOverrides,
+  ) =>
+    api.post<OtaDispatchResponse>('/admin/ota/dispatch', {
+      source,
+      rawText,
+      adminPmsNote,
+      overrides,
+    }),
 
   /** Compares an amended mail with the dispatched booking. Writes nothing. */
   amendment: (source: OtaReviewSource, rawText: string, overrides?: OtaReviewOverrides) =>

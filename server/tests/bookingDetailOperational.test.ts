@@ -67,7 +67,7 @@ beforeAll(async () => {
   const dispatched = await admin
     .post('/api/admin/ota/dispatch')
     .set('User-Agent', UA)
-    .send({ source: 'AGODA', rawText: AGODA_RAW, overrides: { paymentMode: 'CN' } });
+    .send({ source: 'AGODA', rawText: AGODA_RAW, adminPmsNote: 'Nguyen Van A\nCa sáng', overrides: { paymentMode: 'CN' } });
   expect(dispatched.status).toBe(201);
   bookingId = dispatched.body.bookingId as string;
 

@@ -21,6 +21,12 @@ import { Toast } from './Toast';
 
 const MISSING_PHONE = '(Hiển thị số điện thoại)';
 
+/** How the reviewed payment mode reads to an operator. Never translated further. */
+const PAYMENT_MODE_LABEL: Record<string, string> = {
+  CN: 'CN',
+  HOTEL_PAYMENT: 'THANH TOÁN KHÁCH SẠN',
+};
+
 /** Booking.com is the only source that reliably supplies a guest phone. */
 function hasPhoneSection(booking: BookingDetail): boolean {
   if (booking.sourcePlatform === 'BOOKING_COM') return true;
@@ -54,7 +60,11 @@ function PaymentField({ booking }: { booking: BookingDetail }) {
     );
   }
 
-  const stated = (booking.ota.paymentType ?? '').trim();
+  // The reviewed mode wins: it is what the Admin accepted and what the branch
+  // was told. The mail's own wording is the fallback for bookings dispatched
+  // before the reviewed value was persisted.
+  const reviewed = (booking.reviewedPaymentMode ?? '').trim();
+  const stated = (reviewed.length > 0 ? PAYMENT_MODE_LABEL[reviewed] ?? reviewed : booking.ota.paymentType ?? '').trim();
   if (stated.length === 0) return null;
   return <ReadField label="Thanh toán" value={stated} />;
 }
@@ -185,7 +195,17 @@ export function BookingDetailView({
       </Card>
 
       {/* Generated PMS note */}
-      <PmsNoteCard booking={b} />
+      {/*
+        Who created the reservation in the hotel's PMS.
+
+        For an OTA booking this is the note the Admin TYPED at dispatch, shown
+        verbatim and never generated — a receptionist who finds something wrong
+        needs a person to ask, and a machine-written line answers a different
+        question. Booking.com keeps its generated note: its dispatch does not
+        collect one, and removing the note it has today would take away the text
+        reception copies for every reservation.
+      */}
+      {b.adminPmsNote ? <AdminPmsNoteCard note={b.adminPmsNote} /> : <PmsNoteCard booking={b} />}
 
       {/*
         H5/H10 — rooms and nightly rates are never collapsed. A receptionist
@@ -463,6 +483,25 @@ function RequestAuditBlock({ audit }: { audit: RequestAuditView }) {
 }
 
 /** The "Ghi chú tạo đơn" card: a generated, ready-to-paste note with one copy button. */
+/**
+ * The Admin's PMS creator note, exactly as typed.
+ *
+ * Rendered with `whitespace-pre-wrap` because operators write it over two
+ * lines — a name and a shift — and collapsing that into one would lose the
+ * distinction they deliberately made.
+ */
+function AdminPmsNoteCard({ note }: { note: string }) {
+  return (
+    <Card className="p-5" data-testid="admin-pms-note-card">
+      <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-700">
+        <StickyNote className="h-4 w-4 text-brand-600" aria-hidden="true" />
+        Người tạo PMS
+      </div>
+      <p className="whitespace-pre-wrap break-words text-sm text-slate-900">{note}</p>
+    </Card>
+  );
+}
+
 function PmsNoteCard({ booking }: { booking: BookingDetail }) {
   const result = buildPmsNote(booking);
   return (
