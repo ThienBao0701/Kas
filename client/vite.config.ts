@@ -14,22 +14,73 @@ export default defineConfig({
       registerType: 'prompt',
       // We register + surface updates ourselves via useRegisterSW (PwaManager).
       injectRegister: false,
-      includeAssets: ['icons/*.png'],
+      includeAssets: ['icons/*.png', 'favicon.ico', 'browserconfig.xml'],
       manifest: {
+        // A stable id keeps an installed app bound to this application even if
+        // start_url ever changes; without it the browser derives the identity
+        // from start_url and a change would register as a different app.
+        id: '/',
         name: 'Kas Booking Dispatch',
         short_name: 'Kas',
         description: 'Trung tâm điều phối đặt phòng Booking.com nội bộ.',
         lang: 'vi',
+        dir: 'ltr',
         display: 'standalone',
+        // Preferred first: a desktop window with no browser chrome at all.
+        // Browsers that do not know `window-controls-overlay` fall through to
+        // `standalone`, which is what ships today, so this cannot regress.
+        display_override: ['window-controls-overlay', 'standalone', 'minimal-ui'],
+        orientation: 'any',
         start_url: '/',
         scope: '/',
         theme_color: '#2563eb',
         background_color: '#ffffff',
+        categories: ['business', 'productivity', 'utilities'],
         icons: [
+          { src: 'icons/icon-16.png', sizes: '16x16', type: 'image/png', purpose: 'any' },
+          { src: 'icons/icon-32.png', sizes: '32x32', type: 'image/png', purpose: 'any' },
+          { src: 'icons/icon-48.png', sizes: '48x48', type: 'image/png', purpose: 'any' },
+          { src: 'icons/icon-64.png', sizes: '64x64', type: 'image/png', purpose: 'any' },
+          { src: 'icons/icon-72.png', sizes: '72x72', type: 'image/png', purpose: 'any' },
+          { src: 'icons/icon-96.png', sizes: '96x96', type: 'image/png', purpose: 'any' },
+          { src: 'icons/icon-128.png', sizes: '128x128', type: 'image/png', purpose: 'any' },
+          { src: 'icons/icon-144.png', sizes: '144x144', type: 'image/png', purpose: 'any' },
+          { src: 'icons/icon-152.png', sizes: '152x152', type: 'image/png', purpose: 'any' },
+          { src: 'icons/icon-180.png', sizes: '180x180', type: 'image/png', purpose: 'any' },
           { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+          { src: 'icons/icon-256.png', sizes: '256x256', type: 'image/png', purpose: 'any' },
+          { src: 'icons/icon-384.png', sizes: '384x384', type: 'image/png', purpose: 'any' },
           { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+          // Maskable is a SEPARATE purpose on purpose: an icon declared
+          // "any maskable" is padded on Android and looks shrunken on desktop.
           { src: 'icons/icon-maskable-192.png', sizes: '192x192', type: 'image/png', purpose: 'maskable' },
+          { src: 'icons/icon-maskable-384.png', sizes: '384x384', type: 'image/png', purpose: 'maskable' },
           { src: 'icons/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+        ],
+        // Jump-list entries on the taskbar / Start menu. Each points at a route
+        // that already exists; none creates a new capability.
+        shortcuts: [
+          {
+            name: 'Hộp thư vận hành',
+            short_name: 'Hộp thư',
+            description: 'Mọi đơn, nhóm theo tình trạng thực tế.',
+            url: '/app/inbox',
+            icons: [{ src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png' }],
+          },
+          {
+            name: 'Nhập đơn',
+            short_name: 'Nhập đơn',
+            description: 'Dán nội dung đặt phòng để điều phối.',
+            url: '/app/dispatch',
+            icons: [{ src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png' }],
+          },
+          {
+            name: 'Tổng quan',
+            short_name: 'Tổng quan',
+            description: 'Tình hình điều phối hôm nay.',
+            url: '/app/dashboard',
+            icons: [{ src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png' }],
+          },
         ],
       },
       workbox: {
