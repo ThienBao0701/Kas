@@ -53,3 +53,6 @@ server/uploads/
 
 # Pre-official-launch backups (DB + uploads snapshots) — never committed.
 backups/
+
+# Packaged Windows releases (produced by scripts/production/windows/Package-Kas.ps1)
+release/
