@@ -79,14 +79,15 @@ function paymentStatusOf(review: OtaReview): 'PAY_BEFORE' | 'PAY_AFTER' {
 }
 
 /**
- * A dispatch request: the review body plus the one value only a human supplies.
+ * A dispatch request is EXACTLY a review request.
  *
- * `adminPmsNote` is who created the reservation in the hotel's PMS. The route
- * requires it; this type makes it impossible to reach the write without one.
+ * It briefly carried an `adminPmsNote` the Admin typed — who created the
+ * reservation in the PMS. 5.2d removed that field: the receptionist needs the
+ * NOTE, not the name of whoever produced it, and asking for both put two
+ * different things under one label. Nothing a human types reaches the write
+ * any more; the note stored below is the one the review itself generated.
  */
-export interface OtaDispatchRequest extends OtaReviewRequest {
-  adminPmsNote: string;
-}
+export type OtaDispatchRequest = OtaReviewRequest;
 
 /**
  * Rebuilds the review, then persists it as a dispatched booking.
@@ -231,10 +232,20 @@ export async function dispatchOtaReview(
         countryOfResidence: extras?.countryOfResidence ?? null,
         websiteLanguage: extras?.websiteLanguage ?? null,
         paymentType: extras?.paymentType ?? null,
-        // What the ADMIN typed and reviewed, beside what the mail said. Both
-        // land in this create, so they share the dispatch transaction and a
-        // rollback takes them with everything else.
-        adminPmsNote: request.adminPmsNote.trim(),
+        // THE NOTE, STORED — not regenerated later.
+        //
+        // `review.note` is the exact text the Admin saw and approved on the
+        // review screen, produced by buildOtaPmsNote. Storing it is the only
+        // way reception can be shown that note at all: it cannot be rebuilt
+        // from this row, because the note's second line carries the GUEST's
+        // booked price and only the branch price is a column here. A screen
+        // that re-derived it would have to invent that figure, and the
+        // receptionist pastes this text into the hotel system as fact.
+        //
+        // It lands in the same create as the reviewed payment mode, so both
+        // share the dispatch transaction and a rollback takes them with
+        // everything else.
+        adminPmsNote: review.note,
         reviewedPaymentMode: review.paymentMode,
         benefitsIncluded: extras?.benefitsIncluded ?? null,
         phone: extras?.customerPhone ?? parsedBooking.phone ?? null,

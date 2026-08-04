@@ -137,8 +137,7 @@ describe('who may see where a change came from', () => {
     const b = await asReception();
     expect(b.id).toBe(bookingId);
     expect(b.rooms.length).toBeGreaterThan(0);
-    expect(b.timeline.length).toBeGreaterThan(0);
-    expect(b.corrections.length).toBeGreaterThan(0);
+    expect(b.adminPmsNote).toBeTruthy();
   });
 
   it('keeps raw text and detection debug away from the receptionist', async () => {
@@ -150,95 +149,90 @@ describe('who may see where a change came from', () => {
 });
 
 /* ================================================================== */
-/* Corrections                                                         */
+/* 5.2d — the blocks that stopped being projected                      */
 /* ================================================================== */
-describe('the correction history', () => {
-  it('reports every applied change, old beside new', async () => {
-    const b = await asAdmin();
-    const checkOut = b.corrections.find((c: { field: string }) => c.field === 'checkOut');
-    expect(checkOut).toBeDefined();
-    expect(checkOut.oldValue).toBe('2026-08-05');
-    expect(checkOut.newValue).toBe('2026-08-07');
-    expect(checkOut.appliedBy.fullName).toBeTruthy();
-  });
-
-  it('orders them oldest first, as applied', async () => {
-    const b = await asAdmin();
-    const times = b.corrections.map((c: { appliedAt: string }) => c.appliedAt);
-    expect(times).toEqual([...times].sort());
-  });
-
-  it('invents no reason — the column does not exist', async () => {
-    // The spec asked for a reason; nothing stores one. A plausible sentence
-    // generated here would be a fabricated audit record, which is worse than
-    // an absent field.
-    const b = await asAdmin();
-    for (const c of b.corrections) expect(c).not.toHaveProperty('reason');
-  });
-
-  it('shows the same corrections to a receptionist — this is booking data', async () => {
-    const [a, r] = [await asAdmin(), await asReception()];
-    expect(r.corrections).toEqual(a.corrections);
-  });
-});
-
-/* ================================================================== */
-/* Timeline                                                            */
-/* ================================================================== */
-describe('the timeline', () => {
-  it('is ordered oldest first', async () => {
-    const b = await asAdmin();
-    const times = b.timeline.map((e: { at: string }) => e.at);
-    expect(times).toEqual([...times].sort());
-  });
-
-  it('records the amendment as ONE event, not one per field', async () => {
-    // Corrections written by a single request are a single human action.
-    const b = await asAdmin();
-    const amendments = b.timeline.filter((e: { type: string }) => e.type === 'AMENDMENT_APPLIED');
-    expect(amendments).toHaveLength(1);
-    expect(amendments[0].description).toContain('checkOut');
-  });
-
-  it('includes the dispatch that created the booking', async () => {
-    const b = await asAdmin();
-    const types = b.timeline.map((e: { type: string }) => e.type);
-    expect(types.some((t: string) => t.startsWith('STATUS_'))).toBe(true);
-  });
-
-  it('carries no request metadata in its events', async () => {
-    const b = await asAdmin();
-    for (const e of b.timeline) {
-      expect(Object.keys(e).sort()).toEqual(['actor', 'at', 'description', 'type']);
+/**
+ * The correction history, the timeline and the OTA metadata block are no longer
+ * on the wire. THE RECORDS ARE NOT GONE — these tests assert both halves: the
+ * response does not carry them, and the same corrections are still in the
+ * database, where an audit reads them. Removing a screen must never be a way of
+ * quietly removing evidence.
+ */
+describe('what the detail no longer projects', () => {
+  it('sends no corrections array to anyone', async () => {
+    for (const b of [await asAdmin(), await asReception()]) {
+      expect(b).not.toHaveProperty('corrections');
     }
   });
+
+  it('sends no timeline to anyone', async () => {
+    for (const b of [await asAdmin(), await asReception()]) {
+      expect(b).not.toHaveProperty('timeline');
+    }
+  });
+
+  it('sends no status history to anyone', async () => {
+    // Unconsumed since the lifecycle UI went in 5.2; it was still being
+    // serialised on every detail request.
+    for (const b of [await asAdmin(), await asReception()]) {
+      expect(b).not.toHaveProperty('statusHistory');
+    }
+  });
+
+  it('still holds every correction in the database', async () => {
+    // The amendment this suite applied is on the row, whatever the API shows.
+    const corrections = await testPrisma.bookingCorrection.findMany({ where: { bookingId } });
+    expect(corrections.length).toBeGreaterThan(0);
+    const checkOut = corrections.find((c) => c.field === 'checkOut');
+    expect(checkOut?.oldValue).toBe('2026-08-05');
+    expect(checkOut?.newValue).toBe('2026-08-07');
+  });
+
+  it('still holds the status history in the database', async () => {
+    expect(await testPrisma.bookingStatusHistory.count({ where: { bookingId } })).toBeGreaterThan(0);
+  });
 });
 
 /* ================================================================== */
-/* OTA metadata and parser identity                                    */
+/* OTA metadata: one field, and only one                               */
 /* ================================================================== */
 describe('what the OTA said', () => {
-  it('exposes the stored platform metadata', async () => {
+  it('carries the mail’s payment wording and nothing else', async () => {
+    // The payment field falls back to this for bookings dispatched before the
+    // reviewed mode was stored. The other eleven fields went with the card.
     const b = await asAdmin();
-    expect(b.ota.sourcePlatform).toBe('AGODA');
-    expect(b.ota.parserVersion).toBeTruthy();
-    expect(b.ota.rawTextSha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(Object.keys(b.ota)).toEqual(['paymentType']);
   });
 
-  it('keeps the property ID as reference metadata only', async () => {
-    // It is audit data. Branch resolution never consults it, and the booking
-    // resolved to a branch by platform identity alone.
+  it('no longer ships the platform metadata nobody acted on', async () => {
     const b = await asAdmin();
-    expect(b.branchId).toBe(branchId);
-    expect('sourcePropertyId' in b.ota).toBe(true);
+    for (const gone of [
+      'sourcePlatform',
+      'sourcePropertyId',
+      'otaBookingStatus',
+      'ratePlanName',
+      'cancellationPolicy',
+      'countryOfResidence',
+      'websiteLanguage',
+      'benefitsIncluded',
+      'rawTextSha256',
+    ]) {
+      expect(b.ota, gone).not.toHaveProperty(gone);
+    }
+  });
+
+  it('keeps the columns behind it — only the projection shrank', async () => {
+    // Storage is untouched: this is a display change, and the mail's own
+    // metadata is still auditable on the row.
+    const row = await testPrisma.booking.findUniqueOrThrow({ where: { id: bookingId } });
+    expect(row.rawTextSha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(row.branchId).toBe(branchId);
   });
 
   it('holds parser commit and build ID under the Admin-only block', async () => {
     const b = await asAdmin();
     expect('parserCommit' in b.requestAudit).toBe(true);
     expect('reviewBuildId' in b.requestAudit).toBe(true);
-    expect(b.ota).not.toHaveProperty('parserCommit');
-    expect(b.ota).not.toHaveProperty('reviewBuildId');
   });
 
   it('reports nulls rather than guesses for a Booking.com booking', async () => {
@@ -255,10 +249,8 @@ describe('what the OTA said', () => {
       },
     });
     const b = (await admin.get(`/api/bookings/${plain.id}`)).body.booking;
-    expect(b.ota.otaBookingStatus).toBeNull();
-    expect(b.ota.ratePlanName).toBeNull();
-    expect(b.ota.rawTextSha256).toBeNull();
-    expect(b.corrections).toEqual([]);
+    expect(b.ota.paymentType).toBeNull();
+    expect(b.adminPmsNote).toBeNull();
     expect(b.requestAudit.requests).toEqual([]);
   });
 });

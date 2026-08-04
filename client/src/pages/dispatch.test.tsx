@@ -48,7 +48,6 @@ function detail(overrides: Record<string, unknown> = {}) {
       },
     ],
     warnings: [],
-    statusHistory: [],
     ...EMPTY_OPERATIONAL_BLOCKS,
     proofs: [],
     createdBy: null,

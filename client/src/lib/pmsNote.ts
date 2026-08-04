@@ -1,8 +1,14 @@
 /**
- * Generates the receptionist-ready "Ghi chú tạo đơn" note — the short plain-text
- * line the receptionist pastes when creating the reservation in the external
- * hotel system. Everything here is pure and deterministic (the current date is
+ * Generates the receptionist-ready PMS note — the short plain-text line the
+ * receptionist pastes when creating the reservation in the external hotel
+ * system. Everything here is pure and deterministic (the current date is
  * injected) so the exact output can be unit-tested.
+ *
+ * BOOKING.COM ONLY. Agoda and CTrip notes have a different format entirely and
+ * are generated once on the server at dispatch, then stored — see
+ * `server/src/booking/otaPmsNote.ts`. Nothing here is reachable from an OTA
+ * booking, which is what keeps "PAY BEFORE CHECK-IN" off a source that never
+ * says it.
  *
  * Layout:
  *   LINE 1: BK <CODE>_<ROOM_ABBR>_<NIGHTS> ĐÊM <TOTAL> <PAY> CI

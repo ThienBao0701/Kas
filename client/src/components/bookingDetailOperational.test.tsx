@@ -1,12 +1,18 @@
 /**
- * The operational sections of the booking detail.
+ * The operational sections of the booking detail — what is left of them.
  *
- * Two behaviours are worth pinning. First, a section with nothing in it is not
- * rendered: eight "—" rows on a Booking.com booking would suggest the OTA sent
- * details that were lost, when it never sent any. Second, request provenance
- * appears only for an Admin — and because the server omits the key entirely for
- * a receptionist, the test asserts on the receptionist's real payload shape
- * rather than on a client-side flag.
+ * 5.2d deleted three: what the OTA said, the edit history and the activity log.
+ * Nobody in the pilot acted on any of them, and a receptionist reading a screen
+ * of provenance is a receptionist not reading the reservation. This file keeps
+ * a set of assertions that they are GONE, for both roles and for a booking
+ * carrying the data that used to fill them — a section that renders "only for
+ * admins" is one role check away from coming back.
+ *
+ * Two behaviours remain pinned. A section with nothing in it is not rendered:
+ * empty rows would suggest details were lost when none were ever sent. And
+ * request provenance appears only for an Admin — because the server omits the
+ * key entirely for a receptionist, that is asserted against the receptionist's
+ * real payload shape rather than a client-side flag.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { screen } from '@testing-library/react';
@@ -48,7 +54,6 @@ const BASE = {
   isLastMinute: false,
   rooms: [],
   warnings: [],
-  statusHistory: [],
   proofs: [],
   createdBy: null,
   sentBy: null,
@@ -66,17 +71,25 @@ const BASE = {
 const IP = '203.0.113.9';
 const UA = 'Mozilla/5.0 (KasProbe)';
 
-/** A booking that has actually been through the Phase 5 workflow. */
+/**
+ * A booking that has been through the Phase 5 workflow.
+ *
+ * It deliberately still carries the REMOVED blocks — the OTA metadata, an
+ * applied correction and a timeline. The server no longer sends them, but a
+ * fixture that omits them could not tell a deleted card from a card that
+ * simply had no data. Sending them and finding nothing on screen is the
+ * assertion.
+ */
 const RICH = {
   ...BASE,
   ota: {
-    ...EMPTY_OPERATIONAL_BLOCKS.ota,
-    sourcePlatform: 'AGODA',
-    sourcePropertyId: '1234567',
+    paymentType: 'CN',
+    // Deliberately not digits: the guest phone contains "1234567", and a
+    // substring assertion against that would pass for the wrong reason.
+    sourcePropertyId: 'PROPERTY-ZZ9',
     otaBookingStatus: 'Confirmed',
     ratePlanName: 'Standard Rate',
     countryOfResidence: 'Vietnam',
-    parserVersion: '5.0.0',
     rawTextSha256: 'a'.repeat(64),
   },
   operational: {
@@ -144,55 +157,65 @@ function mount(booking: unknown, user: typeof ADMIN_USER) {
 /* Sections appear only when they hold something                       */
 /* ================================================================== */
 describe('empty sections stay out of the way', () => {
-  it('renders no OTA, operational, correction or timeline card for a bare booking', async () => {
+  it('renders no operational card for a bare booking', async () => {
     mount(BASE, ADMIN_USER);
     // Wait for the detail to load before asserting on what is absent.
     expect(await screen.findByRole('heading', { name: 'Nguyễn Văn A' })).toBeInTheDocument();
-    expect(screen.queryByTestId('ota-metadata-card')).toBeNull();
     expect(screen.queryByTestId('operational-card')).toBeNull();
-    expect(screen.queryByTestId('corrections-card')).toBeNull();
-    expect(screen.queryByTestId('timeline-card')).toBeNull();
   });
 
-  it('renders each one once the booking has been through the workflow', async () => {
+  it('renders it once the booking has been through the workflow', async () => {
     mount(RICH, ADMIN_USER);
-    expect(await screen.findByTestId('ota-metadata-card')).toBeInTheDocument();
-    expect(screen.getByTestId('operational-card')).toBeInTheDocument();
-    expect(screen.getByTestId('corrections-card')).toBeInTheDocument();
-    expect(screen.getByTestId('timeline-card')).toBeInTheDocument();
+    expect(await screen.findByTestId('operational-card')).toBeInTheDocument();
   });
+});
+
+/* ================================================================== */
+/* 5.2d — the three sections that are gone, for everyone               */
+/* ================================================================== */
+describe('sections removed in 5.2d', () => {
+  /**
+   * Both roles, one loop. The point of removal is that neither an Admin nor a
+   * receptionist can reach these; a test that only checked reception would pass
+   * just as well against a role check, which is what this phase replaced.
+   */
+  for (const [role, user] of [
+    ['admin', ADMIN_USER],
+    ['reception', RECEPTIONIST_USER],
+  ] as const) {
+    it(`shows ${role} no OTA information section`, async () => {
+      mount(user === ADMIN_USER ? RICH : withoutAudit(RICH), user);
+      expect(await screen.findByRole('heading', { name: 'Nguyễn Văn A' })).toBeInTheDocument();
+      expect(screen.queryByTestId('ota-metadata-card')).toBeNull();
+      // Not merely unlabelled — the values themselves are nowhere on the page.
+      expect(document.body.textContent).not.toContain('Standard Rate');
+      expect(document.body.textContent).not.toContain('PROPERTY-ZZ9');
+      expect(document.body.textContent).not.toContain('Thông tin từ OTA');
+    });
+
+    it(`shows ${role} no edit history`, async () => {
+      mount(user === ADMIN_USER ? RICH : withoutAudit(RICH), user);
+      expect(await screen.findByRole('heading', { name: 'Nguyễn Văn A' })).toBeInTheDocument();
+      expect(screen.queryByTestId('corrections-card')).toBeNull();
+      expect(screen.queryByTestId('correction-row')).toBeNull();
+      expect(document.body.textContent).not.toContain('Lịch sử chỉnh sửa');
+    });
+
+    it(`shows ${role} no activity log`, async () => {
+      mount(user === ADMIN_USER ? RICH : withoutAudit(RICH), user);
+      expect(await screen.findByRole('heading', { name: 'Nguyễn Văn A' })).toBeInTheDocument();
+      expect(screen.queryByTestId('timeline-card')).toBeNull();
+      expect(screen.queryByTestId('timeline-event')).toBeNull();
+      expect(document.body.textContent).not.toContain('Điều phối tới chi nhánh');
+      expect(document.body.textContent).not.toContain('Nhật ký');
+    });
+  }
 });
 
 /* ================================================================== */
 /* Content                                                             */
 /* ================================================================== */
 describe('what the sections show', () => {
-  it('shows the OTA values verbatim and labels Property ID as reference only', async () => {
-    mount(RICH, ADMIN_USER);
-    const card = await screen.findByTestId('ota-metadata-card');
-    expect(card).toHaveTextContent('Confirmed');
-    expect(card).toHaveTextContent('Standard Rate');
-    expect(card).toHaveTextContent('1234567');
-    expect(card).toHaveTextContent('chỉ để đối chiếu');
-  });
-
-  it('shows each correction with its old and new value', async () => {
-    mount(RICH, ADMIN_USER);
-    const rows = await screen.findAllByTestId('correction-row');
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toHaveTextContent('checkOut');
-    expect(rows[0]).toHaveTextContent('2026-08-05');
-    expect(rows[0]).toHaveTextContent('2026-08-07');
-  });
-
-  it('lists every timeline event in the order it was given', async () => {
-    mount(RICH, ADMIN_USER);
-    const events = await screen.findAllByTestId('timeline-event');
-    expect(events).toHaveLength(2);
-    expect(events[0]).toHaveTextContent('Điều phối tới chi nhánh');
-    expect(events[1]).toHaveTextContent('Áp dụng 1 thay đổi: checkOut');
-  });
-
   it('names who received the booking and when', async () => {
     mount(RICH, ADMIN_USER);
     const card = await screen.findByTestId('operational-card');

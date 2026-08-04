@@ -52,7 +52,6 @@ const NEW_BOOKING = {
     },
   ],
   warnings: [],
-  statusHistory: [],
   ...EMPTY_OPERATIONAL_BLOCKS,
   proofs: [],
   sourcePlatform: 'BOOKING_COM',
@@ -139,7 +138,7 @@ describe('BookingDetailPage — simplified copy surface', () => {
     renderApp('/app/booking/b1');
 
     expect(await screen.findByText('Chưa có mã Booking để tạo ghi chú.')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Sao chép ghi chú' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sao chép PMS Note' })).not.toBeInTheDocument();
   });
 });
 
@@ -166,7 +165,7 @@ describe('BookingDetailPage — receptionist proof upload', () => {
     expect(await screen.findByRole('heading', { name: 'Nguyễn Văn A' })).toBeInTheDocument();
     expect(screen.getByLabelText('Sao chép Tên khách')).toBeInTheDocument();
     expect(screen.getByLabelText('Sao chép Mã Booking')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Sao chép ghi chú' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sao chép PMS Note' })).toBeInTheDocument();
 
     // Upload card wording, and the submit button is disabled until a file is chosen.
     expect(

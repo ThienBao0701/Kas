@@ -77,7 +77,6 @@ const BOOKING = {
     },
   ],
   warnings: [],
-  statusHistory: [],
   ...EMPTY_OPERATIONAL_BLOCKS,
   proofs: [PROOF],
   sourcePlatform: 'BOOKING_COM',

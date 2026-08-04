@@ -41,26 +41,12 @@ function booking(overrides: Partial<BookingDetail> = {}): BookingDetail {
       },
     ],
     warnings: [],
-    statusHistory: [],
     // 5.2b: a Booking.com fixture collects no Admin note, so both are null.
     adminPmsNote: null,
     reviewedPaymentMode: null,
     // Phase 5 operational blocks — a Booking.com fixture stores none of the
     // OTA metadata, exactly as the database does.
-    ota: {
-      sourcePlatform: 'BOOKING_COM',
-      sourcePropertyId: null,
-      otaBookingStatus: null,
-      ratePlanName: null,
-      cancellationPolicy: null,
-      countryOfResidence: null,
-      websiteLanguage: null,
-      paymentType: null,
-      benefitsIncluded: null,
-      parserVersion: null,
-      reviewVersion: null,
-      rawTextSha256: null,
-    },
+    ota: { paymentType: null },
     operational: {
       receivedAt: null,
       receivedBy: null,
@@ -72,8 +58,6 @@ function booking(overrides: Partial<BookingDetail> = {}): BookingDetail {
       cancelledBy: null,
       cancellationReason: null,
     },
-    corrections: [],
-    timeline: [],
     proofs: [],
     createdBy: null,
     sentBy: null,

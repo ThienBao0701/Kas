@@ -124,29 +124,18 @@ export interface WarningView {
   severity: 'INFO' | 'WARNING' | 'ERROR';
 }
 
-export interface StatusHistoryEntry {
-  id: string;
-  oldStatus: BookingStatus | null;
-  newStatus: BookingStatus;
-  changedBy: Actor | null;
-  changedAt: string;
-  note: string | null;
-}
 
-/** What the OTA said about the booking, and which build read it. */
+/**
+ * The one thing still read from what the OTA said.
+ *
+ * The rest of the block — rate plan, cancellation policy, country, language,
+ * property id, build hashes — went with the card that displayed it: none of it
+ * was ever acted on at a branch. `paymentType` stays because the payment field
+ * falls back to it for OTA bookings dispatched before `reviewedPaymentMode`
+ * existed. The server sends exactly this shape.
+ */
 export interface OtaMetadata {
-  sourcePlatform: BookingSource;
-  sourcePropertyId: string | null;
-  otaBookingStatus: string | null;
-  ratePlanName: string | null;
-  cancellationPolicy: string | null;
-  countryOfResidence: string | null;
-  websiteLanguage: string | null;
   paymentType: string | null;
-  benefitsIncluded: string | null;
-  parserVersion: string | null;
-  reviewVersion: string | null;
-  rawTextSha256: string | null;
 }
 
 /** What actually happened during the stay, beside what was expected. */
@@ -160,29 +149,6 @@ export interface OperationalRecord {
   cancelledAt: string | null;
   cancelledBy: Actor | null;
   cancellationReason: string | null;
-}
-
-/**
- * One applied field change. Append-only on the server.
- *
- * There is no `reason`: the database does not store one, and inventing a
- * plausible sentence for an audit record would be worse than its absence.
- */
-export interface CorrectionEntry {
-  id: string;
-  field: string;
-  oldValue: string | null;
-  newValue: string | null;
-  appliedBy: Actor | null;
-  appliedAt: string;
-}
-
-/** A derived, ordered event — assembled from records that already exist. */
-export interface TimelineEvent {
-  at: string;
-  type: string;
-  description: string;
-  actor: Actor | null;
 }
 
 /**
@@ -232,7 +198,6 @@ export interface BookingDetail {
   isLastMinute: boolean;
   rooms: RoomView[];
   warnings: WarningView[];
-  statusHistory: StatusHistoryEntry[];
   proofs: ProofView[];
   createdBy: Actor | null;
   sentBy: Actor | null;
@@ -244,14 +209,16 @@ export interface BookingDetail {
   completedAt: string | null;
   completionNote: string | null;
   reviewedAt: string | null;
-  /** Who created the PMS reservation, typed by the Admin. Null for Booking.com. */
+  /**
+   * The PMS note exactly as it was generated and stored at dispatch. Null for
+   * Booking.com, whose note is built from the booking itself, and for every OTA
+   * booking dispatched before the note was stored.
+   */
   adminPmsNote: string | null;
   /** The payment mode the Admin accepted at dispatch. */
   reviewedPaymentMode: string | null;
   ota: OtaMetadata;
   operational: OperationalRecord;
-  corrections: CorrectionEntry[];
-  timeline: TimelineEvent[];
   /** Absent for receptionists — the server strips it. */
   requestAudit?: RequestAuditView;
 }
@@ -328,7 +295,6 @@ export interface HistoryListItem {
   reviewedBy: Actor | null;
   reviewedAt: string | null;
   createdAt: string;
-  adminPmsNote: string | null;
   reviewedPaymentMode: string | null;
 }
 

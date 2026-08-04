@@ -73,27 +73,6 @@ const reviewSchema = z.object({
 });
 
 /**
- * Dispatch takes everything the review takes, plus the one thing only a human
- * can supply: who created the reservation in the hotel's PMS.
- *
- * REQUIRED, and required HERE rather than on the review, because the review is
- * a preview an Admin runs repeatedly while correcting fields — demanding the
- * note to look at a parse would train people to type a placeholder. Dispatch is
- * the moment the branch is told, and that is the moment a name must exist.
- *
- * The Booking.com send endpoint is deliberately NOT changed: its contract is
- * production-certified and a newly-required field would reject requests that
- * succeed today.
- */
-const dispatchSchema = reviewSchema.extend({
-  adminPmsNote: z
-    .string()
-    .trim()
-    .min(1, 'Vui lòng nhập người tạo PMS.')
-    .max(500, 'Ghi chú người tạo PMS quá dài.'),
-});
-
-/**
  * An amendment adds the reviewer's verdict to the review body: which changed
  * fields they accepted. Omitting it accepts them all.
  */
@@ -121,13 +100,19 @@ export function createOtaReviewRouter(): Router {
    * review from the pasted text and the Admin's corrections and dispatches THAT
    * — a client cannot submit a booking the review screen would have blocked.
    *
+   * EXACTLY the review body, again. It briefly required an extra `adminPmsNote`
+   * naming who created the reservation in the PMS; 5.2d removed that field, and
+   * the schema went with it. A body that still carries one is accepted and the
+   * value ignored — Zod strips unknown keys — so a browser left open across the
+   * upgrade keeps working rather than failing validation mid-shift.
+   *
    * Idempotent by (booking code, platform), so a double click, a retry or a
    * resubmitted form returns the booking already dispatched rather than
    * creating a second one. 200 for an existing booking, 201 for a new one.
    */
   router.post('/admin/ota/dispatch', (req, res, next) => {
     (async () => {
-      const input = dispatchSchema.parse(req.body ?? {});
+      const input = reviewSchema.parse(req.body ?? {});
       const actor = req.currentUser!;
       const result = await dispatchOtaReview(input, {
         id: actor.id,

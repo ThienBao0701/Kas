@@ -27,7 +27,7 @@ afterEach(() => {
 describe('Section', () => {
   const mount = () =>
     render(
-      <Section id="t" title="Nhật ký" count={3} testId="s">
+      <Section id="t" title="Mục thử nghiệm" count={3} testId="s">
         <p>nội dung bên trong</p>
       </Section>,
     );
@@ -39,13 +39,13 @@ describe('Section', () => {
 
   it('unmounts its children when collapsed', async () => {
     mount();
-    await userEvent.click(screen.getByRole('button', { name: /Nhật ký/ }));
+    await userEvent.click(screen.getByRole('button', { name: /Mục thử nghiệm/ }));
     expect(screen.queryByText('nội dung bên trong')).toBeNull();
   });
 
   it('reports its expanded state to assistive tech', async () => {
     mount();
-    const toggle = screen.getByRole('button', { name: /Nhật ký/ });
+    const toggle = screen.getByRole('button', { name: /Mục thử nghiệm/ });
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
     await userEvent.click(toggle);
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
@@ -53,7 +53,7 @@ describe('Section', () => {
 
   it('links the toggle to the panel it controls', () => {
     mount();
-    const toggle = screen.getByRole('button', { name: /Nhật ký/ });
+    const toggle = screen.getByRole('button', { name: /Mục thử nghiệm/ });
     const panel = screen.getByRole('region');
     expect(toggle.getAttribute('aria-controls')).toBe(panel.getAttribute('id'));
   });
@@ -66,14 +66,14 @@ describe('Section', () => {
   it('is reachable and operable by keyboard alone', async () => {
     mount();
     await userEvent.tab();
-    expect(screen.getByRole('button', { name: /Nhật ký/ })).toHaveFocus();
+    expect(screen.getByRole('button', { name: /Mục thử nghiệm/ })).toHaveFocus();
     await userEvent.keyboard('{Enter}');
     expect(screen.queryByText('nội dung bên trong')).toBeNull();
   });
 
   it('remembers the collapsed choice for next time', async () => {
     const first = mount();
-    await userEvent.click(screen.getByRole('button', { name: /Nhật ký/ }));
+    await userEvent.click(screen.getByRole('button', { name: /Mục thử nghiệm/ }));
     first.unmount();
 
     mount();

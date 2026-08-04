@@ -9,7 +9,6 @@ export const BOOKING_DETAIL_INCLUDE = {
   branch: true,
   rooms: { include: { nights: true } },
   warnings: true,
-  statusHistory: { include: { changedBy: true }, orderBy: { changedAt: 'asc' } },
   sentBy: true,
   completedBy: true,
   reviewedBy: true,
@@ -18,9 +17,12 @@ export const BOOKING_DETAIL_INCLUDE = {
     include: { submittedBy: true, reviewedBy: true },
     orderBy: { attemptNumber: 'asc' },
   },
-  // Append-only corrections, with the request that produced each one. The
-  // request context is loaded here but reaches ADMINS ONLY — see the ops
-  // serializer, which strips it.
+  // Append-only corrections, loaded ONLY for the request provenance attached to
+  // each one. The corrections themselves are no longer projected onto the wire
+  // — 5.2d removed the edit-history table from every screen — but the requests
+  // that produced them remain the Admin's audit trail, and they are reachable
+  // only through this relation. The request context reaches ADMINS ONLY; the
+  // ops serializer strips it.
   corrections: {
     include: { correctedBy: true, requestAudit: true },
     orderBy: { correctedAt: 'asc' },
@@ -120,17 +122,6 @@ function warningsView(warnings: BookingDetail['warnings']) {
   return warnings.map((w) => ({ code: w.code, message: w.message, severity: w.severity }));
 }
 
-function statusHistoryView(history: BookingDetail['statusHistory']) {
-  return history.map((h) => ({
-    id: h.id,
-    oldStatus: h.oldStatus,
-    newStatus: h.newStatus,
-    changedBy: actor(h.changedBy),
-    changedAt: h.changedAt.toISOString(),
-    note: h.note,
-  }));
-}
-
 /** The authenticated image endpoint for a proof — never a filesystem path. */
 export function proofImageUrl(bookingId: string, proofId: string): string {
   return `/api/bookings/${bookingId}/proofs/${proofId}/image`;
@@ -164,27 +155,24 @@ function proofsView(bookingId: string, proofs: BookingDetail['proofs']) {
     .map((p) => proofView(bookingId, p));
 }
 
-/** The full booking detail an Admin sees (includes rawText). */
 /**
- * What the platform said and which build read it.
+ * The one thing a screen still reads from what the OTA said.
  *
- * Every value is stored; nothing here is derived. A Booking.com booking leaves
- * all of them null, exactly as it does in the database.
+ * This block used to carry twelve fields — rate plan, cancellation policy,
+ * country of residence, website language, property id, build hashes. None of
+ * them was ever acted on: a receptionist creates the reservation from the
+ * guest, the dates, the rooms and the note, and an Admin who needs the rest
+ * reads the original mail. 5.2d removed the card that displayed them, so the
+ * server stops sending them.
+ *
+ * `paymentType` survives because it is still displayed: it is the mail's own
+ * payment wording, and it is the fallback in the payment field for OTA bookings
+ * dispatched before `reviewedPaymentMode` was stored. Nothing here is derived,
+ * and the COLUMNS all remain — only the projection shrank.
  */
 function otaMetadataView(booking: BookingDetail) {
   return {
-    sourcePlatform: booking.sourcePlatform,
-    sourcePropertyId: booking.sourcePropertyId,
-    otaBookingStatus: booking.otaBookingStatus,
-    ratePlanName: booking.ratePlanName,
-    cancellationPolicy: booking.cancellationPolicy,
-    countryOfResidence: booking.countryOfResidence,
-    websiteLanguage: booking.websiteLanguage,
     paymentType: booking.paymentType,
-    benefitsIncluded: booking.benefitsIncluded,
-    parserVersion: booking.parserVersion,
-    reviewVersion: booking.reviewVersion,
-    rawTextSha256: booking.rawTextSha256,
   };
 }
 
@@ -201,24 +189,6 @@ function operationalView(booking: BookingDetail) {
     cancelledBy: actor(booking.cancelledBy),
     cancellationReason: booking.cancellationReason,
   };
-}
-
-/**
- * The append-only corrections, exactly as stored.
- *
- * `BookingCorrection` has no reason column, so none is reported. The nearest
- * stored provenance is the request that made the change, and that is admin-only
- * — it appears in `requestAudit`, not here.
- */
-function correctionsView(booking: BookingDetail) {
-  return booking.corrections.map((c) => ({
-    id: c.id,
-    field: c.field,
-    oldValue: c.oldValue,
-    newValue: c.newValue,
-    appliedBy: actor(c.correctedBy),
-    appliedAt: c.correctedAt.toISOString(),
-  }));
 }
 
 /**
@@ -254,58 +224,7 @@ function auditRow(audit: NonNullable<BookingDetail['corrections'][number]['reque
   };
 }
 
-/**
- * One ordered story of the booking, assembled from records that already exist.
- *
- * Derived, never stored: duplicating these events into a timeline table would
- * create a second account of the same facts that could drift from the first.
- */
-function timelineView(booking: BookingDetail) {
-  const events: { at: string; type: string; description: string; actor: ReturnType<typeof actor> }[] = [];
-
-  for (const h of booking.statusHistory) {
-    events.push({
-      at: h.changedAt.toISOString(),
-      type: `STATUS_${h.newStatus}`,
-      description: h.note ?? `${h.oldStatus ?? '—'} → ${h.newStatus}`,
-      actor: actor(h.changedBy),
-    });
-  }
-  for (const p of booking.proofs) {
-    events.push({
-      at: p.submittedAt.toISOString(),
-      type: 'PROOF_SUBMITTED',
-      description: `Nộp ảnh tạo đơn (lần ${p.attemptNumber})`,
-      actor: actor(p.submittedBy),
-    });
-    if (p.reviewedAt) {
-      events.push({
-        at: p.reviewedAt.toISOString(),
-        type: p.status === 'APPROVED' ? 'PROOF_APPROVED' : 'PROOF_REJECTED',
-        description: p.status === 'APPROVED' ? 'Duyệt ảnh tạo đơn' : 'Từ chối ảnh tạo đơn',
-        actor: actor(p.reviewedBy),
-      });
-    }
-  }
-  // Corrections applied in one request are one amendment, not several events.
-  const byRequest = new Map<string, typeof booking.corrections>();
-  for (const c of booking.corrections) {
-    const key = c.requestAuditId ?? c.correctedAt.toISOString();
-    byRequest.set(key, [...(byRequest.get(key) ?? []), c]);
-  }
-  for (const group of byRequest.values()) {
-    const first = group[0]!;
-    events.push({
-      at: first.correctedAt.toISOString(),
-      type: 'AMENDMENT_APPLIED',
-      description: `Áp dụng ${group.length} thay đổi: ${group.map((c) => c.field).join(', ')}`,
-      actor: actor(first.correctedBy),
-    });
-  }
-
-  return events.sort((a, b) => a.at.localeCompare(b.at));
-}
-
+/** The full booking detail an Admin sees (includes rawText). */
 export function serializeAdminBookingDetail(booking: BookingDetail) {
   return {
     id: booking.id,
@@ -335,7 +254,6 @@ export function serializeAdminBookingDetail(booking: BookingDetail) {
     isLastMinute: booking.isLastMinute,
     rooms: roomsView(booking.rooms),
     warnings: warningsView(booking.warnings),
-    statusHistory: statusHistoryView(booking.statusHistory),
     proofs: proofsView(booking.id, booking.proofs),
     createdBy: actor(booking.createdBy),
     sentBy: actor(booking.sentBy),
@@ -348,16 +266,16 @@ export function serializeAdminBookingDetail(booking: BookingDetail) {
     completionNote: booking.completionNote,
     reviewedAt: iso(booking.reviewedAt),
 
-    // What a HUMAN decided at dispatch. Null for Booking.com, which does not
-    // collect a note, and for everything dispatched before these existed.
+    // The PMS note as it was produced at dispatch and stored, and the payment
+    // mode the Admin accepted. Null for Booking.com, which generates its note
+    // from the booking itself, and for everything dispatched before these
+    // columns existed.
     adminPmsNote: booking.adminPmsNote,
     reviewedPaymentMode: booking.reviewedPaymentMode,
 
     // Phase 5 operational record, all of it already stored.
     ota: otaMetadataView(booking),
     operational: operationalView(booking),
-    corrections: correctionsView(booking),
-    timeline: timelineView(booking),
     // ADMIN ONLY — stripped for reception below.
     requestAudit: adminAuditView(booking),
   };
@@ -505,10 +423,6 @@ export function serializeHistoryListItem(booking: BookingListItem) {
     reviewedBy: actor(booking.reviewedBy),
     reviewedAt: iso(booking.reviewedAt),
     createdAt: booking.createdAt.toISOString(),
-    // Who created the reservation in the PMS, as the Admin typed it. History
-    // shows this rather than the dispatching account: the account is whoever
-    // was logged in, which is not necessarily who did the work.
-    adminPmsNote: booking.adminPmsNote,
     reviewedPaymentMode: booking.reviewedPaymentMode,
   };
 }

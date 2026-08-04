@@ -35,26 +35,17 @@ export const RECEPTIONIST_USER: AuthUser = {
 /**
  * The Phase 5 operational blocks in their empty state.
  *
- * The detail endpoint ALWAYS sends these four keys — a booking with no
- * amendments sends empty collections, not absent ones — so a fixture that
- * omits them describes a response the server cannot produce. Spread this into
- * booking fixtures rather than teaching the components to tolerate a shape
- * that only exists in tests.
+ * The detail endpoint ALWAYS sends these keys, so a fixture that omits them
+ * describes a response the server cannot produce. Spread this into booking
+ * fixtures rather than teaching the components to tolerate a shape that only
+ * exists in tests.
+ *
+ * `ota` carries ONE field since 5.2d. The metadata card that displayed the
+ * other eleven is gone, and the serializer stopped sending them.
  */
 export const EMPTY_OPERATIONAL_BLOCKS = {
   ota: {
-    sourcePlatform: 'BOOKING_COM',
-    sourcePropertyId: null,
-    otaBookingStatus: null,
-    ratePlanName: null,
-    cancellationPolicy: null,
-    countryOfResidence: null,
-    websiteLanguage: null,
     paymentType: null,
-    benefitsIncluded: null,
-    parserVersion: null,
-    reviewVersion: null,
-    rawTextSha256: null,
   },
   operational: {
     receivedAt: null,
@@ -67,8 +58,6 @@ export const EMPTY_OPERATIONAL_BLOCKS = {
     cancelledBy: null,
     cancellationReason: null,
   },
-  corrections: [],
-  timeline: [],
 };
 
 export function jsonResponse(status: number, body?: unknown): Response {

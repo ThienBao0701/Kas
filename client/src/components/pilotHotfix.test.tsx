@@ -49,7 +49,6 @@ function booking(over: Partial<BookingDetail> = {}): BookingDetail {
     isLastMinute: false,
     rooms: [],
     warnings: [],
-    statusHistory: [],
     proofs: [],
     createdBy: null,
     sentBy: null,
@@ -73,7 +72,7 @@ function otaBooking(source: BookingSource, paymentType: string | null, over: Par
   return booking({
     sourcePlatform: source,
     phone: null,
-    ota: { ...EMPTY_OPERATIONAL_BLOCKS.ota, sourcePlatform: source, paymentType },
+    ota: { paymentType },
     ...over,
   });
 }
@@ -219,22 +218,12 @@ describe('H6 lifecycle controls', () => {
 /* H8 — reception sees only what it works from                         */
 /* ================================================================== */
 describe('H8 reception booking detail', () => {
+  // 5.2d removed the corrections and timeline blocks from the response
+  // entirely, so this fixture no longer carries them — the operational record
+  // is what is left to withhold from reception.
   const rich = () =>
     booking({
       rooms: [ROOM],
-      corrections: [
-        {
-          id: 'c1',
-          field: 'checkOut',
-          oldValue: '2026-08-11',
-          newValue: '2026-08-12',
-          appliedBy: { id: 1, fullName: 'Quản trị viên' },
-          appliedAt: '2026-08-02T04:00:00.000Z',
-        },
-      ],
-      timeline: [
-        { at: '2026-08-01T02:00:00.000Z', type: 'STATUS_NEW', description: 'Điều phối', actor: null },
-      ],
       operational: {
         ...EMPTY_OPERATIONAL_BLOCKS.operational,
         receivedAt: '2026-08-02T03:00:00.000Z',
@@ -242,10 +231,8 @@ describe('H8 reception booking detail', () => {
       },
     });
 
-  it('hides timeline, corrections and operational history from reception', () => {
+  it('hides operational history from reception', () => {
     mount(rich(), false);
-    expect(screen.queryByTestId('timeline-card')).toBeNull();
-    expect(screen.queryByTestId('corrections-card')).toBeNull();
     expect(screen.queryByTestId('operational-card')).toBeNull();
   });
 
@@ -253,13 +240,11 @@ describe('H8 reception booking detail', () => {
     mount(rich(), false);
     expect(screen.getByText('Thông tin chính')).toBeInTheDocument();
     expect(screen.getByTestId('rooms-section')).toBeInTheDocument();
-    expect(screen.getByText(/Ghi chú tạo đơn/)).toBeInTheDocument();
+    expect(screen.getByTestId('pms-note-card')).toBeInTheDocument();
   });
 
-  it('keeps all of it for an admin', () => {
+  it('keeps the operational record for an admin', () => {
     mount(rich(), true);
-    expect(screen.getByTestId('timeline-card')).toBeInTheDocument();
-    expect(screen.getByTestId('corrections-card')).toBeInTheDocument();
     expect(screen.getByTestId('operational-card')).toBeInTheDocument();
   });
 
@@ -283,38 +268,12 @@ describe('Booking.com is unchanged by every hotfix', () => {
   });
 
   it('still generates its PMS note', () => {
-    mount(booking({ rooms: [ROOM] }));
-    expect(screen.getByText(/Ghi chú tạo đơn/)).toBeInTheDocument();
-  });
-});
-
-/* ================================================================== */
-/* 5.2b — the Admin PMS note and the reviewed payment                  */
-/* ================================================================== */
-describe('5.2b Admin PMS note', () => {
-  it('shows the stored note verbatim, over the lines the Admin typed', () => {
-    mount(otaBooking('AGODA', null, { adminPmsNote: 'Nguyen Van A\nCa sáng' }));
-    const card = screen.getByTestId('admin-pms-note-card');
-    expect(card).toHaveTextContent('Ghi chú tạo đơn');
-    expect(card).toHaveTextContent('Nguyen Van A');
-    expect(card).toHaveTextContent('Ca sáng');
-    // Exactly one note card: the stored one replaces the generated one rather
-    // than appearing beside it.
-    expect(screen.getAllByTestId('admin-pms-note-card')).toHaveLength(1);
-  });
-
-  it('preserves the line break rather than collapsing name and shift', () => {
-    mount(otaBooking('AGODA', null, { adminPmsNote: 'Nguyen Van A\nCa sáng' }));
-    const paragraph = screen.getByTestId('admin-pms-note-card').querySelector('p:last-of-type');
-    expect(paragraph?.className).toContain('whitespace-pre-wrap');
-  });
-
-  it('keeps the generated note for Booking.com, which collects none', () => {
-    // Its dispatch deliberately does not ask for a note; removing the note it
-    // has today would take away the text reception copies for every booking.
+    // Generated, not stored — Booking.com dispatch has never collected one, and
+    // the builder that produces this line predates the OTA path entirely.
     mount(booking({ rooms: [ROOM], adminPmsNote: null }));
-    expect(screen.getByText(/Ghi chú tạo đơn/)).toBeInTheDocument();
-    expect(screen.queryByTestId('admin-pms-note-card')).toBeNull();
+    expect(screen.getByTestId('pms-note-text')).toHaveTextContent(
+      'BK A-1_DLX_2 ĐÊM 1.000.000 PAY BEFORE CHECK-IN CI',
+    );
   });
 });
 

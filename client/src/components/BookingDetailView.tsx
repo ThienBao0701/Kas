@@ -3,12 +3,9 @@ import { useQueryClient } from '@tanstack/react-query';
 import { CalendarCheck2, ClipboardList, StickyNote } from 'lucide-react';
 import {
   type BookingDetail,
-  type CorrectionEntry,
   type OperationalRecord,
-  type OtaMetadata,
   type RequestAuditView,
   type RoomView,
-  type TimelineEvent,
 } from '../api/bookings';
 import { buildPmsNote } from '../lib/pmsNote';
 import { formatAmountCopy, formatDate, formatDateTime, formatMoney } from '../lib/format';
@@ -83,9 +80,16 @@ function ReadField({ label, value }: { label: string; value: string }) {
 /**
  * The full operational detail — shared by the standalone detail page and the
  * receptionist master-detail panel. Copy controls are deliberately minimal:
- * four main fields, one nightly-price copy per room row, and the generated
- * "Ghi chú tạo đơn". When `onCompleted` is provided the parent owns the success
- * toast (pass `suppressInternalToast`) so it survives the panel switching.
+ * four main fields, one nightly-price copy per room row, and the PMS note.
+ * When `onCompleted` is provided the parent owns the success toast (pass
+ * `suppressInternalToast`) so it survives the panel switching.
+ *
+ * A receptionist sees FIVE things and nothing else: the summary, the main
+ * information, the PMS note, the nightly rates and the proof upload (plus an
+ * extraction warning when the parser flagged one, which is a thing to act on
+ * rather than a record to read). Everything a colleague might find interesting
+ * but nobody acts on — what the OTA said, the edit history, the activity log —
+ * is gone from this file entirely, not hidden behind a role check.
  */
 export function BookingDetailView({
   booking: b,
@@ -187,7 +191,14 @@ export function BookingDetailView({
 
         {/* Supporting read-only fields (no copy buttons) */}
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          <ReadField label="Chi nhánh" value={b.branch?.address ?? '—'} />
+          {/*
+            Branch is ADMIN-only. A receptionist is standing in the hotel the
+            booking was sent to, so naming it tells them something they used to
+            get here. An Admin dispatches across eight branches and does need to
+            see which one received it. Branch FILTERING and permissions are
+            untouched — only this line went.
+          */}
+          {isAdmin ? <ReadField label="Chi nhánh" value={b.branch?.address ?? '—'} /> : null}
           <PaymentField booking={b} />
           <ReadField label="Check-in" value={formatDate(b.checkInDate)} />
           <ReadField label="Check-out" value={formatDate(b.checkOutDate)} />
@@ -199,18 +210,7 @@ export function BookingDetailView({
         ) : null}
       </Card>
 
-      {/* Generated PMS note */}
-      {/*
-        Who created the reservation in the hotel's PMS.
-
-        For an OTA booking this is the note the Admin TYPED at dispatch, shown
-        verbatim and never generated — a receptionist who finds something wrong
-        needs a person to ask, and a machine-written line answers a different
-        question. Booking.com keeps its generated note: its dispatch does not
-        collect one, and removing the note it has today would take away the text
-        reception copies for every reservation.
-      */}
-      {b.adminPmsNote ? <AdminPmsNoteCard note={b.adminPmsNote} /> : <PmsNoteCard booking={b} />}
+      <PmsNoteCard booking={b} />
 
       {/*
         H5/H10 — rooms and nightly rates are never collapsed. A receptionist
@@ -243,23 +243,14 @@ export function BookingDetailView({
         </Card>
       ) : null}
 
-      {/* What the OTA said. Empty for a Booking.com booking, which stores none. */}
-      <OtaMetadataCard ota={b.ota} />
-
       {/*
-        H8 — operational history, corrections and the timeline are ADMIN tools.
-        A receptionist acts on the reservation in front of them; the record of
-        how it got there is an audit concern and only adds noise to the screen
-        they work from. The server already withholds request provenance from
-        them; this withholds the rest of the developer-facing record.
+        What actually happened during the stay. ADMIN-only, and the last of the
+        record-keeping cards: the edit history and the activity log that used to
+        sit beside it were removed in 5.2d for both roles, because nobody in the
+        pilot reads a booking's history off the booking. The backend audit is
+        untouched and still records everything.
       */}
-      {isAdmin ? (
-        <>
-          <OperationalCard record={b.operational} />
-          <CorrectionsCard corrections={b.corrections} />
-          <TimelineCard events={b.timeline} />
-        </>
-      ) : null}
+      {isAdmin ? <OperationalCard record={b.operational} /> : null}
 
       {/* Proof-of-creation workflow (upload / review / verdict) */}
       <ProofSection booking={b} isAdmin={isAdmin} onChanged={handleProofChanged} />
@@ -296,43 +287,6 @@ export function BookingDetailView({
 }
 
 /**
- * Shown in the OTA card. Payment is deliberately ABSENT: it has its own field
- * in the main information block, and repeating it there would show the same
- * value twice on one screen.
- */
-const OTA_FIELDS: { key: keyof OtaMetadata; label: string }[] = [
-  { key: 'otaBookingStatus', label: 'Trạng thái trên OTA' },
-  { key: 'ratePlanName', label: 'Gói giá' },
-  { key: 'cancellationPolicy', label: 'Chính sách huỷ' },
-  { key: 'benefitsIncluded', label: 'Ưu đãi kèm theo' },
-  { key: 'countryOfResidence', label: 'Quốc gia cư trú' },
-  { key: 'websiteLanguage', label: 'Ngôn ngữ đặt phòng' },
-  { key: 'sourcePropertyId', label: 'Property ID (chỉ để đối chiếu)' },
-];
-
-/**
- * What the OTA said, verbatim.
- *
- * Rendered only when something was actually stored — a Booking.com booking has
- * none of these columns filled, and eight "—" rows would suggest data was lost
- * rather than never sent. Property ID is labelled as reference-only because it
- * never participates in branch resolution.
- */
-function OtaMetadataCard({ ota }: { ota: OtaMetadata }) {
-  const present = OTA_FIELDS.filter((f) => ota[f.key] !== null && ota[f.key] !== '');
-  if (present.length === 0) return null;
-  return (
-    <Section id="ota" title="Thông tin từ OTA" count={present.length} testId="ota-metadata-card">
-      <div className="grid gap-3 sm:grid-cols-2">
-        {present.map((f) => (
-          <ReadField key={f.key} label={f.label} value={String(ota[f.key])} />
-        ))}
-      </div>
-    </Section>
-  );
-}
-
-/**
  * The real stay, as it happened.
  *
  * Hidden until the first operational event exists, so a booking that has only
@@ -361,98 +315,6 @@ function OperationalCard({ record }: { record: OperationalRecord }) {
         <div className="mt-3">
           <ReadField label="Lý do huỷ" value={record.cancellationReason} />
         </div>
-      ) : null}
-    </Section>
-  );
-}
-
-/**
- * Every applied amendment, oldest first.
- *
- * No reason column is shown because none is stored; the request that made the
- * change is the provenance, and that is Admin-only.
- */
-function CorrectionsCard({ corrections }: { corrections: CorrectionEntry[] }) {
-  if (corrections.length === 0) return null;
-  return (
-    <Section
-      id="corrections"
-      title="Lịch sử chỉnh sửa"
-      count={corrections.length}
-      testId="corrections-card"
-    >
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[32rem] text-left text-sm">
-          <thead>
-            <tr className="text-xs uppercase tracking-wide text-slate-400">
-              <th className="pb-2 pr-3 font-medium">Trường</th>
-              <th className="pb-2 pr-3 font-medium">Giá trị cũ</th>
-              <th className="pb-2 pr-3 font-medium">Giá trị mới</th>
-              <th className="pb-2 font-medium">Thời điểm</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {corrections.map((c) => (
-              <tr key={c.id} data-testid="correction-row">
-                <td className="py-2 pr-3 font-medium text-slate-700">{c.field}</td>
-                <td className="py-2 pr-3 text-slate-500 line-through">{c.oldValue ?? '—'}</td>
-                <td className="py-2 pr-3 font-medium text-slate-900">{c.newValue ?? '—'}</td>
-                <td className="py-2 text-slate-500">
-                  {formatDateTime(c.appliedAt)}
-                  {c.appliedBy ? ` · ${c.appliedBy.fullName}` : ''}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </Section>
-  );
-}
-
-/** How many timeline events render before the operator asks for more. */
-const TIMELINE_CHUNK = 20;
-
-/**
- * Status changes, proof reviews and amendments merged into one ordered story.
- *
- * Rendered incrementally. A booking amended a dozen times accumulates a long
- * tail of events that nobody reads, and mounting all of them costs the same
- * whether they are looked at or not. The order is never disturbed — the first
- * chunk is the oldest events, so "show more" extends the story forward rather
- * than reshuffling it.
- */
-function TimelineCard({ events }: { events: TimelineEvent[] }) {
-  const [limit, setLimit] = useState(TIMELINE_CHUNK);
-  if (events.length === 0) return null;
-  const shown = events.slice(0, limit);
-  const remaining = events.length - shown.length;
-
-  return (
-    <Section id="timeline" title="Nhật ký" count={events.length} testId="timeline-card">
-      <ol className="space-y-3">
-        {shown.map((e, i) => (
-          <li key={`${e.at}-${e.type}-${i}`} className="flex gap-3" data-testid="timeline-event">
-            <div className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-brand-600" aria-hidden="true" />
-            <div className="min-w-0">
-              <p className="break-words text-sm text-slate-900">{e.description}</p>
-              <p className="text-xs text-slate-500">
-                {formatDateTime(e.at)}
-                {e.actor ? ` · ${e.actor.fullName}` : ''}
-              </p>
-            </div>
-          </li>
-        ))}
-      </ol>
-      {remaining > 0 ? (
-        <button
-          type="button"
-          onClick={() => setLimit((n) => n + TIMELINE_CHUNK)}
-          className="mt-3 min-h-[2.75rem] rounded-xl border border-slate-300 px-4 text-sm font-medium text-slate-600 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
-          data-testid="timeline-show-more"
-        >
-          Xem thêm {remaining} sự kiện
-        </button>
       ) : null}
     </Section>
   );
@@ -493,63 +355,70 @@ function RequestAuditBlock({ audit }: { audit: RequestAuditView }) {
   );
 }
 
-/** The "Ghi chú tạo đơn" card: a generated, ready-to-paste note with one copy button. */
 /**
- * The Admin's PMS creator note, exactly as typed.
+ * THE PMS NOTE. One card, one meaning, on every screen.
  *
- * Rendered with `whitespace-pre-wrap` because operators write it over two
- * lines — a name and a shift — and collapsing that into one would lose the
- * distinction they deliberately made.
+ * There used to be two cards fighting over the same heading: the note, and a
+ * line naming whoever created the reservation. The name is gone — what a
+ * receptionist transfers into the hotel system is this text.
+ *
+ * WHERE THE TEXT COMES FROM, and why it differs by source:
+ *
+ *   Agoda / CTrip — the note is STORED. It was generated once, at dispatch,
+ *   from the review the Admin approved, and it is shown back exactly as stored.
+ *   It is never rebuilt here, and it could not be: its second line carries the
+ *   price the GUEST booked at, which is not a column on the booking. A screen
+ *   that re-derived this note would have to invent that number, and a
+ *   receptionist pastes it into the PMS as fact.
+ *
+ *   Booking.com — no note is stored, and none ever was. Its note is generated
+ *   from the booking's own fields by a builder that has been operational since
+ *   before the OTA path existed. That is left exactly as it is.
+ *
+ * An OTA booking dispatched before the note was stored has neither, and says
+ * so. It used to fall through to the Booking.com builder, which printed "PAY
+ * BEFORE CHECK-IN" on an Agoda reservation — wording that source never uses.
+ *
+ * Rendered in a `pre` so uppercase, spacing and line breaks survive intact:
+ * the note is a string contract with the hotel system, not prose.
  */
-function AdminPmsNoteCard({ note }: { note: string }) {
-  return (
-    <Card className="p-5" data-testid="admin-pms-note-card">
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-          <StickyNote className="h-4 w-4 text-brand-600" aria-hidden="true" />
-          Ghi chú tạo đơn
-        </div>
-        {/*
-          The note is the one thing a receptionist actually transfers into the
-          PMS, so it is copied whole rather than retyped — retyping is where
-          a digit goes missing.
-        */}
-        <CopyButton value={note} label="Sao chép ghi chú" />
-      </div>
-      {/*
-        `whitespace-pre-wrap` because the Admin writes this over several lines
-        and the PMS expects it that way; collapsing it would change the text
-        the branch pastes.
-      */}
-      <p className="whitespace-pre-wrap break-words text-sm text-slate-900">{note}</p>
-    </Card>
-  );
-}
-
 function PmsNoteCard({ booking }: { booking: BookingDetail }) {
-  const result = buildPmsNote(booking);
+  const stored = booking.adminPmsNote?.trim();
+  const generated = booking.sourcePlatform === 'BOOKING_COM' ? buildPmsNote(booking) : null;
+  const text = stored && stored.length > 0 ? stored : generated?.ok ? generated.text ?? null : null;
+  const error = text
+    ? null
+    : generated?.error ?? 'Đơn này được gửi trước khi hệ thống lưu ghi chú PMS.';
+
   return (
-    <Card className="p-5">
+    <Card className="p-5" data-testid="pms-note-card">
       <div className="mb-3 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 text-sm font-semibold text-slate-700">
           <StickyNote className="h-4 w-4 text-brand-600" aria-hidden="true" />
-          Ghi chú tạo đơn
+          PMS NOTE
         </div>
-        {result.ok && result.text ? (
+        {/*
+          Copied whole rather than retyped — retyping is where a digit goes
+          missing, and every figure on this note is one a guest is charged for.
+        */}
+        {text ? (
           <CopyButton
-            value={result.text}
-            label="Sao chép ghi chú"
-            text="Sao chép ghi chú"
+            value={text}
+            label="Sao chép PMS Note"
+            text="Sao chép"
             className="border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100"
           />
         ) : null}
       </div>
-      {result.ok && result.text ? (
-        <pre className="whitespace-pre-wrap rounded-xl bg-slate-50 px-3 py-3 font-mono text-sm text-slate-800">
-          {result.text}
+      {text ? (
+        <pre
+          data-testid="pms-note-text"
+          className="whitespace-pre-wrap break-words rounded-xl bg-slate-50 px-3 py-3 font-mono text-sm text-slate-800"
+        >
+          {text}
         </pre>
       ) : (
-        <p className="rounded-xl bg-amber-50 px-3 py-2.5 text-sm text-amber-800">{result.error}</p>
+        <p className="rounded-xl bg-amber-50 px-3 py-2.5 text-sm text-amber-800">{error}</p>
       )}
     </Card>
   );

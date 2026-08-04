@@ -51,9 +51,6 @@ export interface OtaReviewPanelProps {
 }
 
 export function OtaReviewPanel({ source, rawText, onDispatch, onBack }: OtaReviewPanelProps) {
-  // Who created the reservation in the hotel PMS. Required before dispatch —
-  // the receptionist needs a name to ask for when something looks wrong.
-  const [adminPmsNote, setAdminPmsNote] = useState('');
   const [overrides, setOverrides] = useState<OtaReviewOverrides>({});
   const [data, setData] = useState<OtaReviewResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -140,14 +137,10 @@ export function OtaReviewPanel({ source, rawText, onDispatch, onBack }: OtaRevie
    */
   const sendToBranch = async () => {
     if (!review?.canDispatch || dispatchState === 'sending') return;
-    if (adminPmsNote.trim().length === 0) {
-      setError('Vui lòng nhập người tạo PMS.');
-      return;
-    }
     setDispatchState('sending');
     setError(null);
     try {
-      const result = await otaReviewApi.dispatch(source, rawText, adminPmsNote.trim(), overrides);
+      const result = await otaReviewApi.dispatch(source, rawText, overrides);
       setDispatchState(result.created ? 'sent' : 'duplicate');
       if (result.review.branchId !== null && result.review.note !== null) {
         onDispatch?.(result.review.branchId, result.review.note);
@@ -478,28 +471,17 @@ export function OtaReviewPanel({ source, rawText, onDispatch, onBack }: OtaRevie
             </select>
           </label>
 
-          {/*
-            Who created the reservation in the hotel PMS. Typed, never
-            generated: a receptionist who finds something wrong needs a person
-            to ask, and a machine-written name would answer the wrong question.
-          */}
-          <label className="block text-sm font-medium text-slate-600 sm:col-span-2">
-            Người tạo PMS <span className="text-red-600">*</span>
-            <textarea
-              aria-label="Người tạo PMS"
-              data-testid="admin-pms-note"
-              className={`${inputClass} mt-1`}
-              rows={2}
-              maxLength={500}
-              placeholder={'Nguyen Van A\nCa sáng'}
-              value={adminPmsNote}
-              onChange={(e) => setAdminPmsNote(e.target.value)}
-            />
-          </label>
         </div>
       </Card>
 
-      {/* 15. Note preview -------------------------------------------------- */}
+      {/*
+        15. THE NOTE — and the row above ends at payment.
+
+        A textarea sat here asking who created the reservation in the PMS. It is
+        gone: the branch needs the NOTE, and the note is right below. Asking for
+        a name as well put two different things under one heading, and the name
+        was never what a receptionist did anything with.
+      */}
       <Card className="p-5">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm font-semibold text-slate-700">Ghi chú PMS</p>

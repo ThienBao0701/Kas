@@ -1,15 +1,21 @@
 /**
- * The Admin PMS note and the reviewed payment mode.
+ * The stored PMS note, and the reviewed payment mode.
  *
- * WHY THESE EXIST AT ALL: a receptionist looking at a reservation that looks
- * wrong needs a person to ask. The system used to answer with a generated note,
- * which names nobody, and it threw away the payment mode the Admin had just
- * reviewed — so CTrip reservations reached the branch with no payment
- * information whatsoever.
+ * WHY THE NOTE IS STORED AT ALL: it is a string contract with the hotel system.
+ * A receptionist pastes it, character for character, into the PMS. For Agoda and
+ * CTrip it is generated once — at dispatch, from the review the Admin approved —
+ * and it CANNOT be rebuilt afterwards: its second line carries the price the
+ * GUEST booked at, and no column on the booking holds that figure. Anything
+ * re-deriving this note on a later screen would be inventing money.
  *
- * The sharpest tests here are the negative ones: dispatch must REFUSE without a
- * note, and refusing must write nothing at all. A partial write would leave a
- * booking the branch can see but nobody is accountable for.
+ * So dispatch stores what it generated. That is asserted here as an exact string
+ * match against the note the same request returned, for both platforms — not a
+ * shape check, because a note that is merely note-shaped is the failure mode.
+ *
+ * The field briefly held something else: the name of whoever created the
+ * reservation in the PMS, typed by the Admin at dispatch and required. 5.2d
+ * removed that. The branch needs the note; the name answered a question nobody
+ * was asking, and requiring it put two different things under one label.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -37,8 +43,6 @@ const CTRIP_RAW = fs.readFileSync(
 let app: ReturnType<typeof createApp>;
 let admin: Awaited<ReturnType<typeof loginAgent>>['agent'];
 
-const NOTE = 'Nguyen Van A\nCa sáng';
-
 beforeAll(async () => {
   await resetAll();
   await seedBranches(testPrisma);
@@ -59,67 +63,105 @@ const dispatch = (body: Record<string, unknown>) => admin.post('/api/admin/ota/d
 const agodaBody = (over: Record<string, unknown> = {}) => ({
   source: 'AGODA',
   rawText: AGODA_RAW,
-  adminPmsNote: NOTE,
   overrides: { paymentMode: 'CN' },
   ...over,
 });
 
 /* ================================================================== */
-/* The note is required                                                */
+/* Nothing is typed any more                                           */
 /* ================================================================== */
-describe('dispatch refuses without an Admin PMS note', () => {
-  it('rejects a body with no note at all', async () => {
-    const { adminPmsNote: _omitted, ...withoutNote } = agodaBody();
-    expect((await dispatch(withoutNote)).status).toBe(422);
+describe('dispatch asks the Admin for no note', () => {
+  it('dispatches a body carrying nothing but the review fields', async () => {
+    const res = await dispatch(agodaBody());
+    expect(res.status).toBe(201);
   });
 
-  it('rejects an empty note', async () => {
-    expect((await dispatch(agodaBody({ adminPmsNote: '' }))).status).toBe(422);
+  it('still stores a note, without one having been supplied', async () => {
+    const res = await dispatch(agodaBody());
+    const booking = await testPrisma.booking.findUniqueOrThrow({
+      where: { id: res.body.bookingId as string },
+    });
+    expect(booking.adminPmsNote).toBeTruthy();
   });
 
-  it('rejects whitespace pretending to be a note', async () => {
-    // A space would satisfy "not empty" while naming nobody.
-    expect((await dispatch(agodaBody({ adminPmsNote: '   ' }))).status).toBe(422);
-  });
+  it('ignores an adminPmsNote a stale browser still sends', async () => {
+    // A tab left open across the upgrade must not fail validation mid-shift,
+    // and must not be able to overwrite the generated note with typed text.
+    const res = await dispatch(agodaBody({ adminPmsNote: 'Nguyen Van A' }));
+    expect(res.status).toBe(201);
 
-  it('writes NOTHING when it refuses', async () => {
-    // A rejected dispatch that still created the booking would leave the branch
-    // holding a reservation nobody is accountable for.
-    await dispatch(agodaBody({ adminPmsNote: '' }));
-    expect(await testPrisma.booking.count()).toBe(0);
-    expect(await testPrisma.bookingRoom.count()).toBe(0);
-    expect(await testPrisma.bookingStatusHistory.count()).toBe(0);
-  });
-
-  it('names the missing field in the error', async () => {
-    const res = await dispatch(agodaBody({ adminPmsNote: '' }));
-    expect(JSON.stringify(res.body)).toContain('người tạo PMS');
+    const booking = await testPrisma.booking.findUniqueOrThrow({
+      where: { id: res.body.bookingId as string },
+    });
+    expect(booking.adminPmsNote).not.toBe('Nguyen Van A');
+    expect(booking.adminPmsNote).toBe(res.body.review.note);
   });
 });
 
 /* ================================================================== */
-/* It is stored, verbatim                                              */
+/* What is stored is what the Admin approved                           */
 /* ================================================================== */
 describe('what dispatch stores', () => {
-  it('stores the note exactly as typed, newlines and all', async () => {
+  it('stores the generated note exactly, character for character', async () => {
     const res = await dispatch(agodaBody());
     expect(res.status).toBe(201);
 
     const booking = await testPrisma.booking.findUniqueOrThrow({
       where: { id: res.body.bookingId as string },
     });
-    expect(booking.adminPmsNote).toBe(NOTE);
-    // The two lines are a name and a shift; collapsing them loses a real
-    // distinction the operator made.
-    expect(booking.adminPmsNote).toContain('\n');
+    // The SAME string the review screen displayed and the Admin approved.
+    expect(booking.adminPmsNote).toBe(res.body.review.note);
   });
 
-  it('trims surrounding whitespace but nothing inside', async () => {
-    const res = await dispatch(agodaBody({ adminPmsNote: `  ${NOTE}  ` }));
+  it('keeps the line break a CN note depends on', async () => {
+    const res = await dispatch(agodaBody());
     const booking = await testPrisma.booking.findUniqueOrThrow({
       where: { id: res.body.bookingId as string },
     });
-    expect(booking.adminPmsNote).toBe(NOTE);
+    expect(booking.adminPmsNote).toContain('\n');
+    expect(booking.adminPmsNote).toContain('GIÁ KHÁCH ĐẶT');
+  });
+
+  it('stores a note this row could never have rebuilt', async () => {
+    // THE REASON THIS COLUMN EXISTS. The note quotes the guest-booked price;
+    // totalAmount is the BRANCH price, and nothing else on the booking carries
+    // the other figure. Storing is the only way the note survives.
+    const res = await dispatch(agodaBody());
+    const booking = await testPrisma.booking.findUniqueOrThrow({
+      where: { id: res.body.bookingId as string },
+    });
+    const guestPrice = /GIÁ KHÁCH ĐẶT ([\d.]+)/.exec(booking.adminPmsNote ?? '')?.[1];
+    expect(guestPrice).toBeTruthy();
+
+    const asNumber = Number(guestPrice!.replace(/\./g, ''));
+    expect(asNumber).toBeGreaterThan(0);
+    expect(asNumber).not.toBe(booking.totalAmount);
+    expect(Object.values(booking)).not.toContain(asNumber);
+  });
+
+  it('stores it for CTrip too, in that platform’s own format', async () => {
+    const res = await dispatch({ source: 'CTRIP', rawText: CTRIP_RAW, overrides: { paymentMode: 'CN' } });
+    expect(res.status).toBe(201);
+
+    const booking = await testPrisma.booking.findUniqueOrThrow({
+      where: { id: res.body.bookingId as string },
+    });
+    expect(booking.adminPmsNote).toBe(res.body.review.note);
+    // CTRIP is followed immediately by an underscore; AGD by a space.
+    expect(booking.adminPmsNote?.startsWith('CTRIP_')).toBe(true);
+    expect(booking.reviewedPaymentMode).toBe('CN');
+  });
+
+  it('stores a single-line note for a hotel-payment reservation', async () => {
+    // A hotel-payment note has no guest-price line at all. Storing it verbatim
+    // is what keeps that difference intact.
+    const res = await dispatch(agodaBody({ overrides: { paymentMode: 'HOTEL_PAYMENT' } }));
+    const booking = await testPrisma.booking.findUniqueOrThrow({
+      where: { id: res.body.bookingId as string },
+    });
+    expect(booking.adminPmsNote).toBe(res.body.review.note);
+    expect(booking.adminPmsNote).not.toContain('\n');
+    expect(booking.adminPmsNote).toContain('THANH TOÁN KHÁCH SẠN');
   });
 
   it('stores the payment mode the Admin reviewed', async () => {
@@ -128,22 +170,6 @@ describe('what dispatch stores', () => {
       where: { id: res.body.bookingId as string },
     });
     expect(booking.reviewedPaymentMode).toBe('HOTEL_PAYMENT');
-  });
-
-  it('stores it for CTrip too — the platform that had nothing before', async () => {
-    const res = await dispatch({
-      source: 'CTRIP',
-      rawText: CTRIP_RAW,
-      adminPmsNote: NOTE,
-      overrides: { paymentMode: 'CN' },
-    });
-    expect(res.status).toBe(201);
-
-    const booking = await testPrisma.booking.findUniqueOrThrow({
-      where: { id: res.body.bookingId as string },
-    });
-    expect(booking.reviewedPaymentMode).toBe('CN');
-    expect(booking.adminPmsNote).toBe(NOTE);
   });
 
   it('keeps the reviewed mode separate from what the mail said', async () => {
@@ -158,53 +184,55 @@ describe('what dispatch stores', () => {
     expect(booking.reviewedPaymentMode).not.toBe(booking.paymentType);
   });
 
-  it('serves both back on the booking detail', async () => {
+  it('serves the note back on the booking detail, unchanged', async () => {
     const res = await dispatch(agodaBody());
     const detail = await admin.get(`/api/bookings/${res.body.bookingId}`);
-    expect(detail.body.booking.adminPmsNote).toBe(NOTE);
+    expect(detail.body.booking.adminPmsNote).toBe(res.body.review.note);
     expect(detail.body.booking.reviewedPaymentMode).toBe('CN');
   });
 
-  it('serves the note in the history list', async () => {
+  it('no longer sends it down the history list', async () => {
+    // 5.2d removed the history column that displayed it. A field no screen
+    // reads is one more thing on the wire that can drift out of date.
     await dispatch(agodaBody());
     const history = await admin.get('/api/bookings/history?pageSize=10');
-    expect(history.body.bookings[0].adminPmsNote).toBe(NOTE);
+    expect(history.body.bookings[0]).not.toHaveProperty('adminPmsNote');
   });
 });
 
 /* ================================================================== */
 /* Editing after dispatch                                              */
 /* ================================================================== */
-describe('editing the note after dispatch', () => {
-  /** Dispatches one booking and returns its id. */
-  async function dispatched(): Promise<string> {
+describe('correcting the note after dispatch', () => {
+  /** Dispatches one booking and returns its id and the note it stored. */
+  async function dispatched(): Promise<{ id: string; note: string }> {
     const res = await dispatch(agodaBody());
     expect(res.status).toBe(201);
-    return res.body.bookingId as string;
+    return { id: res.body.bookingId as string, note: res.body.review.note as string };
   }
 
   const edit = (id: string, body: Record<string, unknown>) =>
     admin.patch(`/api/admin/bookings/${id}/ota-fields`).send(body);
 
   it('updates the note and records an immutable correction', async () => {
-    const id = await dispatched();
-    const res = await edit(id, { adminPmsNote: 'Tran Thi B\nCa đêm' });
+    const { id, note } = await dispatched();
+    const res = await edit(id, { adminPmsNote: 'AGD 1_1STAN_1DEM 100.000 CN' });
     expect(res.status).toBe(200);
 
     const booking = await testPrisma.booking.findUniqueOrThrow({ where: { id } });
-    expect(booking.adminPmsNote).toBe('Tran Thi B\nCa đêm');
+    expect(booking.adminPmsNote).toBe('AGD 1_1STAN_1DEM 100.000 CN');
 
     const corrections = await testPrisma.bookingCorrection.findMany({
       where: { bookingId: id, field: 'adminPmsNote' },
     });
     expect(corrections).toHaveLength(1);
-    expect(corrections[0]!.oldValue).toBe(NOTE);
-    expect(corrections[0]!.newValue).toBe('Tran Thi B\nCa đêm');
+    expect(corrections[0]!.oldValue).toBe(note);
+    expect(corrections[0]!.newValue).toBe('AGD 1_1STAN_1DEM 100.000 CN');
   });
 
   it('records who made the change and when', async () => {
-    const id = await dispatched();
-    await edit(id, { adminPmsNote: 'Tran Thi B' });
+    const { id } = await dispatched();
+    await edit(id, { adminPmsNote: 'AGD 2_1STAN_1DEM 200.000 CN' });
 
     const correction = await testPrisma.bookingCorrection.findFirstOrThrow({
       where: { bookingId: id, field: 'adminPmsNote' },
@@ -216,7 +244,7 @@ describe('editing the note after dispatch', () => {
   });
 
   it('records a payment change the same way', async () => {
-    const id = await dispatched();
+    const { id } = await dispatched();
     await edit(id, { reviewedPaymentMode: 'HOTEL_PAYMENT' });
 
     const correction = await testPrisma.bookingCorrection.findFirstOrThrow({
@@ -227,7 +255,7 @@ describe('editing the note after dispatch', () => {
   });
 
   it('never overwrites silently — the old value survives in the correction', async () => {
-    const id = await dispatched();
+    const { id, note } = await dispatched();
     await edit(id, { adminPmsNote: 'Second' });
     await edit(id, { adminPmsNote: 'Third' });
 
@@ -236,36 +264,36 @@ describe('editing the note after dispatch', () => {
       orderBy: { correctedAt: 'asc' },
     });
     expect(corrections).toHaveLength(2);
-    expect(corrections[0]!.oldValue).toBe(NOTE);
+    expect(corrections[0]!.oldValue).toBe(note);
     expect(corrections[1]!.oldValue).toBe('Second');
   });
 
   it('writes no correction when nothing actually changed', async () => {
     // Re-submitting the same value would otherwise fill the history with rows
     // that record nothing and bury the ones that matter.
-    const id = await dispatched();
-    const res = await edit(id, { adminPmsNote: NOTE });
+    const { id, note } = await dispatched();
+    const res = await edit(id, { adminPmsNote: note });
     expect(res.status).toBe(200);
     expect(res.body.changed).toEqual([]);
     expect(await testPrisma.bookingCorrection.count({ where: { bookingId: id } })).toBe(0);
   });
 
-  it('rejects an empty note rather than erasing the creator', async () => {
-    const id = await dispatched();
+  it('rejects an empty note rather than erasing what the branch reads', async () => {
+    const { id, note } = await dispatched();
     expect((await edit(id, { adminPmsNote: '' })).status).toBe(422);
     const booking = await testPrisma.booking.findUniqueOrThrow({ where: { id } });
-    expect(booking.adminPmsNote).toBe(NOTE);
+    expect(booking.adminPmsNote).toBe(note);
   });
 
   it('refuses a receptionist — this is an Admin correction', async () => {
-    const id = await dispatched();
+    const { id, note } = await dispatched();
     const branchId = (await testPrisma.booking.findUniqueOrThrow({ where: { id } })).branchId!;
     await createReceptionist(branchId, { username: 'letan_note', mustChangePassword: false });
     const reception = (await loginAgent(app, 'letan_note', RECEPTIONIST_PASSWORD)).agent;
 
     expect((await reception.patch(`/api/admin/bookings/${id}/ota-fields`).send({ adminPmsNote: 'X' })).status).toBe(403);
     const booking = await testPrisma.booking.findUniqueOrThrow({ where: { id } });
-    expect(booking.adminPmsNote).toBe(NOTE);
+    expect(booking.adminPmsNote).toBe(note);
   });
 });
 
@@ -274,8 +302,8 @@ describe('editing the note after dispatch', () => {
 /* ================================================================== */
 describe('Booking.com', () => {
   it('still dispatches with no note, and stores none', async () => {
-    // Its send endpoint deliberately did not change: a newly-required field
-    // would reject requests that succeed today.
+    // Its send endpoint deliberately did not change, and its note has always
+    // been generated from the booking's own fields at display time.
     const booking = await testPrisma.booking.create({
       data: {
         bookingCode: 'BCOM-1',
