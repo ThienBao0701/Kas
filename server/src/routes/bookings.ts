@@ -22,6 +22,7 @@ import {
   serializeOpsBookingDetail,
 } from '../booking/bookingView';
 import { loadBookingDetail } from '../booking/bookingRepo';
+import { NOT_DELETED } from '../booking/deleteBooking';
 import { approveProof, rejectProof, submitProof, authorizeProofImage } from '../booking/proof';
 import { readProofFile } from '../booking/proofStorage';
 import { analyzeAfterSubmit } from '../booking/ocr/analysisService';
@@ -299,6 +300,7 @@ export function createBookingsRouter(): Router {
         const branchId = branchScope(user, query.branchId);
 
         const where: Prisma.BookingWhereInput = {
+          ...NOT_DELETED,
           status: 'NEW',
           verificationStatus: { in: [...verificationStatuses] },
         };
@@ -323,7 +325,7 @@ export function createBookingsRouter(): Router {
 
   // GET /api/bookings/new — dispatched work the BRANCH must act on: no proof
   // submitted yet, or a proof already approved and the stay still to be run.
-  router.get('/bookings/new', requireAuth, requirePasswordChanged, newStageList(['NOT_SUBMITTED', 'APPROVED']));
+  router.get('/bookings/new', requireAuth, requirePasswordChanged, newStageList(['NOT_SUBMITTED']));
   // GET /api/bookings/pending-review — proof submitted, awaiting admin verdict.
   router.get('/bookings/pending-review', requireAuth, requirePasswordChanged, newStageList(['PENDING_REVIEW']));
   // GET /api/bookings/rejected — proof rejected, needs recreation ("Cần tạo lại").
@@ -336,7 +338,22 @@ export function createBookingsRouter(): Router {
       const query = completedListQuery.parse(req.query);
       const branchId = branchScope(user, query.branchId);
 
-      const where: Prisma.BookingWhereInput = { status: 'COMPLETED' };
+      /*
+        The "Đã xác nhận đúng" list, which is what the nav has always called it.
+        It filtered on the LIFECYCLE status alone, and since proof approval was
+        decoupled from completion an approved booking no longer reaches that
+        status — so the confirmed list held none of them.
+
+        That did not show while approved bookings stayed in the reception queue.
+        Now that they leave it on approval, filtering on status alone would put
+        them on no list at all, which is the invisibility this queue exists to
+        prevent. Both are accepted: the list only GAINS rows, so nothing that
+        appeared here before has stopped appearing.
+      */
+      const where: Prisma.BookingWhereInput = {
+        ...NOT_DELETED,
+        OR: [{ status: 'COMPLETED' }, { verificationStatus: 'APPROVED' }],
+      };
       if (branchId !== undefined) where.branchId = branchId;
 
       const { skip, take } = paginate(query.page, query.pageSize);
@@ -361,7 +378,7 @@ export function createBookingsRouter(): Router {
       const user = req.currentUser!;
       const query = historyQuery.parse(req.query);
 
-      const where: Prisma.BookingWhereInput = {};
+      const where: Prisma.BookingWhereInput = { ...NOT_DELETED };
       const branchId = branchScope(user, query.branchId);
       if (branchId !== undefined) where.branchId = branchId;
       // Receptionists only ever see dispatched bookings for their branch.

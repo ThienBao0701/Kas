@@ -9,7 +9,6 @@ import { DispatchPage } from '../pages/DispatchPage';
 import { NewBookingsPage } from '../pages/NewBookingsPage';
 import { PendingReviewPage, RejectedPage } from '../pages/VerificationBookingsPage';
 import { CompletedBookingsPage } from '../pages/CompletedBookingsPage';
-import { InboxPage } from '../pages/InboxPage';
 import { HistoryPage } from '../pages/HistoryPage';
 import { IssuesPage } from '../pages/IssuesPage';
 import { BookingDetailPage } from '../pages/BookingDetailPage';
@@ -53,7 +52,6 @@ export function AppRoutes() {
           <Route path="pending-review" element={<PendingReviewPage />} />
           <Route path="rejected" element={<RejectedPage />} />
           <Route path="completed" element={<CompletedBookingsPage />} />
-          <Route path="inbox" element={<InboxPage />} />
           <Route path="history" element={<HistoryPage />} />
           <Route path="issues" element={<IssuesPage />} />
           <Route path="booking/:id" element={<BookingDetailPage />} />

@@ -14,8 +14,9 @@ import { buildPmsNote } from '../lib/pmsNote';
 import { formatAmountCopy, formatDate, formatDateTime, formatMoney } from '../lib/format';
 import { Card } from './Card';
 import { CopyButton, CopyField } from './CopyButton';
-import { BusinessTypeBadge, LastMinuteBadge, PaymentBadge, SourceBadge, StatusBadge, VerificationBadge } from './Badges';
+import { LastMinuteBadge, PaymentBadge, SourceBadge, WorkflowBadge } from './Badges';
 import { Section } from './Section';
+import { DeleteBookingButton } from './DeleteBookingButton';
 import { ProofSection } from './ProofSection';
 import { Toast } from './Toast';
 
@@ -131,17 +132,21 @@ export function BookingDetailView({
       >
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
+            {/*
+              ONE workflow chip. Four at once left a receptionist working out
+              which of them meant "what do I do with this"; there is only ever
+              one answer. The Admin keeps the source and business-type detail
+              further down the page, where it is an audit concern rather than
+              something to act on.
+            */}
             <div className="flex flex-wrap items-center gap-2">
               {b.isLastMinute ? <LastMinuteBadge withSubtitle /> : null}
-              <StatusBadge status={b.status} />
-              <VerificationBadge status={b.verificationStatus} />
-              <SourceBadge source={b.sourcePlatform} />
-              <BusinessTypeBadge type={b.businessType} />
+              <WorkflowBadge status={b.verificationStatus} />
+              {isAdmin ? <SourceBadge source={b.sourcePlatform} /> : null}
             </div>
             <h1 className="mt-2 truncate text-xl font-semibold text-slate-900">
               {b.customerName ?? 'Khách chưa rõ'}
             </h1>
-            <p className="text-sm text-slate-500">{b.branch ? b.branch.address : b.hotelName ?? '—'}</p>
             <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-700">
               <span className="inline-flex items-center gap-1.5 font-medium">
                 <CalendarCheck2 className="h-4 w-4 text-brand-600" aria-hidden="true" />
@@ -277,6 +282,12 @@ export function BookingDetailView({
             </details>
           ) : null}
         </Card>
+      ) : null}
+
+      {isAdmin ? (
+        <div className="flex justify-end">
+          <DeleteBookingButton bookingId={b.id} guestName={b.customerName} isAdmin={isAdmin} />
+        </div>
       ) : null}
 
       <Toast message={toast} onDone={() => setToast(null)} />
@@ -493,10 +504,23 @@ function RequestAuditBlock({ audit }: { audit: RequestAuditView }) {
 function AdminPmsNoteCard({ note }: { note: string }) {
   return (
     <Card className="p-5" data-testid="admin-pms-note-card">
-      <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-700">
-        <StickyNote className="h-4 w-4 text-brand-600" aria-hidden="true" />
-        Người tạo PMS
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+          <StickyNote className="h-4 w-4 text-brand-600" aria-hidden="true" />
+          Ghi chú tạo đơn
+        </div>
+        {/*
+          The note is the one thing a receptionist actually transfers into the
+          PMS, so it is copied whole rather than retyped — retyping is where
+          a digit goes missing.
+        */}
+        <CopyButton value={note} label="Sao chép ghi chú" />
       </div>
+      {/*
+        `whitespace-pre-wrap` because the Admin writes this over several lines
+        and the PMS expects it that way; collapsing it would change the text
+        the branch pastes.
+      */}
       <p className="whitespace-pre-wrap break-words text-sm text-slate-900">{note}</p>
     </Card>
   );

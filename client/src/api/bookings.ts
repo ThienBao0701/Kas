@@ -483,6 +483,9 @@ export const bookingsApi = {
    * the client hides buttons it believes are unavailable, but a stale tab that
    * posts anyway gets a 409 rather than a wrong write.
    */
+  /** Admin-only. Soft delete: the booking leaves every queue, audit survives. */
+  remove: (id: string) => api.del<{ bookingId: string; deletedAt: string }>(`/admin/bookings/${id}`),
+
   lifecycle: (id: string, action: LifecycleAction, reason?: string) =>
     api.post<LifecycleResult>(`/bookings/${id}/${LIFECYCLE_PATH[action]}`, reason ? { reason } : {}),
 };

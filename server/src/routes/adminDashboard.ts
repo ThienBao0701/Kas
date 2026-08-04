@@ -4,6 +4,7 @@ import { requireAuth, requireAdmin, requirePasswordChanged } from '../middleware
 import { getClock, hcmDateOnly } from '../lib/clock';
 import { z } from 'zod';
 import { computeStatistics } from '../booking/statistics';
+import { NOT_DELETED } from '../booking/deleteBooking';
 
 const HCM_OFFSET_MS = 7 * 60 * 60 * 1000;
 
@@ -55,6 +56,7 @@ export function createAdminDashboardRouter(): Router {
       // which is a different event that happens days later. Reading the status
       // here would have shown zero all day and then a spike at check-out.
       const confirmedToday = {
+        ...NOT_DELETED,
         verificationStatus: 'APPROVED' as const,
         reviewedAt: { gte: start, lt: end },
       };
@@ -62,10 +64,11 @@ export function createAdminDashboardRouter(): Router {
       // booking is no longer waiting for that — it is waiting to be received,
       // which is reception's operational queue, not this counter.
       const awaitingCreation = {
+        ...NOT_DELETED,
         status: 'NEW' as const,
         verificationStatus: { not: 'APPROVED' as const },
       };
-      const lastMinute = { status: 'NEW' as const, checkInDate: checkInToday };
+      const lastMinute = { ...NOT_DELETED, status: 'NEW' as const, checkInDate: checkInToday };
 
       const [
         branches,
@@ -83,7 +86,7 @@ export function createAdminDashboardRouter(): Router {
         prisma.booking.groupBy({ by: ['branchId'], where: lastMinute, _count: { _all: true }, orderBy: { branchId: 'asc' } }),
         prisma.booking.count({ where: awaitingCreation }),
         prisma.booking.count({ where: confirmedToday }),
-        prisma.booking.count({ where: { sentAt: { gte: start, lt: end } } }),
+        prisma.booking.count({ where: { ...NOT_DELETED, sentAt: { gte: start, lt: end } } }),
         prisma.booking.count({ where: lastMinute }),
       ]);
 

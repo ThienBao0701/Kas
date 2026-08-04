@@ -10,7 +10,7 @@ import { EmptyState } from '../components/EmptyState';
 import { ErrorAlert } from '../components/ErrorAlert';
 import { ConnectionWarning } from '../components/ConnectionWarning';
 import { SkeletonList } from '../components/Skeleton';
-import { LastMinuteBadge, PaymentBadge, StatusBadge } from '../components/Badges';
+import { LastMinuteBadge, StatusBadge, WorkflowBadge } from '../components/Badges';
 import { Pagination } from '../components/Pagination';
 import { PageHeader, InlineSpinner, QueryState } from '../components/PageState';
 import { BookingDetailView } from '../components/BookingDetailView';
@@ -181,17 +181,17 @@ function BookingListRow({
         selected ? 'bg-brand-50' : 'hover:bg-slate-50'
       } ${b.isLastMinute ? 'border-l-4 border-l-red-500' : 'border-l-4 border-l-transparent'}`}
     >
+      {/*
+        Guest, one workflow state, and the last-minute flag. Nothing else:
+        branch is where the receptionist already is, and the code, dates,
+        rooms and payment are all on the detail panel beside this list.
+      */}
       <div className="flex items-center justify-between gap-2">
         <span className="truncate font-medium text-slate-900">{b.customerName ?? 'Khách chưa rõ'}</span>
         {b.isLastMinute ? <LastMinuteBadge /> : null}
       </div>
-      <div className="mt-0.5 flex items-center justify-between gap-2 text-xs">
-        <span className="font-mono text-slate-500">{b.bookingCode ?? '—'}</span>
-        <span className="text-slate-400">Gửi {formatDateTime(b.sentAt)}</span>
-      </div>
-      <div className="mt-1 flex items-center justify-between gap-2 text-xs text-slate-500">
-        <span>Nhận phòng: {formatDate(b.checkInDate)}</span>
-        <PaymentBadge status={b.paymentStatus} />
+      <div className="mt-1">
+        <WorkflowBadge status={b.verificationStatus} />
       </div>
     </button>
   );

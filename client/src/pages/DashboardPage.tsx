@@ -6,7 +6,6 @@ import { Card } from '../components/Card';
 import { StatCard } from '../components/StatCard';
 import { PageHeader, QueryState } from '../components/PageState';
 import { useIssueSummary } from '../hooks/useIssueSummary';
-import { StatisticsPanel } from '../components/charts/StatisticsPanel';
 
 const POLL_MS = 30_000;
 
@@ -113,8 +112,6 @@ export function DashboardPage() {
         </div>
       </QueryState>
 
-      {/* The 7b statistics, which until now had no consumer. */}
-      <StatisticsPanel />
     </div>
   );
 }

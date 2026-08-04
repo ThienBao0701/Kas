@@ -349,6 +349,7 @@ model User {
   branch                Branch?                    @relation(fields: [branchId], references: [id])
   bookingsSent          Booking[]                  @relation("BookingSentBy")
   bookingsCompleted     Booking[]                  @relation("BookingCompletedBy")
+  bookingsDeleted       Booking[]                  @relation("BookingDeletedBy")
   bookingsReceived      Booking[]                  @relation("BookingReceivedBy")
   bookingsCheckedIn     Booking[]                  @relation("BookingCheckedInBy")
   bookingsCheckedOut    Booking[]                  @relation("BookingCheckedOutBy")
@@ -895,6 +896,18 @@ model Booking {
   /// e.g. "Nguyen Van A / Morning Shift". Never generated, never inferred.
   /// Required by the OTA dispatch endpoint; null for Booking.com bookings and
   /// for every booking dispatched before this field existed.
+  /// ── SOFT DELETE ───────────────────────────────────────────────────────
+  /// When an Admin removed the booking from the operational queues. NOT a
+  /// row deletion: 25 relations cascade from Booking, so DELETE would destroy
+  /// the audit events, the append-only corrections, the status history and the
+  /// receptionist's proof images along with it. Those are the records that
+  /// prove what happened, and they must outlive the booking.
+  ///
+  /// Every operational query filters on `deletedAt: null`. The row stays,
+  /// reachable for audit, and invisible to the people working the queues.
+  deletedAt           DateTime?
+  deletedByUserId     Int?
+
   adminPmsNote        String?
   /// The payment mode the Admin accepted in the review ("CN" /
   /// "HOTEL_PAYMENT"). Stored verbatim so reception shows exactly what was
@@ -939,6 +952,7 @@ model Booking {
   branch           Branch?                  @relation(fields: [branchId], references: [id])
   sentBy           User?                    @relation("BookingSentBy", fields: [sentByUserId], references: [id])
   completedBy      User?                    @relation("BookingCompletedBy", fields: [completedByUserId], references: [id])
+  deletedBy        User?                    @relation("BookingDeletedBy", fields: [deletedByUserId], references: [id])
   receivedBy       User?                    @relation("BookingReceivedBy", fields: [receivedByUserId], references: [id])
   checkedInBy      User?                    @relation("BookingCheckedInBy", fields: [checkedInByUserId], references: [id])
   checkedOutBy     User?                    @relation("BookingCheckedOutBy", fields: [checkedOutByUserId], references: [id])
@@ -958,6 +972,8 @@ model Booking {
   @@index([bookingCode])
   @@index([branchId, status])
   @@index([status])
+  /// Every operational query filters deleted bookings out.
+  @@index([deletedAt])
   @@index([branchId, verificationStatus])
   @@index([verificationStatus])
   @@index([sourcePlatform])

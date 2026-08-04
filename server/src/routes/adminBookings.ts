@@ -8,6 +8,7 @@ import { serializeAdminBookingDetail } from '../booking/bookingView';
 import { updateBookingDraft, updateBookingSchema } from '../booking/adminEdit';
 import { markBookingReady, sendBooking } from '../booking/dispatch';
 import { editOtaFields } from '../booking/adminOtaFields';
+import { softDeleteBooking } from '../booking/deleteBooking';
 import { readRequestOrigin } from '../booking/requestAudit';
 import { confirmBusinessType } from '../booking/businessTypeService';
 import { latestAnalysis, listAnalyses, reanalyzeProof } from '../booking/ocr/analysisService';
@@ -120,6 +121,22 @@ export function createAdminBookingsRouter(): Router {
       });
       const booking = await loadBookingDetail(result.bookingId);
       res.json({ booking: serializeAdminBookingDetail(booking), changed: result.changed });
+    })().catch(next);
+  });
+
+  /**
+   * DELETE /api/admin/bookings/:id — remove a booking from the queues.
+   *
+   * Admin-only: the router applies requireAdmin to every route here, so a
+   * receptionist reaching this URL gets 403 before any handler runs.
+   *
+   * Soft: the row and its whole audit trail survive. See deleteBooking.ts.
+   */
+  router.delete('/admin/bookings/:id', (req, res, next) => {
+    (async () => {
+      const user = req.currentUser!;
+      const result = await softDeleteBooking(bookingId(req.params.id), user.id);
+      res.json({ bookingId: result.bookingId, deletedAt: result.deletedAt.toISOString() });
     })().catch(next);
   });
 

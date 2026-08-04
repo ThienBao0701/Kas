@@ -99,14 +99,17 @@ describe('a booking is never invisible to reception', () => {
     expect((await listsContaining(id))[0]).toBe('/api/bookings/pending-review');
 
     /* 3. Admin approves the proof ------------------------------------- */
-    // THE REGRESSION: approval no longer completes the booking, so it must not
-    // fall out of every list. It returns to the branch's own queue.
+    // Since 5.2c an approved booking LEAVES the reception queue — the
+    // lifecycle UI is gone, so there is nothing left for reception to do with
+    // it. The property that still holds is the one this file is named for: it
+    // is never invisible. It moves to the confirmed list.
     await testPrisma.booking.update({
       where: { id },
       data: { verificationStatus: 'APPROVED', reviewedAt: new Date() },
     });
-    await expectVisible(id, 'proof approved');
-    expect((await listsContaining(id))[0]).toBe('/api/bookings/new');
+    expect(await listsContaining(id)).toEqual([]);
+    const confirmed = await reception.get('/api/bookings/completed');
+    expect(confirmed.body.bookings.some((b: { id: string }) => b.id === id)).toBe(true);
 
     /* 4. Reception runs the operational lifecycle ---------------------- */
     expect((await act(id, 'receive')).status).toBe(200);
@@ -153,14 +156,18 @@ describe('a booking is never invisible to reception', () => {
     expect((await listsContaining(id))[0]).toBe('/api/bookings/rejected');
   });
 
-  it('keeps an approved booking out of the other two lists', async () => {
-    // Visible, but in exactly one place — not duplicated across queues.
+  it('moves an approved booking to the confirmed list and nowhere else', async () => {
+    // Visible in exactly one place — never duplicated across queues, and never
+    // nowhere. Since 5.2c that one place is the confirmed list.
     const id = await dispatchOne();
     await testPrisma.booking.update({
       where: { id },
       data: { verificationStatus: 'APPROVED', reviewedAt: new Date() },
     });
-    expect(await listsContaining(id)).toEqual(['/api/bookings/new']);
+    expect(await listsContaining(id)).toEqual([]);
+
+    const confirmed = await reception.get('/api/bookings/completed');
+    expect(confirmed.body.bookings.filter((b: { id: string }) => b.id === id)).toHaveLength(1);
   });
 });
 

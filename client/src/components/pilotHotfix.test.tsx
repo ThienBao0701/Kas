@@ -295,11 +295,12 @@ describe('5.2b Admin PMS note', () => {
   it('shows the stored note verbatim, over the lines the Admin typed', () => {
     mount(otaBooking('AGODA', null, { adminPmsNote: 'Nguyen Van A\nCa sáng' }));
     const card = screen.getByTestId('admin-pms-note-card');
-    expect(card).toHaveTextContent('Người tạo PMS');
+    expect(card).toHaveTextContent('Ghi chú tạo đơn');
     expect(card).toHaveTextContent('Nguyen Van A');
     expect(card).toHaveTextContent('Ca sáng');
-    // The generated note is replaced, not shown alongside.
-    expect(screen.queryByText(/Ghi chú tạo đơn/)).toBeNull();
+    // Exactly one note card: the stored one replaces the generated one rather
+    // than appearing beside it.
+    expect(screen.getAllByTestId('admin-pms-note-card')).toHaveLength(1);
   });
 
   it('preserves the line break rather than collapsing name and shift', () => {
@@ -342,5 +343,71 @@ describe('5.2b reviewed payment', () => {
   it('leaves Booking.com on its own badge', () => {
     mount(booking({ paymentStatus: 'PAY_BEFORE', reviewedPaymentMode: null }));
     expect(screen.getByText('PAY BEFORE CHECK-IN')).toBeInTheDocument();
+  });
+});
+
+/* ================================================================== */
+/* 5.2c — one chip, no branch, delete for Admin only                   */
+/* ================================================================== */
+describe('5.2c single workflow chip', () => {
+  it('shows exactly one workflow state to a receptionist', () => {
+    mount(otaBooking('CTRIP', null, { verificationStatus: 'NOT_SUBMITTED' }), false);
+    expect(screen.getAllByTestId('workflow-badge')).toHaveLength(1);
+    expect(screen.getByTestId('workflow-badge')).toHaveTextContent('Chờ chi nhánh tạo');
+  });
+
+  it('names each workflow state', () => {
+    for (const [status, label] of [
+      ['PENDING_REVIEW', 'Chờ kiểm tra'],
+      ['APPROVED', 'Đã xác nhận đúng'],
+      ['REJECTED', 'Cần tạo lại'],
+    ] as const) {
+      const { unmount } = mount(otaBooking('AGODA', null, { verificationStatus: status }));
+      expect(screen.getByTestId('workflow-badge')).toHaveTextContent(label);
+      unmount();
+    }
+  });
+
+  it('shows a receptionist no source or business-type chip beside it', () => {
+    // Four chips at once left them working out which one meant "act on this".
+    mount(otaBooking('CTRIP', null), false);
+    expect(screen.queryByText('CTrip')).toBeNull();
+    expect(screen.queryByText('ĐƠN THƯỜNG')).toBeNull();
+  });
+
+  it('still gives an Admin the source', () => {
+    mount(otaBooking('CTRIP', null), true);
+    expect(screen.getByText('CTrip')).toBeInTheDocument();
+  });
+});
+
+describe('5.2c branch is not shown', () => {
+  it('omits the branch address from the header', () => {
+    // The receptionist is standing in the branch.
+    mount(booking({ branch: { id: 1, code: 'X', hotelName: 'H', address: '05 Trương Định' } }), false);
+    expect(screen.getByTestId('booking-sticky-header')).not.toHaveTextContent('05 Trương Định');
+  });
+});
+
+describe('5.2c delete booking', () => {
+  it('offers no delete control to a receptionist', () => {
+    mount(booking(), false);
+    expect(screen.queryByTestId('delete-booking')).toBeNull();
+  });
+
+  it('offers one to an Admin', () => {
+    mount(booking(), true);
+    expect(screen.getByTestId('delete-booking')).toBeInTheDocument();
+  });
+
+  it('asks before deleting, and says what survives', async () => {
+    const { default: userEvent } = await import('@testing-library/user-event');
+    mount(booking(), true);
+    await userEvent.click(screen.getByTestId('delete-booking'));
+
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveTextContent('Nguyễn Văn A');
+    // The operator is told the audit trail is kept, not left to assume it.
+    expect(dialog).toHaveTextContent('vẫn được giữ lại');
   });
 });

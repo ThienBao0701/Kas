@@ -122,7 +122,7 @@ describe('manifest', () => {
   });
 
   it('declares taskbar shortcuts that point at routes which exist', () => {
-    for (const route of ['/app/inbox', '/app/dispatch', '/app/dashboard']) {
+    for (const route of ['/app/new', '/app/dispatch', '/app/dashboard']) {
       expect(manifest).toContain(`url: '${route}'`);
     }
   });

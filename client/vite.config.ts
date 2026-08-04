@@ -61,10 +61,10 @@ export default defineConfig({
         // that already exists; none creates a new capability.
         shortcuts: [
           {
-            name: 'Hộp thư vận hành',
-            short_name: 'Hộp thư',
-            description: 'Mọi đơn, nhóm theo tình trạng thực tế.',
-            url: '/app/inbox',
+            name: 'Đơn mới',
+            short_name: 'Đơn mới',
+            description: 'Đơn được gửi đến chi nhánh, chờ tạo trên PMS.',
+            url: '/app/new',
             icons: [{ src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png' }],
           },
           {

@@ -105,8 +105,8 @@ describe('NewBookingsPage — receptionist master-detail inbox', () => {
         status: 200,
         body: {
           bookings: [
-            listRow({ id: 'lm', bookingCode: 'LASTMIN001', isLastMinute: true, checkInDate: '2026-07-30' }),
-            listRow({ id: 'later', bookingCode: 'NORMAL0001' }),
+            listRow({ id: 'lm', bookingCode: 'LASTMIN001', customerName: 'Khách LastMinute', isLastMinute: true, checkInDate: '2026-07-30' }),
+            listRow({ id: 'later', bookingCode: 'NORMAL0001', customerName: 'Khách Thường' }),
           ],
           pagination: { page: 1, pageSize: 100, total: 2, totalPages: 1 },
         },
@@ -117,11 +117,11 @@ describe('NewBookingsPage — receptionist master-detail inbox', () => {
     renderApp('/app/new');
 
     const list = await screen.findByRole('list', { name: 'Danh sách đơn mới' });
-    expect(within(list).getByText('LASTMIN001')).toBeInTheDocument();
-    expect(within(list).getByText('NORMAL0001')).toBeInTheDocument();
+    expect(within(list).getByText('Khách LastMinute')).toBeInTheDocument();
+    expect(within(list).getByText('Khách Thường')).toBeInTheDocument();
     // The last-minute row carries the priority badge and a red accent border.
     expect(within(list).getByText(/Last minute/i)).toBeInTheDocument();
-    const lmRow = within(list).getByText('LASTMIN001').closest('button')!;
+    const lmRow = within(list).getByText('Khách LastMinute').closest('button')!;
     expect(lmRow.className).toContain('border-l-red-500');
     // Auto-updates note is present.
     expect(screen.getByText(/Dữ liệu tự động cập nhật mỗi 20 giây/)).toBeInTheDocument();
@@ -156,8 +156,8 @@ describe('NewBookingsPage — receptionist master-detail inbox', () => {
         status: 200,
         body: {
           bookings: submitted
-            ? [listRow({ id: 'b', bookingCode: 'BBB' })]
-            : [listRow({ id: 'a', bookingCode: 'AAA' }), listRow({ id: 'b', bookingCode: 'BBB' })],
+            ? [listRow({ id: 'b', bookingCode: 'BBB', customerName: 'Khách BBB' })]
+            : [listRow({ id: 'a', bookingCode: 'AAA', customerName: 'Khách AAA' }), listRow({ id: 'b', bookingCode: 'BBB', customerName: 'Khách BBB' })],
           pagination: { page: 1, pageSize: 100, total: submitted ? 1 : 2, totalPages: 1 },
         },
       }),
@@ -179,8 +179,8 @@ describe('NewBookingsPage — receptionist master-detail inbox', () => {
     // 'a' is gone from the list and 'b' has become the selection.
     const list = await screen.findByRole('list', { name: 'Danh sách đơn mới' });
     await screen.findByText('Đã gửi ảnh cho Admin kiểm tra.');
-    expect(within(list).queryByText('AAA')).not.toBeInTheDocument();
-    const selected = within(list).getByText('BBB').closest('button')!;
+    expect(within(list).queryByText('Khách AAA')).not.toBeInTheDocument();
+    const selected = within(list).getByText('Khách BBB').closest('button')!;
     expect(selected.getAttribute('aria-current')).toBe('true');
   });
 
@@ -191,7 +191,7 @@ describe('NewBookingsPage — receptionist master-detail inbox', () => {
       'GET /api/bookings/new?pageSize=100': () => ({
         status: 200,
         body: {
-          bookings: [listRow({ id: 'a', bookingCode: 'AAA' }), listRow({ id: 'b', bookingCode: 'BBB' })],
+          bookings: [listRow({ id: 'a', bookingCode: 'AAA', customerName: 'Khách AAA' }), listRow({ id: 'b', bookingCode: 'BBB', customerName: 'Khách BBB' })],
           pagination: { page: 1, pageSize: 100, total: 2, totalPages: 1 },
         },
       }),
@@ -204,15 +204,15 @@ describe('NewBookingsPage — receptionist master-detail inbox', () => {
 
     const list = await screen.findByRole('list', { name: 'Danh sách đơn mới' });
     // Select the second booking.
-    await user.click(within(list).getByText('BBB'));
+    await user.click(within(list).getByText('Khách BBB'));
     // Its detail (heading with booking code) is shown.
     expect(await screen.findByRole('heading', { name: 'Khách' })).toBeInTheDocument();
-    const selectedBefore = within(list).getByText('BBB').closest('button')!;
+    const selectedBefore = within(list).getByText('Khách BBB').closest('button')!;
     expect(selectedBefore.getAttribute('aria-current')).toBe('true');
 
     // Refresh; the selection must survive.
     await user.click(screen.getByRole('button', { name: 'Làm mới danh sách' }));
-    const selectedAfter = (await within(list).findByText('BBB')).closest('button')!;
+    const selectedAfter = (await within(list).findByText('Khách BBB')).closest('button')!;
     expect(selectedAfter.getAttribute('aria-current')).toBe('true');
   });
 
@@ -227,7 +227,7 @@ describe('NewBookingsPage — receptionist master-detail inbox', () => {
           return {
             status: 200,
             body: {
-              bookings: [listRow({ id: 'a', bookingCode: 'AAA' })],
+              bookings: [listRow({ id: 'a', bookingCode: 'AAA', customerName: 'Khách AAA' })],
               pagination: { page: 1, pageSize: 100, total: 1, totalPages: 1 },
             },
           };
@@ -241,7 +241,7 @@ describe('NewBookingsPage — receptionist master-detail inbox', () => {
     renderApp('/app/new');
 
     const list = await screen.findByRole('list', { name: 'Danh sách đơn mới' });
-    expect(within(list).getByText('AAA')).toBeInTheDocument();
+    expect(within(list).getByText('Khách AAA')).toBeInTheDocument();
 
     // Force a failing refresh.
     await user.click(screen.getByRole('button', { name: 'Làm mới danh sách' }));
@@ -250,7 +250,7 @@ describe('NewBookingsPage — receptionist master-detail inbox', () => {
     expect(
       await screen.findByText('Không thể kết nối đến máy chủ. Dữ liệu đang hiển thị có thể chưa được cập nhật.'),
     ).toBeInTheDocument();
-    expect(within(list).getByText('AAA')).toBeInTheDocument();
+    expect(within(list).getByText('Khách AAA')).toBeInTheDocument();
   });
 
   it('removes a booking from Đơn mới after its proof is sent for review', async () => {
