@@ -215,9 +215,11 @@ describe('request provenance', () => {
 
   it('shows a receptionist nothing of it, and no IP anywhere on the page', async () => {
     mount(withoutAudit(RICH), RECEPTIONIST_USER);
-    // The booking still renders in full — only the provenance is missing.
-    expect(await screen.findByTestId('corrections-card')).toBeInTheDocument();
+    // The reservation still renders; since the 5.2 pilot pack the audit-facing
+    // sections do not, so the booking itself is what proves the page loaded.
+    expect(await screen.findByRole('heading', { name: 'Nguyễn Văn A' })).toBeInTheDocument();
     expect(screen.queryByTestId('request-audit')).toBeNull();
+    expect(screen.queryByTestId('corrections-card')).toBeNull();
     expect(document.body.textContent).not.toContain(IP);
     expect(document.body.textContent).not.toContain(UA);
     expect(document.body.textContent).not.toContain('sess-1');

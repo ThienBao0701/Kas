@@ -13,7 +13,7 @@ import {
 } from '../api/bookings';
 import { Card } from '../components/Card';
 import { EmptyState } from '../components/EmptyState';
-import { BusinessTypeBadge, LastMinuteBadge, StatusBadge } from '../components/Badges';
+import { BusinessTypeBadge, LastMinuteBadge, SourceBadge } from '../components/Badges';
 import { FilterChips, MultiSelect, type ActiveFilter } from '../components/FilterChips';
 import { RoomSummary } from '../components/RoomSummary';
 import { Pagination } from '../components/Pagination';
@@ -410,9 +410,9 @@ export function HistoryPage() {
                       <th scope="col" className="px-4 py-3">Nhận phòng</th>
                       <th scope="col" className="px-4 py-3">Hạng phòng (SL)</th>
                       <th scope="col" className="px-4 py-3">Giá tổng</th>
-                      <th scope="col" className="px-4 py-3">Trạng thái</th>
-                      <th scope="col" className="px-4 py-3">Gửi (sentAt)</th>
-                      <th scope="col" className="px-4 py-3">Xác nhận (completedAt)</th>
+                      <th scope="col" className="px-4 py-3">Nguồn</th>
+                      <th scope="col" className="px-4 py-3">Người gửi</th>
+                      <th scope="col" className="px-4 py-3">Thời gian gửi</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -434,18 +434,9 @@ export function HistoryPage() {
                         <td className="px-4 py-3 text-slate-600">{formatDate(b.checkInDate)}</td>
                         <td className="px-4 py-3 text-slate-700"><RoomSummary summary={b.roomSummary} /></td>
                         <td className="px-4 py-3 font-bold text-slate-900">{totalDisplay(b.totalAmount, b.currency)}</td>
-                        <td className="px-4 py-3"><StatusBadge status={b.status} /></td>
+                        <td className="px-4 py-3"><SourceBadge source={b.sourcePlatform} /></td>
+                        <td className="px-4 py-3 text-slate-600">{b.sentBy?.fullName ?? '—'}</td>
                         <td className="px-4 py-3 text-slate-500">{formatDateTime(b.sentAt)}</td>
-                        <td className="px-4 py-3 text-slate-500">
-                          {b.completedAt ? (
-                            <span>
-                              {formatDateTime(b.completedAt)}
-                              {b.completedBy ? <span className="block text-xs text-slate-400">{b.completedBy.fullName}</span> : null}
-                            </span>
-                          ) : (
-                            '—'
-                          )}
-                        </td>
                       </tr>
                     ))}
                   </tbody>

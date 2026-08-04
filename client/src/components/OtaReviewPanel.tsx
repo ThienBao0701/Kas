@@ -22,14 +22,12 @@ import {
   type OtaReviewResponse,
   type OtaReviewRoomLine,
   type OtaReviewSource,
-  type AmendmentResult,
 } from '../api/otaReview';
 import { toUserMessage } from '../api/errors';
 import { Card } from './Card';
 import { Button } from './Button';
 import { ErrorAlert } from './ErrorAlert';
 import { copyText } from '../lib/copy';
-import { AmendmentReviewPanel } from './AmendmentReviewPanel';
 
 const inputClass =
   'w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600';
@@ -49,12 +47,10 @@ export interface OtaReviewPanelProps {
   rawText: string;
   /** Called when the Admin dispatches a review the server marked valid. */
   onDispatch?: (branchId: number, note: string) => void;
-  /** Called after an amendment is applied to an already-dispatched booking. */
-  onAmended?: (result: AmendmentResult) => void;
   onBack?: () => void;
 }
 
-export function OtaReviewPanel({ source, rawText, onDispatch, onAmended, onBack }: OtaReviewPanelProps) {
+export function OtaReviewPanel({ source, rawText, onDispatch, onBack }: OtaReviewPanelProps) {
   const [overrides, setOverrides] = useState<OtaReviewOverrides>({});
   const [data, setData] = useState<OtaReviewResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -163,21 +159,27 @@ export function OtaReviewPanel({ source, rawText, onDispatch, onAmended, onBack 
   };
 
   /*
-    ALREADY DISPATCHED → AMEND, never dispatch again.
+    ALREADY DISPATCHED → say so, and stop.
 
-    Re-sending returns the existing booking untouched, so the amended details
-    would be silently discarded and the branch would keep working from the
-    superseded ones. The comparison replaces the dispatch screen entirely for
-    these reservations; there is no path from here back to a send button.
+    Re-sending returns the existing booking untouched, so there is still no
+    path from here to a second dispatch. What changed in 5.2 is that the pilot
+    does not use the field-by-field comparison: the hotel reconciles amendments
+    in its own PMS, and a reviewer faced with a diff they are not expected to
+    act on will either guess or ignore it. The status is stated plainly instead.
+
+    The amendment API and its pipeline are untouched and still fully tested —
+    only this screen stopped calling them.
   */
   if (data?.existingBookingId) {
     return (
-      <AmendmentReviewPanel
-        source={source}
-        rawText={rawText}
-        onApplied={onAmended}
-        onCancel={onBack}
-      />
+      <Card className="p-5" data-testid="amendment-already-dispatched">
+        <p className="text-sm font-medium text-slate-800">Đơn này đã được gửi cho chi nhánh.</p>
+        {onBack ? (
+          <div className="mt-3">
+            <Button variant="secondary" onClick={onBack}>Quay lại</Button>
+          </div>
+        ) : null}
+      </Card>
     );
   }
 

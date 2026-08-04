@@ -693,45 +693,50 @@ describe('routing to the amendment flow', () => {
     return { calls };
   }
 
-  it('shows the amendment comparison instead of the dispatch screen', async () => {
+  it('states that the booking was already sent, with no comparison', async () => {
+    // 5.2 — the pilot reconciles amendments in its own PMS. A field-by-field
+    // diff that the reviewer is not expected to act on invites them to guess
+    // or to ignore it, so the status is stated plainly instead.
     mockExisting([
       { field: 'checkOut', label: 'Ngày trả phòng', oldValue: '2026-08-08', newValue: '2026-08-10' },
     ]);
     mount();
 
-    // The comparison, not the review form.
-    expect(await screen.findByTestId('amendment-review')).toBeInTheDocument();
+    expect(await screen.findByTestId('amendment-already-dispatched')).toHaveTextContent(
+      'Đơn này đã được gửi cho chi nhánh.',
+    );
+    expect(screen.queryByTestId('amendment-review')).not.toBeInTheDocument();
     expect(screen.queryByTestId('ota-review')).not.toBeInTheDocument();
   });
 
   it('never offers a dispatch button for an existing booking', async () => {
+    // Unchanged and still load-bearing: re-sending returns the existing
+    // booking untouched, so the amended details would be silently discarded.
     mockExisting([
       { field: 'checkOut', label: 'Ngày trả phòng', oldValue: '2026-08-08', newValue: '2026-08-10' },
     ]);
     mount();
 
-    await screen.findByTestId('amendment-review');
-    // Re-sending would return the existing booking and discard the amendment.
+    await screen.findByTestId('amendment-already-dispatched');
     expect(screen.queryByRole('button', { name: /Gửi chi nhánh/ })).not.toBeInTheDocument();
   });
 
-  it('calls the amendment endpoint automatically', async () => {
+  it('writes nothing at all — it neither dispatches nor applies an amendment', async () => {
     const { calls } = mockExisting([]);
     mount();
 
-    await screen.findByTestId('amendment-no-changes');
-    expect(calls.some((c) => c.includes('/ota/amendment'))).toBe(true);
-    // And never the dispatch endpoint.
+    await screen.findByTestId('amendment-already-dispatched');
     expect(calls.some((c) => c.includes('/ota/dispatch'))).toBe(false);
+    expect(calls.some((c) => c.includes('/amendment/apply'))).toBe(false);
   });
 
-  it('says "no changes" and lets the reviewer close without writing', async () => {
+  it('lets the reviewer go back without writing', async () => {
     const onBack = vi.fn();
     const { calls } = mockExisting([]);
     render(<OtaReviewPanel source="CTRIP" rawText="RAW" onBack={onBack} />);
 
-    expect(await screen.findByTestId('amendment-no-changes')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Huỷ' }));
+    await screen.findByTestId('amendment-already-dispatched');
+    await userEvent.click(screen.getByRole('button', { name: 'Quay lại' }));
 
     expect(onBack).toHaveBeenCalledOnce();
     expect(calls.some((c) => c.includes('/amendment/apply'))).toBe(false);
@@ -742,7 +747,7 @@ describe('routing to the amendment flow', () => {
     mount();
 
     expect(await screen.findByTestId('ota-review')).toBeInTheDocument();
-    expect(screen.queryByTestId('amendment-review')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('amendment-already-dispatched')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Gửi chi nhánh/ })).toBeInTheDocument();
   });
 });

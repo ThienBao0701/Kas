@@ -15,12 +15,49 @@ import { formatAmountCopy, formatDate, formatDateTime, formatMoney } from '../li
 import { Card } from './Card';
 import { CopyButton, CopyField } from './CopyButton';
 import { BusinessTypeBadge, LastMinuteBadge, PaymentBadge, SourceBadge, StatusBadge, VerificationBadge } from './Badges';
-import { LifecycleActions } from './LifecycleActions';
 import { Section } from './Section';
 import { ProofSection } from './ProofSection';
 import { Toast } from './Toast';
 
 const MISSING_PHONE = '(Hiển thị số điện thoại)';
+
+/** Booking.com is the only source that reliably supplies a guest phone. */
+function hasPhoneSection(booking: BookingDetail): boolean {
+  if (booking.sourcePlatform === 'BOOKING_COM') return true;
+  return (booking.phone ?? '').trim().length > 0;
+}
+
+/**
+ * The payment field, per source.
+ *
+ * H1 — the PAY BEFORE / PAY AFTER CHECK-IN wording belongs to Booking.com,
+ * whose `paymentStatus` genuinely means that. Applying it to an OTA booking
+ * stated something the mail never said.
+ *
+ * Agoda supplies its own wording ("CN", "Pay at Hotel", …) which the parser
+ * already captured and dispatch already stored; it is shown VERBATIM, never
+ * mapped onto the Booking.com vocabulary.
+ *
+ * CTrip supplies nothing — its parser extracts no payment value at all — so
+ * the field is absent rather than filled with a guess. An invented payment
+ * term is the kind of error a branch would act on.
+ */
+function PaymentField({ booking }: { booking: BookingDetail }) {
+  if (booking.sourcePlatform === 'BOOKING_COM') {
+    return (
+      <div className="rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2.5">
+        <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Thanh toán</p>
+        <div className="mt-1">
+          <PaymentBadge status={booking.paymentStatus} />
+        </div>
+      </div>
+    );
+  }
+
+  const stated = (booking.ota.paymentType ?? '').trim();
+  if (stated.length === 0) return null;
+  return <ReadField label="Thanh toán" value={stated} />;
+}
 
 /** A compact read-only labelled value (no copy button). */
 function ReadField({ label, value }: { label: string; value: string }) {
@@ -52,6 +89,7 @@ export function BookingDetailView({
 }) {
   const queryClient = useQueryClient();
   const [toast, setToast] = useState<string | null>(null);
+  const showPhone = hasPhoneSection(b);
 
   function refetchAll() {
     void queryClient.invalidateQueries({ queryKey: ['booking', b.id] });
@@ -113,7 +151,21 @@ export function BookingDetailView({
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <CopyField label="Tên khách" value={b.customerName} />
-          <CopyField label="Số điện thoại" value={b.phone ?? MISSING_PHONE} copyValue={b.phone ?? MISSING_PHONE} mono />
+          {/*
+            H2 — Agoda and CTrip rarely supply a guest phone. Showing an empty
+            field or a placeholder invites a receptionist to hunt for a number
+            that was never sent, so for an OTA booking the field is absent
+            entirely. Booking.com keeps its placeholder: there the number is
+            expected and its absence is worth noticing.
+          */}
+          {showPhone ? (
+            <CopyField
+              label="Số điện thoại"
+              value={b.phone ?? MISSING_PHONE}
+              copyValue={b.phone ?? MISSING_PHONE}
+              mono
+            />
+          ) : null}
           <CopyField label="Mã Booking" value={b.bookingCode} mono />
           <CopyField label="Tổng tiền" value={formatMoney(b.totalAmount, b.currency)} copyValue={formatAmountCopy(b.totalAmount)} />
         </div>
@@ -121,10 +173,7 @@ export function BookingDetailView({
         {/* Supporting read-only fields (no copy buttons) */}
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           <ReadField label="Chi nhánh" value={b.branch?.address ?? '—'} />
-          <div className="rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2.5">
-            <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Thanh toán</p>
-            <div className="mt-1"><PaymentBadge status={b.paymentStatus} /></div>
-          </div>
+          <PaymentField booking={b} />
           <ReadField label="Check-in" value={formatDate(b.checkInDate)} />
           <ReadField label="Check-out" value={formatDate(b.checkOutDate)} />
         </div>
@@ -135,21 +184,26 @@ export function BookingDetailView({
         ) : null}
       </Card>
 
-      {/* The operational lifecycle: the only way to drive a booking through Phase 5. */}
-      <LifecycleActions booking={b} onChanged={handleProofChanged} />
-
       {/* Generated PMS note */}
       <PmsNoteCard booking={b} />
 
-      {/* Rooms and their nightly rates */}
+      {/*
+        H5/H10 — rooms and nightly rates are never collapsed. A receptionist
+        types these figures into the PMS; hiding them behind a disclosure adds
+        a click to every booking and invites transcribing from memory. Absent
+        entirely when there are no rooms, rather than an empty container.
+      */}
       {b.rooms.length > 0 ? (
-        <Section id="rooms" title="Phòng & giá từng đêm" count={b.rooms.length} testId="rooms-section">
+        <Card className="p-5" data-testid="rooms-section">
+          <p className="mb-3 text-sm font-semibold text-slate-700">
+            Phòng &amp; giá từng đêm ({b.rooms.length})
+          </p>
           <div className="space-y-3">
             {b.rooms.map((room) => (
               <RoomCard key={room.id} room={room} />
             ))}
           </div>
-        </Section>
+        </Card>
       ) : null}
 
       {/* Warnings (never for a missing phone — that is not a blocking condition) */}
@@ -167,14 +221,20 @@ export function BookingDetailView({
       {/* What the OTA said. Empty for a Booking.com booking, which stores none. */}
       <OtaMetadataCard ota={b.ota} />
 
-      {/* What actually happened, beside what was expected. */}
-      <OperationalCard record={b.operational} />
-
-      {/* Append-only amendment history. */}
-      <CorrectionsCard corrections={b.corrections} />
-
-      {/* Everything that happened, in order. */}
-      <TimelineCard events={b.timeline} />
+      {/*
+        H8 — operational history, corrections and the timeline are ADMIN tools.
+        A receptionist acts on the reservation in front of them; the record of
+        how it got there is an audit concern and only adds noise to the screen
+        they work from. The server already withholds request provenance from
+        them; this withholds the rest of the developer-facing record.
+      */}
+      {isAdmin ? (
+        <>
+          <OperationalCard record={b.operational} />
+          <CorrectionsCard corrections={b.corrections} />
+          <TimelineCard events={b.timeline} />
+        </>
+      ) : null}
 
       {/* Proof-of-creation workflow (upload / review / verdict) */}
       <ProofSection booking={b} isAdmin={isAdmin} onChanged={handleProofChanged} />
@@ -204,11 +264,15 @@ export function BookingDetailView({
   );
 }
 
+/**
+ * Shown in the OTA card. Payment is deliberately ABSENT: it has its own field
+ * in the main information block, and repeating it there would show the same
+ * value twice on one screen.
+ */
 const OTA_FIELDS: { key: keyof OtaMetadata; label: string }[] = [
   { key: 'otaBookingStatus', label: 'Trạng thái trên OTA' },
   { key: 'ratePlanName', label: 'Gói giá' },
   { key: 'cancellationPolicy', label: 'Chính sách huỷ' },
-  { key: 'paymentType', label: 'Hình thức thanh toán' },
   { key: 'benefitsIncluded', label: 'Ưu đãi kèm theo' },
   { key: 'countryOfResidence', label: 'Quốc gia cư trú' },
   { key: 'websiteLanguage', label: 'Ngôn ngữ đặt phòng' },
