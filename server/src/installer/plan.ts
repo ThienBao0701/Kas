@@ -28,6 +28,30 @@ export const OPERATOR_DATA: readonly string[] = [
   'logs',
 ];
 
+/**
+ * The backups, held apart from every other kind of data.
+ *
+ * `BACKUP_DIR` defaults to `backups` INSIDE the install directory, and until
+ * now that path appeared in neither list — it survived an upgrade by accident
+ * rather than by decision, and `-PurgeData`, documented as full removal,
+ * silently left it behind.
+ *
+ * It is separate from OPERATOR_DATA because it answers a different question.
+ * Uploads and configuration can be recreated by a hotel that still has its
+ * database; the backups are what remain when nothing else does. So they are
+ * preserved unconditionally on upgrade, and removing them takes its own
+ * explicit flag rather than riding along with `-PurgeData`.
+ */
+export const BACKUP_DATA: readonly string[] = ['backups'];
+
+/**
+ * Everything an upgrade must leave alone.
+ *
+ * Declared, rather than achieved by omission: a path that survives because
+ * nobody listed it is one refactor away from not surviving.
+ */
+export const PRESERVED_ON_UPGRADE: readonly string[] = [...OPERATOR_DATA, ...BACKUP_DATA];
+
 /** Paths the installer OWNS and replaces wholesale on every upgrade. */
 export const RELEASE_PAYLOAD: readonly string[] = [
   'server/dist',
@@ -55,9 +79,24 @@ export type InstallKind =
 export type InstallProblem =
   | 'NODE_MISSING'
   | 'NODE_TOO_OLD'
+  | 'WINDOWS_TOO_OLD'
+  | 'NOT_ENOUGH_DISK'
   | 'TARGET_NOT_WRITABLE'
   | 'PAYLOAD_INCOMPLETE'
   | 'TARGET_OCCUPIED_BY_OTHER';
+
+/** Windows 10 and Server 2016 both report major version 10. */
+export const MIN_WINDOWS_MAJOR = 10;
+
+/**
+ * Free space required to install.
+ *
+ * The payload is around 310 MB and an upgrade briefly holds the old and new
+ * copies at once. 1 GB leaves room for that plus the database growth and the
+ * proof images that follow, and refusing here is far kinder than running out
+ * halfway through replacing node_modules.
+ */
+export const MIN_INSTALL_DISK_BYTES = 1024 * 1024 * 1024;
 
 /** Everything the decision depends on, gathered by the installer script. */
 export interface InstallEnvironment {
@@ -80,6 +119,21 @@ export interface InstallEnvironment {
    * folder that already belongs to something else.
    */
   targetOccupiedByOther: boolean;
+  /** Major Windows version, or null when it could not be read. */
+  windowsMajor?: number | null;
+  /** Free bytes on the target volume, or null when it could not be read. */
+  freeDiskBytes?: number | null;
+  /**
+   * Something already holds the port Kas will use.
+   *
+   * A WARNING, never a refusal: nothing is being started yet, the operator may
+   * be about to stop whatever holds it, and blocking an install over a running
+   * program would be an odd thing for an installer to do. It is reported so the
+   * first failed start is not a surprise.
+   */
+  portInUse?: boolean;
+  /** The port that would be used. Only for the message. */
+  port?: number;
 }
 
 export type InstallAction =
@@ -96,6 +150,17 @@ export type InstallAction =
 export function decideInstall(env: InstallEnvironment): InstallAction {
   if (env.nodeMajor === null) return { kind: 'ABORT', problem: 'NODE_MISSING' };
   if (env.nodeMajor < MIN_NODE_MAJOR) return { kind: 'ABORT', problem: 'NODE_TOO_OLD' };
+  // An unreadable Windows version is NOT a refusal: the check exists to stop an
+  // install onto Windows 7, not to stop one on a machine whose version string
+  // could not be parsed. Guessing "too old" there would block a working PC.
+  if (env.windowsMajor != null && env.windowsMajor < MIN_WINDOWS_MAJOR) {
+    return { kind: 'ABORT', problem: 'WINDOWS_TOO_OLD' };
+  }
+  // Same reasoning: refuse a disk that is measurably too small, never one that
+  // could not be measured.
+  if (env.freeDiskBytes != null && env.freeDiskBytes < MIN_INSTALL_DISK_BYTES) {
+    return { kind: 'ABORT', problem: 'NOT_ENOUGH_DISK' };
+  }
   if (!env.payloadComplete) return { kind: 'ABORT', problem: 'PAYLOAD_INCOMPLETE' };
   if (!env.targetWritable) return { kind: 'ABORT', problem: 'TARGET_NOT_WRITABLE' };
   // Refusing here is what stops an install into "C:\" or a documents folder
@@ -108,7 +173,7 @@ export function decideInstall(env: InstallEnvironment): InstallAction {
   // than moving to a new one. Both replace the payload; the distinction is
   // reported so the log says what actually happened.
   const kind: InstallKind = env.existingVersion === env.incomingVersion ? 'REPAIR' : 'UPGRADE';
-  return { kind, preserve: OPERATOR_DATA };
+  return { kind, preserve: PRESERVED_ON_UPGRADE };
 }
 
 /**
@@ -120,18 +185,51 @@ export function decideInstall(env: InstallEnvironment): InstallAction {
  */
 export function isProtectedPath(relativePath: string): boolean {
   const normalized = relativePath.replace(/\\/g, '/').replace(/^\.\//, '');
-  return OPERATOR_DATA.some(
+  return PRESERVED_ON_UPGRADE.some(
     (protectedPath) => normalized === protectedPath || normalized.startsWith(`${protectedPath}/`),
   );
 }
 
-/** What an uninstall removes, given whether the operator asked to purge data. */
-export function uninstallTargets(purgeData: boolean): readonly string[] {
+/**
+ * What an uninstall removes.
+ *
+ * TWO SEPARATE CONSENTS, because the two kinds of loss are not comparable.
+ * `purgeData` removes the configuration and the proof images — recoverable
+ * from a backup. `purgeBackups` removes the backups themselves, which is the
+ * one action in this system with no way back, and it is not something anyone
+ * should be able to do by passing a flag that sounded like it meant something
+ * milder.
+ */
+export function uninstallTargets(purgeData: boolean, purgeBackups = false): readonly string[] {
   // Default keeps everything the hotel produced. An uninstall that silently
   // deleted proof images would destroy the only record that a branch created a
   // reservation correctly.
-  return purgeData ? [...RELEASE_PAYLOAD, ...OPERATOR_DATA] : RELEASE_PAYLOAD;
+  return [
+    ...RELEASE_PAYLOAD,
+    ...(purgeData ? OPERATOR_DATA : []),
+    ...(purgeBackups ? BACKUP_DATA : []),
+  ];
 }
+
+/* ------------------------------------------------------------------ */
+/* Folders the installer creates                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Directories created at install time rather than left to appear on demand.
+ *
+ * The application creates each of these when it first needs one, so this is
+ * not about correctness — it is about the operator being able to SEE where
+ * their proof images and backups will live before anything has happened, and
+ * about `--diagnose` reporting a real permission problem on the day of the
+ * install instead of on the day of the first upload.
+ */
+export const CREATED_DIRECTORIES: readonly string[] = [
+  'logs',
+  'backups',
+  'server/uploads/booking-proofs',
+  'server/uploads/issue-photos',
+];
 
 /* ------------------------------------------------------------------ */
 /* Starting with Windows                                               */
@@ -301,6 +399,17 @@ export function installProblemMessage(problem: InstallProblem, env: InstallEnvir
         `Thư mục "${env.targetDir}" đã có dữ liệu không phải của Kas. ` +
         'Hãy chọn một thư mục trống hoặc thư mục Kas đã cài trước đó.'
       );
+    case 'WINDOWS_TOO_OLD':
+      return (
+        `Phiên bản Windows quá cũ (${String(env.windowsMajor)}). Kas cần Windows 10 trở lên ` +
+        '(hoặc Windows Server 2016 trở lên).'
+      );
+    case 'NOT_ENOUGH_DISK':
+      return (
+        `Không đủ dung lượng trống: còn ${Math.round((env.freeDiskBytes ?? 0) / 1024 / 1024)} MB, ` +
+        `cần tối thiểu ${Math.round(MIN_INSTALL_DISK_BYTES / 1024 / 1024)} MB. ` +
+        'Hãy giải phóng ổ đĩa rồi chạy lại.'
+      );
   }
 }
 
@@ -321,5 +430,14 @@ export function describeInstall(action: InstallAction, env: InstallEnvironment):
   }
   // Stated every time, because it is the assurance an operator most needs.
   lines.push('Cơ sở dữ liệu   : không bị thay đổi (PostgreSQL nằm ngoài thư mục cài đặt)');
+
+  // A warning, not a refusal — but said BEFORE the install rather than left to
+  // surface as a failed first start.
+  if (env.portInUse) {
+    lines.push(
+      `CẢNH BÁO        : cổng ${env.port ?? 3001} đang bị chiếm. Kas sẽ không khởi động được ` +
+        'cho tới khi chương trình đó dừng, hoặc bạn đổi PORT trong .env.',
+    );
+  }
   return lines;
 }

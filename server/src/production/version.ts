@@ -149,13 +149,38 @@ function readBuildDate(root: string): string | null {
   }
 }
 
+/**
+ * The commit the RELEASE was built from, stamped by the packager.
+ *
+ * An installed copy has no .git, so without this the only remaining source is
+ * APP_RELEASE_REF — and the shipped .env template sets that to a placeholder
+ * (`v0.0.0`). An install therefore reported a commit that never existed while
+ * the release's own Version.txt named the real one. Found by installing from
+ * the built KasSetup.exe and asking it for its version.
+ */
+function readBuildStamp(root: string): string | null {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(path.join(root, 'kas-release.json'), 'utf8')) as {
+      commit?: string;
+    };
+    return parsed.commit && parsed.commit.length > 0 ? parsed.commit : null;
+  } catch {
+    return null;
+  }
+}
+
 let cached: VersionInfo | null = null;
 
 export function versionInfo(root: string = REPO_ROOT): VersionInfo {
   if (cached && root === REPO_ROOT) return cached;
   const info: VersionInfo = {
     appVersion: readAppVersion(root),
-    gitCommit: process.env.APP_RELEASE_REF ?? readGitCommit(root),
+    // Order of authority: what this checkout IS, then what the build stamped,
+    // then what an operator declared. A developer's working tree wins because
+    // it is the truth on that machine; the build stamp beats APP_RELEASE_REF
+    // because it is a fact about the artifact rather than a value someone may
+    // have left at the template's default.
+    gitCommit: readGitCommit(root) ?? readBuildStamp(root) ?? process.env.APP_RELEASE_REF ?? null,
     buildDate: readBuildDate(root),
     environment: process.env.NODE_ENV ?? 'development',
     nodeVersion: process.versions.node,

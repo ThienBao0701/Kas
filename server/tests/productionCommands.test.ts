@@ -270,3 +270,61 @@ describe('presenting the version', () => {
     expect(versionReport({ ...info, buildDate: null }).join('\n')).toContain('chưa build');
   });
 });
+
+/* ================================================================== */
+/* Phase 6.4 — the commit an INSTALLED copy reports                    */
+/* ================================================================== */
+describe('the build stamp', () => {
+  let root = '';
+
+  beforeEach(() => {
+    resetVersionCache();
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'kas-stamp-'));
+    fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '0.1.0' }));
+  });
+
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+    delete process.env.APP_RELEASE_REF;
+    resetVersionCache();
+  });
+
+  it('reports the commit the release was built from when there is no .git', () => {
+    // THE DEFECT THIS PREVENTS, found by installing from the built
+    // KasSetup.exe: an install has no checkout, so the only remaining source
+    // was APP_RELEASE_REF — which the shipped .env template sets to the
+    // placeholder "v0.0.0". The application reported a commit that never
+    // existed while the release's own Version.txt named the real one.
+    fs.writeFileSync(
+      path.join(root, 'kas-release.json'),
+      JSON.stringify({ version: '0.1.0', commit: 'f'.repeat(40) }),
+    );
+    process.env.APP_RELEASE_REF = 'v0.0.0';
+    expect(versionInfo(root).gitCommit).toBe('f'.repeat(40));
+  });
+
+  it('still honours APP_RELEASE_REF when nothing was stamped', () => {
+    // A deployment that states its own ref and has no build stamp is entitled
+    // to be believed.
+    process.env.APP_RELEASE_REF = 'v1.4.2';
+    expect(versionInfo(root).gitCommit).toBe('v1.4.2');
+  });
+
+  it('prefers the working tree over both, on a developer machine', () => {
+    fs.mkdirSync(path.join(root, '.git'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.git', 'HEAD'), `${'a'.repeat(40)}\n`);
+    fs.writeFileSync(path.join(root, 'kas-release.json'), JSON.stringify({ commit: 'b'.repeat(40) }));
+    process.env.APP_RELEASE_REF = 'v9.9.9';
+    expect(versionInfo(root).gitCommit).toBe('a'.repeat(40));
+  });
+
+  it('reports nothing rather than a placeholder when there is no source at all', () => {
+    expect(versionInfo(root).gitCommit).toBeNull();
+  });
+
+  it('ignores an empty commit in the stamp', () => {
+    // The packager writes "" when git is unavailable on the build machine.
+    fs.writeFileSync(path.join(root, 'kas-release.json'), JSON.stringify({ version: '0.1.0', commit: '' }));
+    expect(versionInfo(root).gitCommit).toBeNull();
+  });
+});

@@ -15,7 +15,12 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   MIN_NODE_MAJOR,
+  BACKUP_DATA,
+  CREATED_DIRECTORIES,
+  MIN_INSTALL_DISK_BYTES,
+  MIN_WINDOWS_MAJOR,
   OPERATOR_DATA,
+  PRESERVED_ON_UPGRADE,
   RELEASE_PAYLOAD,
   SCHEDULED_TASK_NAME,
   decideInstall,
@@ -78,12 +83,12 @@ describe('classifying the install', () => {
 describe('operator data', () => {
   it('is preserved by an upgrade', () => {
     const action = proceeding(decideInstall(ready({ existingInstall: true, existingVersion: '1.1.0' })));
-    expect(action.preserve).toEqual(OPERATOR_DATA);
+    expect(action.preserve).toEqual(PRESERVED_ON_UPGRADE);
   });
 
   it('is preserved by a repair too', () => {
     const action = proceeding(decideInstall(ready({ existingInstall: true, existingVersion: '1.2.0' })));
-    expect(action.preserve).toEqual(OPERATOR_DATA);
+    expect(action.preserve).toEqual(PRESERVED_ON_UPGRADE);
   });
 
   it('covers configuration, uploads and logs', () => {
@@ -379,5 +384,142 @@ describe('the release packager ships what the plan declares', () => {
       packager.includes(`'${windowsPath}'`) || packager.includes(`'${item}'`),
       `${item} is in RELEASE_PAYLOAD but Package-Kas.ps1 never copies it`,
     ).toBe(true);
+  });
+});
+
+/* ================================================================== */
+/* Phase 6.4 — the backups, held apart from everything else            */
+/* ================================================================== */
+describe('backups', () => {
+  it('are preserved by an upgrade, by declaration rather than by omission', () => {
+    // Until 6.4 the backup directory appeared in neither list. It survived an
+    // upgrade because nothing happened to mention it — which is one refactor
+    // away from not surviving.
+    const action = proceeding(decideInstall(ready({ existingInstall: true, existingVersion: '1.1.0' })));
+    expect(action.preserve).toContain('backups');
+  });
+
+  it('are protected from the payload replacement', () => {
+    expect(isProtectedPath('backups')).toBe(true);
+    expect(isProtectedPath('backups/backup-20260805T2200/database.dump')).toBe(true);
+    expect(isProtectedPath(['backups', 'backup-20260805T2200', 'manifest.json'].join('\\'))).toBe(true);
+  });
+
+  it('survive an uninstall that purges operator data', () => {
+    // THE PROPERTY. -PurgeData removes configuration and proof images, both of
+    // which a backup can restore. The backups are what remain when nothing
+    // else does, so a flag about "data" must not take them.
+    expect(uninstallTargets(true)).not.toContain('backups');
+  });
+
+  it('are removed only by their own explicit flag', () => {
+    expect(uninstallTargets(false, true)).toContain('backups');
+    expect(uninstallTargets(false, false)).not.toContain('backups');
+  });
+
+  it('can be removed together with everything else when both are asked for', () => {
+    const targets = uninstallTargets(true, true);
+    for (const item of [...RELEASE_PAYLOAD, ...OPERATOR_DATA, ...BACKUP_DATA]) {
+      expect(targets, item).toContain(item);
+    }
+  });
+
+  it('are never in the payload the installer replaces', () => {
+    for (const item of BACKUP_DATA) expect(RELEASE_PAYLOAD, item).not.toContain(item);
+  });
+});
+
+/* ================================================================== */
+/* Phase 6.4 — folders the installer creates                           */
+/* ================================================================== */
+describe('created folders', () => {
+  it('covers logs, backups and both upload directories', () => {
+    expect(CREATED_DIRECTORIES).toContain('logs');
+    expect(CREATED_DIRECTORIES).toContain('backups');
+    expect(CREATED_DIRECTORIES).toContain('server/uploads/booking-proofs');
+    expect(CREATED_DIRECTORIES).toContain('server/uploads/issue-photos');
+  });
+
+  it('creates only paths that are protected from an upgrade', () => {
+    // A directory the installer creates and then replaces on the next upgrade
+    // would silently discard whatever the hotel had put in it.
+    for (const dir of CREATED_DIRECTORIES) {
+      expect(isProtectedPath(dir), dir).toBe(true);
+    }
+  });
+});
+
+/* ================================================================== */
+/* Phase 6.4 — machine prerequisites                                   */
+/* ================================================================== */
+describe('machine prerequisites', () => {
+  it('refuses Windows older than 10', () => {
+    expect(decideInstall(ready({ windowsMajor: 6 }))).toEqual({
+      kind: 'ABORT',
+      problem: 'WINDOWS_TOO_OLD',
+    });
+  });
+
+  it('accepts Windows 10 and later', () => {
+    for (const major of [MIN_WINDOWS_MAJOR, 11]) {
+      expect(decideInstall(ready({ windowsMajor: major })).kind, String(major)).not.toBe('ABORT');
+    }
+  });
+
+  it('refuses a disk that cannot hold the install', () => {
+    expect(decideInstall(ready({ freeDiskBytes: MIN_INSTALL_DISK_BYTES - 1 }))).toEqual({
+      kind: 'ABORT',
+      problem: 'NOT_ENOUGH_DISK',
+    });
+  });
+
+  it('accepts exactly the required amount', () => {
+    expect(decideInstall(ready({ freeDiskBytes: MIN_INSTALL_DISK_BYTES })).kind).not.toBe('ABORT');
+  });
+
+  it('never refuses because a measurement could not be taken', () => {
+    // An unreadable version or free-space figure is not a bad one. Refusing
+    // there would block an install on a working machine.
+    expect(decideInstall(ready({ windowsMajor: null, freeDiskBytes: null })).kind).toBe('FRESH');
+  });
+
+  it('checks the platform before the payload', () => {
+    // Telling someone their download is incomplete, when the real problem is
+    // that Kas will not run on their Windows at all, sends them to re-download
+    // 300 MB for nothing.
+    const action = decideInstall(ready({ windowsMajor: 6, payloadComplete: false }));
+    expect(action).toMatchObject({ problem: 'WINDOWS_TOO_OLD' });
+  });
+
+  it('names the remedy for each new refusal', () => {
+    expect(installProblemMessage('WINDOWS_TOO_OLD', ready({ windowsMajor: 6 }))).toContain('Windows 10');
+    const disk = installProblemMessage('NOT_ENOUGH_DISK', ready({ freeDiskBytes: 1024 }));
+    expect(disk).toContain('giải phóng');
+    expect(disk).toContain('1024');
+  });
+});
+
+/* ================================================================== */
+/* Phase 6.4 — a busy port warns, never blocks                         */
+/* ================================================================== */
+describe('the port', () => {
+  it('does not stop an install', () => {
+    // Nothing is being started yet, and the operator may be about to stop
+    // whatever holds it. An installer that refused over a running program
+    // would be an odd thing.
+    expect(decideInstall(ready({ portInUse: true })).kind).toBe('FRESH');
+  });
+
+  it('is reported before the install rather than at the first failed start', () => {
+    const env = ready({ portInUse: true, port: 3001 });
+    const lines = describeInstall(decideInstall(env), env).join('\n');
+    expect(lines).toContain('CẢNH BÁO');
+    expect(lines).toContain('3001');
+    expect(lines).toContain('PORT');
+  });
+
+  it('says nothing when the port is free', () => {
+    const env = ready();
+    expect(describeInstall(decideInstall(env), env).join('\n')).not.toContain('CẢNH BÁO');
   });
 });

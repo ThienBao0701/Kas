@@ -24,6 +24,11 @@
 param(
     [string]$InstallDir = (Split-Path -Parent $PSScriptRoot),
     [switch]$PurgeData,
+    # SEPARATE from -PurgeData on purpose. Configuration and proof images can be
+    # recovered from a backup; the backups are what remain when nothing else
+    # does. Removing them is the one action here with no way back, so it takes
+    # its own flag rather than riding along with one that sounded milder.
+    [switch]$PurgeBackups,
     [switch]$Force
 )
 
@@ -52,6 +57,9 @@ $applicationItems = @('server\dist', 'client\dist', 'prisma', 'node_modules',
                       'package.json', 'server\package.json', 'Kas.cmd',
                       'KasService.cmd', 'KasBackup.cmd', 'kas-release.json')
 $operatorItems = @('.env', 'server\uploads', 'logs')
+# Held apart from $operatorItems: see -PurgeBackups above, and BACKUP_DATA in
+# server/src/installer/plan.ts, which is the list the tests pin.
+$backupItems = @('backups')
 
 Write-Host ''
 Write-Host 'Se xoa:' -ForegroundColor Yellow
@@ -65,6 +73,18 @@ if ($PurgeData) {
     Write-Host 'Giu lai (du lieu cua ban):' -ForegroundColor Green
     foreach ($item in $operatorItems) { Write-Host "  - $item" -ForegroundColor Green }
 }
+
+if ($PurgeBackups) {
+    Write-Host ''
+    Write-Host 'VA XOA CA CAC BAN SAO LUU (-PurgeBackups):' -ForegroundColor Red
+    foreach ($item in $backupItems) { Write-Host "  - $item" -ForegroundColor Red }
+    Write-Host '  KHONG THE HOAN TAC. Day la ban sao cuoi cung cua du lieu khach san.' -ForegroundColor Red
+} else {
+    Write-Host ''
+    Write-Host 'Giu lai (cac ban sao luu):' -ForegroundColor Green
+    foreach ($item in $backupItems) { Write-Host "  - $item" -ForegroundColor Green }
+}
+
 Write-Host ''
 Write-Host 'Co so du lieu PostgreSQL KHONG bi dong den.' -ForegroundColor Green
 Write-Host ''
@@ -107,7 +127,9 @@ foreach ($taskName in @('Kas', 'Kas Backup')) {
 }
 $ErrorActionPreference = $previousPreference
 
-$targets = if ($PurgeData) { $applicationItems + $operatorItems } else { $applicationItems }
+$targets = $applicationItems
+if ($PurgeData) { $targets += $operatorItems }
+if ($PurgeBackups) { $targets += $backupItems }
 foreach ($item in $targets) {
     $path = Join-Path $InstallDir $item
     if (Test-Path $path) {

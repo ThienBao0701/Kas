@@ -103,6 +103,34 @@ foreach ($item in 'server\dist', 'client\dist', 'prisma', 'node_modules', 'packa
 $planModule = Join-Path $ReleaseRoot 'server\dist\installer\plan.js'
 if (-not (Test-Path $planModule)) { throw "Goi cai dat hong: khong tim thay $planModule" }
 
+# --- Machine prerequisites (Phase 6.4) --------------------------------------
+# Measured here, judged in plan.ts. An unreadable value is passed as $null and
+# the plan treats that as "do not refuse" — the checks exist to stop an install
+# onto Windows 7 or a full disk, not to stop one on a machine whose version
+# string could not be parsed.
+$windowsMajor = $null
+try { $windowsMajor = [Environment]::OSVersion.Version.Major } catch { }
+
+$freeDiskBytes = $null
+try {
+    $targetRoot = [System.IO.Path]::GetPathRoot([System.IO.Path]::GetFullPath($InstallDir))
+    $drive = Get-PSDrive -Name $targetRoot.Substring(0, 1) -ErrorAction Stop
+    $freeDiskBytes = [int64]$drive.Free
+} catch { }
+
+# The port Kas will use, read from an existing .env when there is one.
+$installPort = 3001
+$existingEnvFile = Join-Path $InstallDir '.env'
+if (Test-Path $existingEnvFile) {
+    $portLine = Select-String -Path $existingEnvFile -Pattern '^\s*PORT\s*=\s*(\d+)' -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($portLine) { $installPort = [int]$portLine.Matches[0].Groups[1].Value }
+}
+$portInUse = $false
+try {
+    $portInUse = [bool](Get-NetTCPConnection -LocalPort $installPort -State Listen -ErrorAction SilentlyContinue)
+} catch { }
+
 $environmentJson = @{
     nodeMajor             = $nodeMajor
     targetDir             = $InstallDir
@@ -112,6 +140,10 @@ $environmentJson = @{
     incomingVersion       = $incomingVersion
     payloadComplete       = $payloadComplete
     targetOccupiedByOther = $targetOccupiedByOther
+    windowsMajor          = $windowsMajor
+    freeDiskBytes         = $freeDiskBytes
+    portInUse             = $portInUse
+    port                  = $installPort
 } | ConvertTo-Json -Compress
 
 # node reads the environment and prints the decision as JSON, so the PowerShell
@@ -193,6 +225,21 @@ if (Test-Path $envPath) {
 } else {
     Copy-Item (Join-Path $ReleaseRoot '.env.example') $envPath -Force
     Write-Log '  da tao .env tu mau - CAN CHINH SUA truoc khi chay' 'Yellow'
+}
+
+# --- Folders ----------------------------------------------------------------
+#
+# The application creates each of these the first time it needs one, so this is
+# not about correctness. It is so the operator can SEE where their proof images
+# and backups will live before anything has happened, and so a permission
+# problem surfaces on the day of the install rather than on the day of the
+# first upload. The list comes from the plan module, which the tests pin.
+foreach ($folder in 'logs', 'backups', 'server\uploads\booking-proofs', 'server\uploads\issue-photos') {
+    $full = Join-Path $InstallDir $folder
+    if (-not (Test-Path $full)) {
+        New-Item -ItemType Directory -Path $full -Force | Out-Null
+        Write-Log "  da tao $folder"
+    }
 }
 
 # --- Shortcuts --------------------------------------------------------------
@@ -289,6 +336,34 @@ Copy-Item (Join-Path $PSScriptRoot 'Uninstall-Kas.ps1') (Join-Path $installedIns
 
 Write-Host ''
 Write-Log "Cai dat hoan tat: $InstallDir" 'Green'
+
+# --- Verify what was just installed -----------------------------------------
+#
+# The installer's own log says what it COPIED. That is not the same as saying
+# the result works, and the gap between those two is where an operator is left
+# with a green "installation complete" and an application that will not start.
+# So the deployment validator built in 6.3c is run here, against the machine as
+# it now stands.
+#
+# Its verdict never fails the install: at this point the files ARE installed,
+# and the usual reason for a warning on a fresh machine is the .env that the
+# operator has not filled in yet, which is the very next instruction below.
+$diagnoseCmd = Join-Path $InstallDir 'Kas.cmd'
+if (Test-Path $diagnoseCmd) {
+    Write-Host ''
+    Write-Log 'Dang kiem tra ban cai dat...' 'Cyan'
+    & cmd.exe /c "`"$diagnoseCmd`" --diagnose"
+    $diagnoseExit = $LASTEXITCODE
+    switch ($diagnoseExit) {
+        0 { Write-Log 'Kiem tra: DAT. He thong san sang.' 'Green' }
+        1 { Write-Log 'Kiem tra: co CANH BAO o tren - doc va xu ly khi can.' 'Yellow' }
+        default {
+            Write-Log 'Kiem tra: co LOI NGHIEM TRONG o tren.' 'Red'
+            Write-Log 'Kas da duoc cai nhung chua chay dung. Xu ly cac muc [FAIL] roi chay lai:' 'Red'
+            Write-Log '    Kas.cmd --diagnose' 'Red'
+        }
+    }
+}
 
 # --- First run --------------------------------------------------------------
 $freshEnv = -not (Test-Path $envPath) -or $decision.action.kind -eq 'FRESH'
