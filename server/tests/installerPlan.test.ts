@@ -15,10 +15,12 @@ import {
   MIN_NODE_MAJOR,
   OPERATOR_DATA,
   RELEASE_PAYLOAD,
+  SCHEDULED_TASK_NAME,
   decideInstall,
   describeInstall,
   installProblemMessage,
   isProtectedPath,
+  scheduledTaskSpec,
   shortcutSpecs,
   uninstallTargets,
   type InstallEnvironment,
@@ -283,5 +285,52 @@ describe('the messages', () => {
       expect(message, problem).not.toContain('postgresql://');
       expect(message, problem).not.toMatch(/:\/\/[^\s]*:[^\s]*@/);
     }
+  });
+});
+
+/* ================================================================== */
+/* Phase 6.3a — starting with Windows                                  */
+/* ================================================================== */
+describe('the boot task', () => {
+  it('runs the background entry point, not the interactive one', () => {
+    // Kas.cmd opens a browser and holds a console window. Running THAT at boot
+    // would put a browser on an unattended machine and leave a console open.
+    expect(scheduledTaskSpec().target).toBe('KasService.cmd');
+  });
+
+  it('starts at boot rather than at logon', () => {
+    // A logon trigger would leave the hotel waiting for someone to sign in
+    // before any branch could receive a dispatch.
+    expect(scheduledTaskSpec().trigger).toBe('AtStartup');
+    expect(scheduledTaskSpec().runWhetherLoggedOnOrNot).toBe(true);
+  });
+
+  it('runs as SYSTEM, so no operator password is stored anywhere', () => {
+    expect(scheduledTaskSpec().runAsAccount).toBe('SYSTEM');
+  });
+
+  it('has no execution time limit', () => {
+    // The Windows default of 72 hours would stop a healthy server every three
+    // days, at whatever hour it happened to have started.
+    expect(scheduledTaskSpec().executionTimeLimit).toBe('PT0S');
+  });
+
+  it('ships the file the task points at', () => {
+    // A task registered against a file the installer never copies is a boot
+    // failure that only appears after the next restart.
+    expect(RELEASE_PAYLOAD).toContain(scheduledTaskSpec().target);
+  });
+
+  it('keeps the background entry point out of operator data', () => {
+    // It is application code: an upgrade must replace it.
+    expect(OPERATOR_DATA).not.toContain('KasService.cmd');
+  });
+
+  it('removes it on uninstall along with the rest of the payload', () => {
+    expect(uninstallTargets(false)).toContain('KasService.cmd');
+  });
+
+  it('names the task the same way everywhere', () => {
+    expect(scheduledTaskSpec().name).toBe(SCHEDULED_TASK_NAME);
   });
 });

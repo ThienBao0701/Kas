@@ -29,6 +29,8 @@ const ready = (over: Partial<LauncherEnvironment> = {}): LauncherEnvironment => 
   portInUse: false,
   portServesKas: false,
   databaseUrlConfigured: true,
+  uploadDirWritable: true,
+  logDirWritable: true,
   ...over,
 });
 
@@ -165,6 +167,51 @@ describe('the messages', () => {
     expect(message).toContain('3001');
     expect(message).toContain('PORT');
   });
+
+  it('says what an unwritable uploads directory costs, not just that it is unwritable', () => {
+    // "Permission denied on server/uploads" means nothing to a hotel manager.
+    // "Reception will not be able to send proof images" is actionable.
+    const message = problemMessage('UPLOAD_DIR_NOT_WRITABLE', ready());
+    expect(message).toContain('ảnh');
+    expect(message).toContain('server/uploads');
+  });
+
+  it('says an unwritable log directory costs diagnostics, not the app', () => {
+    expect(problemMessage('LOG_DIR_NOT_WRITABLE', ready())).toContain('logs');
+  });
+});
+
+/* ================================================================== */
+/* Phase 6.3a — storage is validated before the port                   */
+/* ================================================================== */
+describe('writable storage', () => {
+  it('refuses to start when proof images cannot be written', () => {
+    // The failure would otherwise surface as a receptionist unable to upload
+    // the only evidence that a reservation was created correctly.
+    expect(decideAction(ready({ uploadDirWritable: false }))).toEqual({
+      kind: 'ABORT',
+      problem: 'UPLOAD_DIR_NOT_WRITABLE',
+    });
+  });
+
+  it('refuses to start when nothing can be logged', () => {
+    expect(decideAction(ready({ logDirWritable: false }))).toEqual({
+      kind: 'ABORT',
+      problem: 'LOG_DIR_NOT_WRITABLE',
+    });
+  });
+
+  it('reports storage before a busy port', () => {
+    // A port conflict is the visible symptom; unwritable storage is the fault
+    // that survives fixing it.
+    const action = decideAction(ready({ uploadDirWritable: false, portInUse: true }));
+    expect(action).toEqual({ kind: 'ABORT', problem: 'UPLOAD_DIR_NOT_WRITABLE' });
+  });
+
+  it('still attaches to a running Kas rather than auditing storage', () => {
+    // Kas is answering, so it plainly can write. Re-reporting would be noise.
+    expect(decideAction(ready({ portServesKas: true, uploadDirWritable: false })).kind).toBe('ATTACH');
+  });
 });
 
 /* ================================================================== */
@@ -186,6 +233,8 @@ describe('nothing secret is ever printed', () => {
       'MISSING_DATABASE_URL',
       'MISSING_SERVER_BUILD',
       'MISSING_CLIENT_BUILD',
+      'UPLOAD_DIR_NOT_WRITABLE',
+      'LOG_DIR_NOT_WRITABLE',
       'PORT_TAKEN_BY_OTHER',
     ] as const;
     for (const problem of problems) {
@@ -197,7 +246,7 @@ describe('nothing secret is ever printed', () => {
 
   it('describes every check it made, so the log explains itself', () => {
     const lines = describeEnvironment(ready({ portServesKas: true }));
-    expect(lines).toHaveLength(7);
+    expect(lines).toHaveLength(9);
     expect(lines.join('\n')).toContain('Kas đang chạy   : có');
   });
 });

@@ -72,6 +72,25 @@ if (-not $Force) {
     }
 }
 
+# --- Stop and unregister the background runner ------------------------------
+#
+# BEFORE deleting any file. A running server holding server\dist open would make
+# the removal fail halfway and leave a half-uninstalled directory; and the stop
+# is graceful, so a receptionist mid-upload is not cut off by an uninstall.
+$serviceCmd = Join-Path $InstallDir 'KasService.cmd'
+if (Test-Path $serviceCmd) {
+    Write-Host 'Dang dung Kas neu no khoi chay...'
+    & cmd.exe /c "`"$serviceCmd`" stop"
+    Start-Sleep -Seconds 2
+}
+
+$existingTask = schtasks.exe /Query /TN 'Kas' 2>$null
+if ($LASTEXITCODE -eq 0) {
+    $null = schtasks.exe /Delete /TN 'Kas' /F 2>$null
+    if ($LASTEXITCODE -eq 0) { Write-Host '  da go Scheduled Task "Kas"' }
+    else { Write-Host '  KHONG go duoc Scheduled Task "Kas" (can quyen Administrator)' -ForegroundColor Yellow }
+}
+
 $targets = if ($PurgeData) { $applicationItems + $operatorItems } else { $applicationItems }
 foreach ($item in $targets) {
     $path = Join-Path $InstallDir $item

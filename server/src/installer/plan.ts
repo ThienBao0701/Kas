@@ -36,6 +36,10 @@ export const RELEASE_PAYLOAD: readonly string[] = [
   'node_modules',
   'package.json',
   'Kas.cmd',
+  // The background entry point Windows runs at boot. Part of the payload, not
+  // operator data: it is replaced wholesale on every upgrade like the rest of
+  // the application.
+  'KasService.cmd',
 ];
 
 export type InstallKind =
@@ -127,6 +131,63 @@ export function uninstallTargets(purgeData: boolean): readonly string[] {
   return purgeData ? [...RELEASE_PAYLOAD, ...OPERATOR_DATA] : RELEASE_PAYLOAD;
 }
 
+/* ------------------------------------------------------------------ */
+/* Starting with Windows                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The scheduled task that starts Kas at boot.
+ *
+ * WHY A TASK AND NOT A SERVICE. A Windows service must speak the Service
+ * Control Protocol — connect to the SCM and report status within about thirty
+ * seconds. Node has no binding for it, so `sc create` registers a service that
+ * then fails to start with error 1053. A real service needs a third-party
+ * wrapper binary shipped unsigned to the hotel; an at-startup scheduled task
+ * needs nothing that is not already in Windows, and does the same job: starts
+ * at boot, with no console, no PowerShell and nobody logged in.
+ *
+ * What it does NOT give us is `services.msc` and the SCM's own restart policy —
+ * which is why the runner monitors its own health and why stopping is
+ * `KasService.cmd stop` rather than `sc stop`.
+ */
+export const SCHEDULED_TASK_NAME = 'Kas';
+
+export interface ScheduledTaskSpec {
+  name: string;
+  /** Relative to the install root. */
+  target: string;
+  /** When Windows runs it. */
+  trigger: 'AtStartup';
+  /**
+   * Run even when no user is logged in — the point of the whole exercise. A
+   * task limited to an interactive session would not start until a receptionist
+   * signed in, which is exactly the wait this removes.
+   */
+  runWhetherLoggedOnOrNot: true;
+  /**
+   * SYSTEM: the account that exists before anyone logs in and does not lose its
+   * session at logoff. It also means no operator password is stored anywhere,
+   * which a per-user task would require.
+   */
+  runAsAccount: 'SYSTEM';
+  /**
+   * No time limit. The default 72-hour cap would stop a perfectly healthy
+   * server every three days, at whatever hour it happened to start.
+   */
+  executionTimeLimit: 'PT0S';
+}
+
+export function scheduledTaskSpec(): ScheduledTaskSpec {
+  return {
+    name: SCHEDULED_TASK_NAME,
+    target: 'KasService.cmd',
+    trigger: 'AtStartup',
+    runWhetherLoggedOnOrNot: true,
+    runAsAccount: 'SYSTEM',
+    executionTimeLimit: 'PT0S',
+  };
+}
+
 /** One shortcut the installer creates. */
 export interface ShortcutSpec {
   /** File name without the .lnk extension. */
@@ -141,10 +202,10 @@ export interface ShortcutSpec {
 /**
  * The shortcuts to create.
  *
- * Both point at Kas.cmd — the launcher built in Phase 6.2 — rather than at node
- * or a URL. A URL shortcut would open a browser at a server that is not
- * running; the launcher starts it first, and opens localhost so the app stays
- * installable.
+ * Both point at Kas.cmd — the production runner — rather than at node or a URL.
+ * A URL shortcut would open a browser at a server that is not running; the
+ * runner starts it first if needed, attaches to it if it is already running as
+ * a background service, and opens localhost so the app stays installable.
  */
 export function shortcutSpecs(): ShortcutSpec[] {
   const shared = {

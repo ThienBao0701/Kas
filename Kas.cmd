@@ -4,15 +4,19 @@ setlocal
 rem ---------------------------------------------------------------------------
 rem  Kas - khoi dong ung dung (double-click file nay)
 rem
-rem  Chay launcher trong server\dist\launcher\cli.js. Launcher se:
-rem    - kiem tra Node, cong, ban build va cau hinh
-rem    - khoi dong may chu Kas (mot tien trinh duy nhat)
-rem    - mo trinh duyet tai http://localhost:3001
+rem  Chay production runner trong server\dist\service\runner.js. Runner se:
+rem    - kiem tra Node, cong, ban build, thu muc ghi duoc va cau hinh
+rem    - khoi dong may chu Kas (mot tien trinh duy nhat, co khoa chong trung)
+rem    - cho may chu san sang roi mo trinh duyet tai http://localhost:3001
+rem    - theo doi suc khoe va ghi nhat ky vao thu muc logs\
 rem
-rem  Dong cua so nay de tat ung dung.
+rem  Dong cua so nay de tat ung dung (tat an toan, khong cat ngang yeu cau).
+rem
+rem  Neu Kas da duoc cai dat de chay nen cung Windows thi file nay chi mo trinh
+rem  duyet toi ban dang chay - no KHONG khoi dong them tien trinh thu hai.
 rem
 rem  ASCII-only: cua so cmd.exe mac dinh dung code page 437 va se hien thi sai
-rem  neu tep nay chua dau tieng Viet. Moi thong bao co dau do launcher in ra.
+rem  neu tep nay chua dau tieng Viet. Moi thong bao co dau do runner in ra.
 rem ---------------------------------------------------------------------------
 
 cd /d "%~dp0"
@@ -29,7 +33,7 @@ if errorlevel 1 (
   exit /b 1
 )
 
-if not exist "server\dist\launcher\cli.js" (
+if not exist "server\dist\service\runner.js" (
   echo.
   echo   CHUA BUILD UNG DUNG
   echo.
@@ -39,7 +43,7 @@ if not exist "server\dist\launcher\cli.js" (
   exit /b 1
 )
 
-node "server\dist\launcher\cli.js"
+node "server\dist\service\runner.js"
 set EXITCODE=%ERRORLEVEL%
 
 rem Chi giu cua so lai khi co loi, de nguoi dung doc duoc chan doan.

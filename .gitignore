@@ -48,6 +48,11 @@ Thumbs.db
 *.log
 npm-debug.log*
 
+# Production runtime directory: the five rotated logs and the single-instance
+# lock the runner writes (server/src/service/). Operator data, never committed —
+# the installer preserves it across upgrades.
+logs/
+
 # Proof-of-creation screenshot uploads (never committed).
 server/uploads/
 

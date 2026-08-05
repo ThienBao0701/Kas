@@ -211,6 +211,42 @@ New-KasShortcut -Path $desktopLink
 New-KasShortcut -Path $startLink
 Write-Log '  da tao loi tat Desktop va Start Menu'
 
+# --- Start with Windows -----------------------------------------------------
+#
+# An at-startup Scheduled Task, not a Windows Service. A service must speak the
+# Service Control Protocol; node.exe does not, so `sc create` would register a
+# service that fails at start with error 1053. Making Kas a real service needs a
+# third-party wrapper binary shipped unsigned to the hotel. This needs nothing
+# that is not already in Windows and does the same job.
+#
+# Registration needs Administrator (it runs as SYSTEM). A per-user install
+# without elevation is still fully usable - the desktop shortcut starts Kas -
+# so a failure here is reported and the install continues.
+$serviceCmd = Join-Path $InstallDir 'KasService.cmd'
+$isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+    [Security.Principal.WindowsBuiltInRole]::Administrator)
+
+if (-not $isAdmin) {
+    Write-Log '  bo qua tu dong khoi dong cung Windows (can quyen Administrator)' 'Yellow'
+    Write-Log '    de bat sau: mo PowerShell (Administrator) va chay lai trinh cai dat' 'Yellow'
+} else {
+    try {
+        # /F replaces an existing task, which is what makes an upgrade repoint
+        # the task at the new payload instead of failing on "already exists".
+        $null = schtasks.exe /Create /TN 'Kas' /TR "`"$serviceCmd`"" /SC ONSTART /RU SYSTEM /RL HIGHEST /F
+        if ($LASTEXITCODE -ne 0) { throw "schtasks tra ve ma $LASTEXITCODE" }
+
+        # The default 72-hour execution limit would stop a healthy server every
+        # three days at whatever hour it happened to start.
+        $null = schtasks.exe /Change /TN 'Kas' /ET 00:00 2>$null
+        Write-Log '  da dang ky khoi dong cung Windows (Scheduled Task "Kas")'
+        Write-Log '    tat an toan:  KasService.cmd stop'
+    } catch {
+        Write-Log "  KHONG dang ky duoc tu dong khoi dong: $($_.Exception.Message)" 'Yellow'
+        Write-Log '    Kas van chay binh thuong khi bam loi tat tren Desktop.' 'Yellow'
+    }
+}
+
 # --- Apps & features --------------------------------------------------------
 # HKCU so no Administrator rights are needed for a per-user install.
 $uninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\KasBookingDispatch'

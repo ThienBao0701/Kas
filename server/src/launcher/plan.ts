@@ -34,6 +34,22 @@ export interface LauncherEnvironment {
   portServesKas: boolean;
   /** A database URL is configured. The VALUE is never read here. */
   databaseUrlConfigured: boolean;
+  /**
+   * The proof-image directory exists and accepts a write.
+   *
+   * Checked BEFORE starting rather than discovered when a receptionist uploads
+   * the only evidence that a reservation was created correctly. A read-only or
+   * missing uploads directory is a silent failure the rest of the way down.
+   */
+  uploadDirWritable: boolean;
+  /**
+   * The log directory accepts a write.
+   *
+   * A run whose logs cannot be written still works, but every diagnostic this
+   * phase adds would be invisible — including the reason a later failure
+   * happened. Reported as a problem so the operator fixes it now.
+   */
+  logDirWritable: boolean;
 }
 
 export type LauncherProblem =
@@ -41,6 +57,8 @@ export type LauncherProblem =
   | 'MISSING_DATABASE_URL'
   | 'MISSING_SERVER_BUILD'
   | 'MISSING_CLIENT_BUILD'
+  | 'UPLOAD_DIR_NOT_WRITABLE'
+  | 'LOG_DIR_NOT_WRITABLE'
   | 'PORT_TAKEN_BY_OTHER';
 
 export type LauncherAction =
@@ -86,6 +104,11 @@ export function decideAction(env: LauncherEnvironment): LauncherAction {
   // Without the SPA the server serves the API alone: no app to open, and
   // nothing installable — which is the whole point of launching it this way.
   if (!env.clientBuildPresent) return { kind: 'ABORT', problem: 'MISSING_CLIENT_BUILD' };
+  // Writable storage before the port: a server that starts and then cannot
+  // store a proof image has failed in a way nobody notices until the evidence
+  // is needed.
+  if (!env.uploadDirWritable) return { kind: 'ABORT', problem: 'UPLOAD_DIR_NOT_WRITABLE' };
+  if (!env.logDirWritable) return { kind: 'ABORT', problem: 'LOG_DIR_NOT_WRITABLE' };
   // Occupied, but not by Kas. Starting would fail with EADDRINUSE and the
   // operator would be left reading a stack trace.
   if (env.portInUse) return { kind: 'ABORT', problem: 'PORT_TAKEN_BY_OTHER' };
@@ -120,6 +143,17 @@ export function problemMessage(problem: LauncherProblem, env: LauncherEnvironmen
         'Chưa build giao diện — máy chủ sẽ chỉ phục vụ API và không mở được ứng dụng. ' +
         'Chạy: npm run build'
       );
+    case 'UPLOAD_DIR_NOT_WRITABLE':
+      return (
+        'Không ghi được vào thư mục ảnh xác nhận (server/uploads). Kas vẫn chạy được ' +
+        'nhưng lễ tân sẽ KHÔNG gửi được ảnh tạo đơn. Hãy kiểm tra quyền ghi của thư mục ' +
+        'cài đặt rồi chạy lại.'
+      );
+    case 'LOG_DIR_NOT_WRITABLE':
+      return (
+        'Không ghi được vào thư mục nhật ký (logs). Ứng dụng sẽ chạy nhưng mọi chẩn đoán ' +
+        'sẽ không được lưu lại. Hãy kiểm tra quyền ghi của thư mục cài đặt rồi chạy lại.'
+      );
     case 'PORT_TAKEN_BY_OTHER':
       return (
         `Cổng ${env.port} đang bị một chương trình khác chiếm giữ (không phải Kas). ` +
@@ -137,6 +171,8 @@ export function describeEnvironment(env: LauncherEnvironment): string[] {
     `Build giao diện : ${env.clientBuildPresent ? 'có' : 'THIẾU'}`,
     // Presence only. The connection string is a secret and never appears here.
     `DATABASE_URL    : ${env.databaseUrlConfigured ? 'đã cấu hình' : 'CHƯA cấu hình'}`,
+    `Thư mục ảnh     : ${env.uploadDirWritable ? 'ghi được' : 'KHÔNG ghi được'}`,
+    `Thư mục nhật ký : ${env.logDirWritable ? 'ghi được' : 'KHÔNG ghi được'}`,
     `Cổng đang mở    : ${env.portInUse ? 'có' : 'không'}`,
     `Kas đang chạy   : ${env.portServesKas ? 'có' : 'không'}`,
   ];
