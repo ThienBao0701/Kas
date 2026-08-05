@@ -138,14 +138,24 @@ describe('uninstall', () => {
     for (const item of [...RELEASE_PAYLOAD, ...OPERATOR_DATA]) expect(targets).toContain(item);
   });
 
-  it('never lists anything resembling the database', () => {
-    // The database lives in PostgreSQL, outside the install directory. It must
-    // not be reachable from an uninstall under any flag.
+  it('never lists the database, a dump, or the backup directory', () => {
+    // The database lives in PostgreSQL, outside the install directory, and the
+    // backups are the last line of defence. Neither may be reachable from an
+    // uninstall under any flag.
+    //
+    // Checked per-target rather than against the joined string: `KasBackup.cmd`
+    // is APPLICATION code whose name contains the word "backup", and an
+    // uninstall removing it is correct. What must never appear is a path that
+    // IS backup data — the directory itself, or a dump file.
     for (const purge of [false, true]) {
-      const joined = uninstallTargets(purge).join(' ').toLowerCase();
-      expect(joined).not.toContain('postgres');
-      expect(joined).not.toContain('.sql');
-      expect(joined).not.toContain('backup');
+      for (const target of uninstallTargets(purge)) {
+        const lower = target.toLowerCase();
+        expect(lower, target).not.toContain('postgres');
+        expect(lower.endsWith('.sql') || lower.endsWith('.dump'), target).toBe(false);
+        // The backup ROOT, with or without a trailing separator — but not a
+        // file that merely mentions it.
+        expect(/^backups?([\\/]|$)/.test(lower), target).toBe(false);
+      }
     }
   });
 });

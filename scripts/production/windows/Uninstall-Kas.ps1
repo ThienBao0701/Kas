@@ -84,11 +84,13 @@ if (Test-Path $serviceCmd) {
     Start-Sleep -Seconds 2
 }
 
-$existingTask = schtasks.exe /Query /TN 'Kas' 2>$null
-if ($LASTEXITCODE -eq 0) {
-    $null = schtasks.exe /Delete /TN 'Kas' /F 2>$null
-    if ($LASTEXITCODE -eq 0) { Write-Host '  da go Scheduled Task "Kas"' }
-    else { Write-Host '  KHONG go duoc Scheduled Task "Kas" (can quyen Administrator)' -ForegroundColor Yellow }
+foreach ($taskName in @('Kas', 'Kas Backup')) {
+    $null = schtasks.exe /Query /TN $taskName 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        $null = schtasks.exe /Delete /TN $taskName /F 2>$null
+        if ($LASTEXITCODE -eq 0) { Write-Host "  da go Scheduled Task `"$taskName`"" }
+        else { Write-Host "  KHONG go duoc Scheduled Task `"$taskName`" (can quyen Administrator)" -ForegroundColor Yellow }
+    }
 }
 
 $targets = if ($PurgeData) { $applicationItems + $operatorItems } else { $applicationItems }

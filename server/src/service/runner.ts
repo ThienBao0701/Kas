@@ -53,6 +53,7 @@ import {
   type RunMode,
 } from './plan';
 import { openLogs, stamp, type LogSet } from './logs';
+import { controlPipe, readHealth, requestStop } from './control';
 
 /** Repository root: this file runs from `server/dist/service/`. */
 const ROOT = path.resolve(__dirname, '..', '..', '..');
@@ -97,22 +98,13 @@ const fault = (line: string) => write(line, ['launcher', 'service', 'error']);
 /* Probes                                                              */
 /* ------------------------------------------------------------------ */
 
-/** The health endpoint's own view of itself, or null when it did not answer. */
-async function probeHealth(port: number, timeoutMs = 1500): Promise<{ databaseOk: boolean } | null> {
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    const response = await fetch(`${appUrl(port)}/api/health`, { signal: controller.signal });
-    clearTimeout(timer);
-    // 503 is Kas answering that its database is down — the process is alive and
-    // this is emphatically not a reason to restart it.
-    if (response.status !== 200 && response.status !== 503) return null;
-    const body = (await response.json()) as { database?: { connected?: boolean } };
-    return { databaseOk: body.database?.connected === true };
-  } catch {
-    return null;
-  }
-}
+/**
+ * The health endpoint's own view of itself, or null when it did not answer.
+ *
+ * A 503 counts as an answer: it is Kas reporting that its database is down, the
+ * process is alive, and that is emphatically not a reason to restart it.
+ */
+const probeHealth = readHealth;
 
 /** True when anything at all accepts a TCP connection on the port. */
 async function probePort(port: number): Promise<boolean> {
@@ -216,11 +208,6 @@ function clearLock(): void {
 /* Control channel                                                     */
 /* ------------------------------------------------------------------ */
 
-/** The named pipe an outside `--stop` connects to. Per-port, so two ports do not collide. */
-function controlPipe(port: number): string {
-  return `\\\\.\\pipe\\kas-runner-${port}`;
-}
-
 /**
  * Listens for a stop request.
  *
@@ -244,22 +231,6 @@ function listenForControl(port: number): void {
   } catch {
     // A missing control channel costs the graceful stop, not the app.
   }
-}
-
-/** Asks a running runner to stop. Returns true when one answered. */
-async function requestStop(port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const socket = net.createConnection(controlPipe(port));
-    const done = (ok: boolean) => {
-      socket.destroy();
-      resolve(ok);
-    };
-    socket.setTimeout(5000);
-    socket.once('connect', () => socket.write('stop'));
-    socket.once('data', () => done(true));
-    socket.once('timeout', () => done(false));
-    socket.once('error', () => done(false));
-  });
 }
 
 /* ------------------------------------------------------------------ */

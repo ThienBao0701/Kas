@@ -26,9 +26,18 @@ import type { PrismaClient } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db/prisma';
 import { BACKUP_DIR, ISSUE_UPLOAD_DIR, PROOF_UPLOAD_DIR, env } from '../config/env';
 import { describeDatabaseUrl } from '../config/databaseUrl';
+import { currentBuildId } from '../booking/requestAudit';
 import { connectionArgs, connectionFromUrl, pgToolVersion, runPgTool } from './pgTools';
+import { containsLikelySecret, readConfigSnapshot } from './configSnapshot';
 
 export const BACKUP_MANIFEST_NAME = 'manifest.json';
+export const BACKUP_CONFIG_NAME = 'config.json';
+
+/** Repository root, from `server/src/production/` or `server/dist/production/`. */
+const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
+/** The runtime log directory the 6.3a runner writes to. */
+const DEFAULT_LOG_DIR = path.join(REPO_ROOT, 'logs');
+const DEFAULT_ENV_FILE = path.join(REPO_ROOT, '.env');
 /** Custom-format archive; `.dump` is the conventional extension. */
 export const BACKUP_DB_NAME = 'database.dump';
 /**
@@ -52,6 +61,19 @@ export interface BackupOptions {
   client?: PrismaClient;
   /** Application release identifier (tag or commit) recorded in the manifest. */
   releaseRef?: string;
+  /**
+   * The runtime log directory to capture. Pass null to skip it.
+   *
+   * Logs are included because the question asked after a failure is almost
+   * always "what was it doing at the time", and a backup taken at 22:00 is
+   * frequently the only surviving copy of a log that has since rotated away.
+   */
+  logDir?: string | null;
+  /**
+   * The .env whose KEYS are recorded (never its secret values — see
+   * configSnapshot). Pass null to skip.
+   */
+  envFile?: string | null;
 }
 
 export interface BackupManifest {
@@ -78,6 +100,21 @@ export interface BackupManifest {
   };
   uploads: { name: string; files: number; bytes: number; sha256: string }[];
   counts: Record<string, number>;
+  /**
+   * Everything below is OPTIONAL, and deliberately so: it was added in 6.3b and
+   * a backup taken before that has none of it. Keeping the fields optional
+   * rather than bumping the format version is what lets the restore tool still
+   * accept every backup the hotel already holds — a format bump would have made
+   * the existing backups unrestorable by the new tool, which is the opposite of
+   * what a backup system is for.
+   */
+  logs?: { dir: string; files: number; bytes: number; sha256: string };
+  /** Configuration KEYS with secret values withheld. Never a credential. */
+  config?: { file: string; sha256: string; bytes: number; keys: number; redactedKeys: number };
+  /** Total bytes of the whole backup directory, for capacity planning. */
+  totalBytes?: number;
+  /** The deployed commit, when the environment names one. */
+  gitCommit?: string | null;
 }
 
 export interface BackupResult {
@@ -145,6 +182,26 @@ async function copyDirectory(from: string, to: string): Promise<void> {
     return;
   }
   await fsp.cp(from, to, { recursive: true });
+}
+
+/** Total bytes under a directory, following the tree. */
+async function directoryBytes(dir: string): Promise<number> {
+  let total = 0;
+  const walk = async (current: string): Promise<void> => {
+    let entries: fs.Dirent[];
+    try {
+      entries = await fsp.readdir(current, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) await walk(full);
+      else total += (await fsp.stat(full)).size;
+    }
+  };
+  await walk(dir);
+  return total;
 }
 
 /** Row counts recorded for a quick "did the restore land?" comparison. */
@@ -260,6 +317,49 @@ export async function createBackup(options: BackupOptions = {}): Promise<BackupR
     uploads.push({ name, ...digest });
   }
 
+  // --- Logs ----------------------------------------------------------------
+  //
+  // Copied, then hashed FROM THE COPY, so the checksum describes exactly what
+  // the backup holds. Hashing the source instead would race the running server,
+  // which appends to these files continuously, and produce a manifest that
+  // disagrees with its own contents.
+  let logs: BackupManifest['logs'];
+  const logDir = options.logDir === undefined ? DEFAULT_LOG_DIR : options.logDir;
+  if (logDir !== null) {
+    const logTarget = path.join(backupDir, 'logs');
+    await copyDirectory(logDir, logTarget);
+    logs = { dir: 'logs', ...(await hashDirectory(logTarget)) };
+  }
+
+  // --- Configuration, without the credentials ------------------------------
+  let config: BackupManifest['config'];
+  const envFile = options.envFile === undefined ? DEFAULT_ENV_FILE : options.envFile;
+  if (envFile !== null) {
+    const snapshot = readConfigSnapshot(envFile, now);
+    if (snapshot) {
+      const serialised = `${JSON.stringify(snapshot, null, 2)}\n`;
+      // The allow-list should already guarantee this. If it somehow did not,
+      // failing the backup is far better than writing a password to a file that
+      // is about to be copied onto a USB stick.
+      if (containsLikelySecret(serialised)) {
+        await fsp.rm(backupDir, { recursive: true, force: true });
+        throw new BackupError(
+          'Đã hủy sao lưu: ảnh chụp cấu hình có vẻ chứa giá trị bí mật. ' +
+            'Không ghi bản sao lưu nào.',
+        );
+      }
+      const configPath = path.join(backupDir, BACKUP_CONFIG_NAME);
+      await fsp.writeFile(configPath, serialised, 'utf8');
+      config = {
+        file: BACKUP_CONFIG_NAME,
+        sha256: await sha256OfFile(configPath),
+        bytes: (await fsp.stat(configPath)).size,
+        keys: snapshot.entries.length,
+        redactedKeys: snapshot.entries.filter((e) => e.redacted).length,
+      };
+    }
+  }
+
   // --- Manifest LAST: its presence is what makes a backup complete ---------
   const manifest: BackupManifest = {
     formatVersion: BACKUP_FORMAT_VERSION,
@@ -279,6 +379,12 @@ export async function createBackup(options: BackupOptions = {}): Promise<BackupR
     },
     uploads,
     counts: await counts(client),
+    ...(logs ? { logs } : {}),
+    ...(config ? { config } : {}),
+    gitCommit: options.releaseRef ?? currentBuildId(),
+    // Measured after everything else is on disk, so it describes the real
+    // directory rather than the sum of the parts we happened to track.
+    totalBytes: await directoryBytes(backupDir),
   };
   await fsp.writeFile(
     path.join(backupDir, BACKUP_MANIFEST_NAME),
@@ -303,14 +409,36 @@ export async function listBackups(backupRoot: string = BACKUP_DIR): Promise<stri
     .reverse();
 }
 
+/** A backup directory is COMPLETE only if its manifest was written. */
+export function isCompleteBackup(backupRoot: string, name: string): boolean {
+  return fs.existsSync(path.join(backupRoot, name, BACKUP_MANIFEST_NAME));
+}
+
 /**
- * Retention: keeps the newest `retain` backups and removes the rest. A retain
- * of 0 keeps everything — deleting backups is never the default.
+ * Retention: keeps the newest `retain` COMPLETE backups and removes older ones.
+ *
+ * Three rules, each protecting against a way this goes wrong:
+ *
+ *   A retain of 0 keeps everything. Deleting backups is never the default.
+ *
+ *   Only complete backups are counted and only complete backups are deleted. An
+ *   in-progress backup has no manifest yet; counting it would let it push a
+ *   good backup out of the window, and deleting it would destroy a backup that
+ *   is being written at that moment. Incomplete directories are left for an
+ *   operator to look at, because a manifest-less directory is evidence that a
+ *   backup failed and that is worth noticing.
+ *
+ *   The newest complete backup is never deleted, whatever `retain` says. A
+ *   retention policy that can empty the backup directory is a deletion policy.
  */
 export async function pruneBackups(backupRoot: string, retain: number): Promise<string[]> {
   if (retain <= 0) return [];
-  const all = await listBackups(backupRoot);
-  const doomed = all.slice(retain);
+  const complete = (await listBackups(backupRoot)).filter((name) =>
+    isCompleteBackup(backupRoot, name),
+  );
+  // listBackups returns newest first, so slice(retain) is everything older than
+  // the window. `Math.max(retain, 1)` is the floor that keeps the newest.
+  const doomed = complete.slice(Math.max(retain, 1));
   for (const name of doomed) {
     await fsp.rm(path.join(backupRoot, name), { recursive: true, force: true });
   }
@@ -380,6 +508,32 @@ export async function verifyBackup(backupDir: string): Promise<VerifyResult> {
     const digest = await hashDirectory(dir);
     if (digest.sha256 !== upload.sha256) {
       problems.push(`Checksum thư mục "${upload.name}" không khớp.`);
+    }
+  }
+
+  // Logs and configuration are checked only when the manifest claims them. A
+  // backup taken before 6.3b has neither, and must still verify — otherwise
+  // this phase would have quietly invalidated every backup the hotel holds.
+  if (manifest.logs) {
+    const digest = await hashDirectory(path.join(backupDir, manifest.logs.dir));
+    if (digest.sha256 !== manifest.logs.sha256) {
+      problems.push('Checksum thư mục nhật ký không khớp.');
+    }
+  }
+
+  if (manifest.config) {
+    const configPath = path.join(backupDir, manifest.config.file);
+    if (!fs.existsSync(configPath)) {
+      problems.push('Thiếu tệp cấu hình được ghi trong manifest.');
+    } else {
+      if ((await sha256OfFile(configPath)) !== manifest.config.sha256) {
+        problems.push('Checksum tệp cấu hình không khớp.');
+      }
+      // A backup that somehow acquired a credential must be reported as a
+      // problem, not quietly restored onto a machine.
+      if (containsLikelySecret(await fsp.readFile(configPath, 'utf8'))) {
+        problems.push('Tệp cấu hình chứa giá trị trông giống bí mật — không dùng bản sao lưu này.');
+      }
     }
   }
 

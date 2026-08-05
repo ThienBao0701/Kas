@@ -13,15 +13,19 @@
 import path from 'node:path';
 import readline from 'node:readline';
 import { prisma } from '../db/prisma';
-import { BACKUP_DIR, env } from '../config/env';
+import { BACKUP_DIR, ISSUE_UPLOAD_DIR, PROOF_UPLOAD_DIR, env } from '../config/env';
 import { redactDatabaseUrl } from '../config/databaseUrl';
 import { D1_APPROVED_DATABASE, DatabaseGuardError } from '../d1/guard';
 import { listBackups, verifyBackup } from '../production/backup';
 import { restoreBackup } from '../production/restore';
+import { safeRestore } from '../production/safeRestore';
+import { createAppControl } from '../production/appControl';
+import { openLogs, stamp } from '../service/logs';
 
 /* eslint-disable no-console */
 
 const CONFIRM_PHRASE = 'RESTORE KAS DATA';
+const LOG_DIR = path.resolve(__dirname, '..', '..', '..', 'logs');
 
 function stringArg(name: string): string | undefined {
   const raw = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -85,14 +89,27 @@ async function main(): Promise<void> {
     return;
   }
 
+  const allowed = allowDatabase
+    ? ([D1_APPROVED_DATABASE, allowDatabase] as const)
+    : undefined;
+
+  // `--safe` is the whole loop: stop Kas, take a verified rollback point,
+  // restore, bring it back up, prove it is healthy, and put everything back if
+  // any of that fails. Without the flag this stays the original tool, which
+  // touches data and nothing else — some operators restore into a database
+  // nothing is serving, and stopping an application that is not running to
+  // restore a database that is not live is ceremony, not safety.
+  if (process.argv.includes('--safe')) {
+    await runSafeRestore({ backupDir, targetUrl, resetSchema, allowed });
+    return;
+  }
+
   const result = await restoreBackup({
     backupDir,
     confirmed: true,
     targetUrl,
     resetSchema,
-    ...(allowDatabase
-      ? { allowedDatabases: [D1_APPROVED_DATABASE, allowDatabase] as const }
-      : {}),
+    ...(allowed ? { allowedDatabases: allowed } : {}),
   });
 
   console.log('\n✅ Khôi phục xong.');
@@ -117,6 +134,83 @@ async function main(): Promise<void> {
 
   console.log('\nDANH SÁCH KIỂM TRA SAU KHÔI PHỤC:');
   for (const item of result.checklist) console.log(`   [ ] ${item}`);
+}
+
+/**
+ * The supervised restore: application down, rollback point taken, restore,
+ * application up, health proven — and everything put back if it is not.
+ *
+ * Every step is echoed to the console AND to restore.log, because the console
+ * belongs to whoever ran it and the log belongs to whoever asks a fortnight
+ * later what happened to the data.
+ */
+async function runSafeRestore(input: {
+  backupDir: string;
+  targetUrl: string;
+  resetSchema: boolean;
+  allowed: readonly string[] | undefined;
+}): Promise<void> {
+  const logs = openLogs(LOG_DIR);
+  const port = Number.parseInt(process.env.PORT ?? '3001', 10);
+
+  const result = await safeRestore({
+    backupDir: input.backupDir,
+    targetUrl: input.targetUrl,
+    confirmed: true,
+    resetSchema: input.resetSchema,
+    ...(input.allowed ? { allowedDatabases: input.allowed } : {}),
+    app: createAppControl({ port }),
+    uploadDirs: [
+      { name: 'booking-proofs', dir: PROOF_UPLOAD_DIR },
+      { name: 'issue-photos', dir: ISSUE_UPLOAD_DIR },
+    ],
+  });
+
+  for (const step of result.steps) {
+    console.log(`   ${step}`);
+    logs.restore.append(stamp(step));
+  }
+
+  console.log('\nKIỂM TRA SAU KHÔI PHỤC:');
+  for (const check of result.validations) {
+    const line = `${check.ok ? '✔' : '✘'} ${check.name}: ${check.detail}`;
+    console.log(`   ${line}`);
+    logs.restore.append(stamp(line));
+  }
+
+  for (const problem of result.problems) {
+    console.error(`   ⚠️  ${problem}`);
+    logs.restore.append(stamp(`VẤN ĐỀ: ${problem}`));
+  }
+
+  logs.restore.append(stamp(`Kết quả: ${result.outcome}`));
+  logs.verification.append(
+    stamp(`RESTORE ${result.outcome} from=${input.backupDir} rollback=${result.rollbackPoint ?? '-'}`),
+  );
+
+  switch (result.outcome) {
+    case 'SUCCEEDED':
+      console.log('\n✅ Khôi phục thành công và ứng dụng đã hoạt động trở lại.');
+      return;
+    case 'RESTORED_WITH_WARNINGS':
+      console.log('\n⚠️  Đã khôi phục nhưng có cảnh báo ở trên. Dữ liệu hiện tại LÀ dữ liệu mới.');
+      process.exitCode = 1;
+      return;
+    case 'FAILED_ROLLED_BACK':
+      console.error('\n❌ Khôi phục thất bại. Đã hoàn tác — dữ liệu như trước khi chạy lệnh này.');
+      process.exitCode = 1;
+      return;
+    case 'FAILED_ROLLBACK_FAILED':
+      console.error('\n❌❌ Khôi phục THẤT BẠI và hoàn tác cũng thất bại.');
+      console.error(`    Điểm khôi phục còn nguyên tại: ${result.rollbackPoint ?? '(không có)'}`);
+      console.error('    KHÔNG chạy lại lệnh này. Hãy đọc logs/restore.log trước.');
+      process.exitCode = 1;
+      return;
+    case 'ABORTED':
+      console.error('\n❌ Đã hủy trước khi thay đổi bất cứ thứ gì.');
+      process.exitCode = 1;
+      return;
+  }
 }
 
 if (require.main === module) {

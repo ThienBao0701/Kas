@@ -241,6 +241,18 @@ if (-not $isAdmin) {
         $null = schtasks.exe /Change /TN 'Kas' /ET 00:00 2>$null
         Write-Log '  da dang ky khoi dong cung Windows (Scheduled Task "Kas")'
         Write-Log '    tat an toan:  KasService.cmd stop'
+
+        # Nightly backup at 22:00. Separate task from the runner on purpose: a
+        # backup that fails must never be able to stop the application, and a
+        # restart of the application must never skip a backup.
+        $backupCmd = Join-Path $InstallDir 'KasBackup.cmd'
+        $null = schtasks.exe /Create /TN 'Kas Backup' /TR "`"$backupCmd`"" /SC DAILY /ST 22:00 /RU SYSTEM /RL HIGHEST /F
+        if ($LASTEXITCODE -ne 0) { throw "schtasks (backup) tra ve ma $LASTEXITCODE" }
+        # Two hours is far longer than a backup takes; it exists so an overrun
+        # is stopped rather than left to overlap the next night's run.
+        $null = schtasks.exe /Change /TN 'Kas Backup' /ET 02:00 2>$null
+        Write-Log '  da dang ky sao luu hang ngay 22:00 (Scheduled Task "Kas Backup")'
+        Write-Log '    sao luu ngay:  KasBackup.cmd'
     } catch {
         Write-Log "  KHONG dang ky duoc tu dong khoi dong: $($_.Exception.Message)" 'Yellow'
         Write-Log '    Kas van chay binh thuong khi bam loi tat tren Desktop.' 'Yellow'

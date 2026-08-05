@@ -316,6 +316,17 @@ export const LOG_FILES = {
   startup: 'startup.log',
   /** Faults only. Never noise — if this file has content, something is wrong. */
   error: 'error.log',
+  /**
+   * Backup and restore, kept apart from the application's own output on
+   * purpose. A restore is read about weeks later by someone asking "what did
+   * this actually do to my data", and interleaving it with request logs makes
+   * that question much harder to answer. Verification is separate again
+   * because it is the record consulted when a backup is DOUBTED, and it must
+   * not be rotated away by ordinary backup chatter.
+   */
+  backup: 'backup.log',
+  restore: 'restore.log',
+  verification: 'verification.log',
 } as const;
 
 export type LogName = keyof typeof LOG_FILES;

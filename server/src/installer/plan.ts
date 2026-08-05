@@ -40,6 +40,8 @@ export const RELEASE_PAYLOAD: readonly string[] = [
   // operator data: it is replaced wholesale on every upgrade like the rest of
   // the application.
   'KasService.cmd',
+  // The nightly backup entry point. Application code, same reasoning.
+  'KasBackup.cmd',
 ];
 
 export type InstallKind =
@@ -185,6 +187,59 @@ export function scheduledTaskSpec(): ScheduledTaskSpec {
     runWhetherLoggedOnOrNot: true,
     runAsAccount: 'SYSTEM',
     executionTimeLimit: 'PT0S',
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* The nightly backup                                                  */
+/* ------------------------------------------------------------------ */
+
+export const BACKUP_TASK_NAME = 'Kas Backup';
+
+/**
+ * 22:00, daily.
+ *
+ * Late enough that the day's reservations are all in, early enough that someone
+ * is usually still awake to notice a failure. It does NOT stop the application:
+ * pg_dump takes a consistent snapshot of a live database, so a backup at 22:00
+ * is invisible to a receptionist checking a guest in at 22:00.
+ */
+export const BACKUP_TASK_TIME = '22:00';
+
+/**
+ * How many backups the nightly task keeps.
+ *
+ * A month of daily history, bounded on purpose: an unbounded backup directory
+ * on the machine that also runs PostgreSQL ends as a full disk, and a full disk
+ * takes the hotel down — a more likely disaster than the one being insured
+ * against.
+ */
+export const BACKUP_TASK_RETAIN = 30;
+
+export interface BackupTaskSpec {
+  name: string;
+  target: string;
+  trigger: 'Daily';
+  time: string;
+  retain: number;
+  runAsAccount: 'SYSTEM';
+  /**
+   * A backup that overruns is stopped rather than left to overlap the next
+   * night's run: two pg_dumps writing at once is how a backup directory ends up
+   * with two half-written archives and no manifest.
+   */
+  executionTimeLimit: 'PT2H';
+}
+
+export function backupTaskSpec(): BackupTaskSpec {
+  return {
+    name: BACKUP_TASK_NAME,
+    target: 'KasBackup.cmd',
+    trigger: 'Daily',
+    time: BACKUP_TASK_TIME,
+    retain: BACKUP_TASK_RETAIN,
+    runAsAccount: 'SYSTEM',
+    executionTimeLimit: 'PT2H',
   };
 }
 

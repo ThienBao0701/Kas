@@ -332,14 +332,25 @@ describe('log rotation', () => {
     expect(rotationPlan('server.log')).toHaveLength(MAX_LOG_GENERATIONS);
   });
 
-  it('separates the five things an operator reads at different times', () => {
+  it('separates the things an operator reads at different times', () => {
     expect(Object.values(LOG_FILES).sort()).toEqual([
+      'backup.log',
       'error.log',
       'launcher.log',
+      'restore.log',
       'server.log',
       'service.log',
       'startup.log',
+      'verification.log',
     ]);
+  });
+
+  it('never mixes backup or restore into the server log', () => {
+    // A restore is read weeks later by someone asking what it did to their
+    // data; interleaved request logs make that unanswerable.
+    expect(LOG_FILES.backup).not.toBe(LOG_FILES.server);
+    expect(LOG_FILES.restore).not.toBe(LOG_FILES.server);
+    expect(LOG_FILES.verification).not.toBe(LOG_FILES.backup);
   });
 });
 
