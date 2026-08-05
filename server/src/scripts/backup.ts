@@ -92,12 +92,15 @@ async function main(): Promise<void> {
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    // Recorded in three places on purpose: the backup narrative, the
-    // verification record that a backup was NOT produced, and the runner's own
-    // error log, which is the file an operator is already told to read.
+    // ONE WRITER PER FILE. This used to also append to error.log, which the
+    // runner owns and writes to from a different process. Two processes doing
+    // read-size / rename / append on one file can interleave, and can both
+    // decide to rotate — losing a generation of exactly the log somebody is
+    // about to read. The failure is recorded in the two files this process
+    // owns, and `Kas.cmd --diagnose` surfaces the last verification line, so
+    // nothing is hidden by the change.
     logs.backup.append(stamp(`THẤT BẠI: ${message}`));
     logs.verification.append(stamp(`FAILED ${message}`));
-    logs.error.append(stamp(`Sao lưu thất bại: ${message}`));
     if (!scheduled) console.error('Sao lưu thất bại:', message);
     process.exitCode = 1;
   }

@@ -26,9 +26,9 @@ import type { PrismaClient } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db/prisma';
 import { BACKUP_DIR, ISSUE_UPLOAD_DIR, PROOF_UPLOAD_DIR, env } from '../config/env';
 import { describeDatabaseUrl } from '../config/databaseUrl';
-import { currentBuildId } from '../booking/requestAudit';
 import { connectionArgs, connectionFromUrl, pgToolVersion, runPgTool } from './pgTools';
 import { containsLikelySecret, readConfigSnapshot } from './configSnapshot';
+import { versionInfo } from './version';
 
 export const BACKUP_MANIFEST_NAME = 'manifest.json';
 export const BACKUP_CONFIG_NAME = 'config.json';
@@ -364,7 +364,10 @@ export async function createBackup(options: BackupOptions = {}): Promise<BackupR
   const manifest: BackupManifest = {
     formatVersion: BACKUP_FORMAT_VERSION,
     createdAt: now.toISOString(),
-    appVersion: process.env.npm_package_version ?? '0.0.0',
+    // Read from package.json on disk, never from npm_package_version: the
+    // nightly task runs `node` directly, npm sets that variable and node does
+    // not, and every scheduled backup was being stamped "0.0.0".
+    appVersion: versionInfo().appVersion,
     releaseRef: options.releaseRef ?? process.env.APP_RELEASE_REF ?? null,
     database: {
       file: BACKUP_DB_NAME,
@@ -381,7 +384,7 @@ export async function createBackup(options: BackupOptions = {}): Promise<BackupR
     counts: await counts(client),
     ...(logs ? { logs } : {}),
     ...(config ? { config } : {}),
-    gitCommit: options.releaseRef ?? currentBuildId(),
+    gitCommit: options.releaseRef ?? versionInfo().gitCommit,
     // Measured after everything else is on disk, so it describes the real
     // directory rather than the sum of the parts we happened to track.
     totalBytes: await directoryBytes(backupDir),

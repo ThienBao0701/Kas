@@ -1,3 +1,15 @@
+> **ARCHIVED — this describes the superseded pilot deployment.**
+>
+> Kas runs on **Windows with PostgreSQL**, installed by
+> `scripts/production/windows/Install-Kas.ps1` and started by `Kas.cmd` /
+> `KasService.cmd`. See [deployment.md](../deployment.md) and
+> [../production-runbook.md](../production-runbook.md) for the supported path.
+>
+> This document is kept for one reason: it is the rollback procedure named by
+> the error a **SQLite-era backup** (`formatVersion: 1`) produces when the
+> current tool refuses it. If you are holding such a backup, this is how it was
+> deployed. Nothing here is supported for new installs.
+
 # Production deployment — Ubuntu VPS
 
 Milestone D.0. This is the complete, first-time deployment procedure for KAS on

@@ -1,5 +1,32 @@
 # Production runbook
 
+> **THE SUPPORTED HOST IS WINDOWS.** Day-to-day operation is
+> [launcher.md](launcher.md); acceptance is
+> [production-checklist.md](production-checklist.md).
+>
+> | Task | Command |
+> | --- | --- |
+> | Start | `Kas.cmd` (or the Scheduled Task `Kas` at boot) |
+> | Stop | `Kas.cmd --stop` — **never** Task Manager |
+> | Restart | `Kas.cmd --restart` |
+> | Is it healthy? | `Kas.cmd --health` |
+> | Something is wrong | `Kas.cmd --diagnose`, then send `logs\deployment-report.json` |
+> | Back up now | `KasBackup.cmd` |
+> | Restore | `npm run prod:restore -- --backup=<dir> --safe` |
+> | Which build is this? | `Kas.cmd --version` |
+> | Where are the logs? | `Kas.cmd --logs` |
+>
+> The application supervises itself: it restarts the server **once** if it dies
+> or stops answering, then stops and says so rather than looping. It never
+> restarts for a database outage, a full disk or an unwritable uploads
+> directory — a restart fixes none of those. See `logs\service.log`.
+>
+> The Docker/VPS material below belongs to the superseded pilot and is kept for
+> reference only.
+
+---
+
+
 Day-to-day operation of KAS on the VPS. Every command runs from `/opt/kas`
 (the repository checkout) unless stated otherwise.
 

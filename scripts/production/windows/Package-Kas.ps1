@@ -79,7 +79,18 @@ function Copy-Payload {
 Copy-Payload 'server\dist'
 Copy-Payload 'client\dist'
 Copy-Payload 'prisma'
+
+# The three entry points. KasService.cmd and KasBackup.cmd were MISSING here
+# while the installer already registered Scheduled Tasks pointing at them —
+# so on an elevated install both tasks referenced files that had never been
+# copied, and neither the boot start nor the nightly backup would have run.
+# Caught by installing into a throwaway directory and listing what arrived.
+#
+# These must stay in step with RELEASE_PAYLOAD in server/src/installer/plan.ts,
+# which is what the uninstaller removes and what the tests assert.
 Copy-Payload 'Kas.cmd'
+Copy-Payload 'KasService.cmd'
+Copy-Payload 'KasBackup.cmd'
 
 # package.json files: needed by Node's module resolution and by the installer,
 # which reads the version from the root one.

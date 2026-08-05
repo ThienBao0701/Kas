@@ -39,6 +39,89 @@ export function parseMode(argv: readonly string[]): RunMode {
   return argv.includes('--service') ? 'SERVICE' : 'INTERACTIVE';
 }
 
+/* ------------------------------------------------------------------ */
+/* The command surface                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * What the operator asked for.
+ *
+ * `START` is the default because that is what double-clicking Kas.cmd means. An
+ * UNKNOWN verb is its own case rather than being folded into START: silently
+ * starting the application because someone typed `--diagnoze` is how a support
+ * call becomes "I ran the diagnostic and nothing happened".
+ */
+export type Command =
+  | { kind: 'START'; mode: RunMode }
+  | { kind: 'STOP' }
+  | { kind: 'RESTART' }
+  | { kind: 'DIAGNOSE' }
+  | { kind: 'HEALTH' }
+  | { kind: 'VERSION' }
+  | { kind: 'LOGS' }
+  | { kind: 'HELP' }
+  | { kind: 'UNKNOWN'; argument: string };
+
+/** Every verb, in the order help lists them. */
+export const COMMANDS: { flag: string; summary: string }[] = [
+  { flag: '(không có)', summary: 'Khởi động Kas và mở trình duyệt.' },
+  { flag: '--service', summary: 'Khởi động nền, không mở trình duyệt (Windows dùng khi khởi động máy).' },
+  { flag: '--stop', summary: 'Tắt an toàn bản đang chạy.' },
+  { flag: '--restart', summary: 'Tắt an toàn rồi khởi động lại.' },
+  { flag: '--diagnose', summary: 'Kiểm tra toàn bộ hệ thống. Không thay đổi dữ liệu.' },
+  { flag: '--health', summary: 'Hỏi nhanh /api/health.' },
+  { flag: '--version', summary: 'Phiên bản, commit và thời điểm build.' },
+  { flag: '--logs', summary: 'Vị trí và kích thước các tệp nhật ký.' },
+  { flag: '--help', summary: 'Danh sách đầy đủ các lệnh này.' },
+];
+
+/**
+ * Reads one verb from argv.
+ *
+ * The FIRST recognised flag wins, and an unrecognised one is reported rather
+ * than ignored. `--service` is checked last of the start-shaped flags so that
+ * `--service --diagnose` diagnoses instead of starting a server, which is what
+ * someone typing both plainly meant.
+ */
+export function parseCommand(argv: readonly string[]): Command {
+  // `-h` is included deliberately: it is what people type, and a help request
+  // that silently starts the application is the worst possible answer to it.
+  const flags = argv.filter((a) => a.startsWith('--') || a === '-h');
+
+  if (flags.includes('--help') || flags.includes('-h')) return { kind: 'HELP' };
+  if (flags.includes('--diagnose')) return { kind: 'DIAGNOSE' };
+  if (flags.includes('--health')) return { kind: 'HEALTH' };
+  if (flags.includes('--version')) return { kind: 'VERSION' };
+  if (flags.includes('--logs')) return { kind: 'LOGS' };
+  if (flags.includes('--restart')) return { kind: 'RESTART' };
+  if (flags.includes('--stop')) return { kind: 'STOP' };
+
+  const known = new Set(COMMANDS.map((c) => c.flag));
+  const unknown = flags.find((f) => !known.has(f) && f !== '--service');
+  if (unknown) return { kind: 'UNKNOWN', argument: unknown };
+
+  return { kind: 'START', mode: parseMode(argv) };
+}
+
+/** The help an operator sees, and what an invalid verb prints. */
+export function helpText(): string[] {
+  return [
+    'Kas — trung tâm điều phối đặt phòng',
+    '',
+    'Cách dùng:  Kas.cmd [tuỳ chọn]',
+    '',
+    ...COMMANDS.map((c) => `  ${c.flag.padEnd(12)} ${c.summary}`),
+    '',
+    'Sao lưu:    KasBackup.cmd [số bản giữ lại]',
+    'Chạy nền:   KasService.cmd  |  KasService.cmd stop',
+  ];
+}
+
+/** What an unrecognised verb prints above the help. */
+export function unknownCommandMessage(argument: string): string {
+  return `Không nhận ra tuỳ chọn "${argument}".`;
+}
+
 /**
  * Whether to open a browser.
  *

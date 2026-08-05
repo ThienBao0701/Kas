@@ -1,4 +1,29 @@
-# Triển khai Kas trong mạng nội bộ (LAN)
+# Triển khai Kas
+
+> **CÁCH TRIỂN KHAI HIỆN TẠI: Windows + PostgreSQL.**
+>
+> Cài đặt bằng `scripts\production\windows\Install-Kas.cmd`, khởi động bằng
+> `Kas.cmd`, chạy nền bằng Scheduled Task `Kas` → `KasService.cmd`.
+> **Mọi lệnh vận hành nằm trong [launcher.md](launcher.md).**
+> Danh sách nghiệm thu: [production-checklist.md](production-checklist.md).
+>
+> Cơ sở dữ liệu là **PostgreSQL 17**, không phải SQLite. Phần bên dưới còn nói
+> "SQLite" là di sản của giai đoạn thử nghiệm; mọi thứ khác về mạng nội bộ,
+> tường lửa và máy lễ tân vẫn đúng.
+
+## Tóm tắt: từ máy trắng đến Kas đang chạy
+
+1. Cài **Node.js LTS** (https://nodejs.org) và **PostgreSQL 17**.
+2. Tạo cơ sở dữ liệu và người dùng `kas_app`.
+3. Giải nén bản phát hành, nhấn đúp `Install-Kas.cmd`.
+   *Muốn Kas tự chạy cùng Windows thì mở bằng PowerShell (Administrator).*
+4. Mở `.env` trong thư mục cài đặt, điền `DATABASE_URL`.
+5. Chạy `npm run db:migrate` một lần để tạo schema.
+6. Nhấn đúp `Kas.cmd`.
+7. Chạy `Kas.cmd --diagnose` — phải PASS, hoặc chỉ còn WARNING bạn chấp nhận.
+
+---
+
 
 Kas chạy trên **một máy chủ trung tâm** (máy của Admin). Các máy lễ tân chỉ mở
 trình duyệt trỏ tới máy chủ đó. Tất cả dùng chung **một** cơ sở dữ liệu SQLite

@@ -10,6 +10,8 @@
  * The second property is that an uninstall keeps that data unless the operator
  * explicitly asks otherwise, and that the database is never in scope at all.
  */
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   MIN_NODE_MAJOR,
@@ -342,5 +344,40 @@ describe('the boot task', () => {
 
   it('names the task the same way everywhere', () => {
     expect(scheduledTaskSpec().name).toBe(SCHEDULED_TASK_NAME);
+  });
+});
+
+/* ================================================================== */
+/* The packager and the plan must not drift                            */
+/* ================================================================== */
+describe('the release packager ships what the plan declares', () => {
+  const packager = fs.readFileSync(
+    path.resolve(__dirname, '..', '..', 'scripts', 'production', 'windows', 'Package-Kas.ps1'),
+    'utf8',
+  );
+
+  it.each([...RELEASE_PAYLOAD])('copies %s into the release', (item) => {
+    // THE BUG THIS CATCHES, found by installing into a throwaway directory and
+    // listing what arrived: KasService.cmd and KasBackup.cmd were absent from
+    // the packager while the installer already registered Scheduled Tasks
+    // pointing at them. On an elevated install both tasks would have referenced
+    // files that were never copied — no boot start, no nightly backup, and no
+    // error until the machine was next restarted.
+    //
+    // The PowerShell script writes Windows separators; the plan uses forward
+    // slashes. Compare on a normalised form so the two can be kept in step.
+    // node_modules is the one item the packager PRODUCES rather than copies:
+    // it runs `npm ci --omit=dev` in the staging directory, so the release gets
+    // production dependencies instead of whatever the developer had installed.
+    if (item === 'node_modules') {
+      expect(packager).toContain('--omit=dev');
+      return;
+    }
+
+    const windowsPath = item.split('/').join('\\');
+    expect(
+      packager.includes(`'${windowsPath}'`) || packager.includes(`'${item}'`),
+      `${item} is in RELEASE_PAYLOAD but Package-Kas.ps1 never copies it`,
+    ).toBe(true);
   });
 });

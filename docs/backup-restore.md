@@ -1,5 +1,43 @@
 # Backup and restore
 
+> **CURRENT FORMAT AND COMMANDS — Windows + PostgreSQL.**
+>
+> ```
+> KasBackup.cmd                          back up now (also runs nightly at 22:00)
+> npm run prod:restore -- --list         list backups
+> npm run prod:restore -- --backup=<dir> --safe    supervised restore
+> Kas.cmd --diagnose                     is the last backup recent?
+> ```
+>
+> A backup directory contains:
+>
+> | File | What it is |
+> | --- | --- |
+> | `database.dump` | `pg_dump --format=custom` — a consistent snapshot of the LIVE database, no downtime |
+> | `uploads/` | every proof image and issue photo |
+> | `logs/` | the runtime logs as they were |
+> | `config.json` | which settings were configured — **secret values withheld** |
+> | `manifest.json` | written LAST; checksums, versions, row counts, total size |
+>
+> **No backup ever contains a credential.** `config.json` records that
+> `DATABASE_URL` was set, never what it was.
+>
+> **Retention:** the newest 30 are kept. An incomplete backup is never counted
+> and never deleted, and the newest is never deleted.
+>
+> **`--safe` restore** stops Kas, takes a verified rollback point, restores,
+> restarts, waits for health, and **rolls everything back if any step fails**.
+>
+> Restoring `kas_production` or `kas_d1_test` is **refused by design**. A real
+> production restore is a deliberate manual act, not something a flag enables.
+>
+> Sections 1–2 below describe the SQLite-era pilot format (`formatVersion: 1`),
+> which the current tool refuses. They are kept for anyone holding such an
+> archive — see [archive/production-deployment.md](archive/production-deployment.md).
+
+---
+
+
 What is protected, how a consistent snapshot is taken, and how to get the system
 back. Read this **before** you need it, and rehearse the drill.
 

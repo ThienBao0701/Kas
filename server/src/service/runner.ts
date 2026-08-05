@@ -39,19 +39,25 @@ import {
   type LauncherEnvironment,
 } from '../launcher/plan';
 import {
+  LOG_FILES,
+  MAX_LOG_BYTES,
+  MAX_LOG_GENERATIONS,
   MAX_RESTARTS,
   evaluateHealth,
   decideLock,
   fatalMessage,
   healthFaultMessage,
+  helpText,
   lockMessage,
-  parseMode,
+  parseCommand,
   shouldOpenBrowser,
   startupBanner,
+  unknownCommandMessage,
   type HealthSample,
   type LockFile,
   type RunMode,
 } from './plan';
+import { versionLine, versionReport } from '../production/version';
 import { openLogs, stamp, type LogSet } from './logs';
 import { controlPipe, readHealth, requestStop } from './control';
 
@@ -439,6 +445,126 @@ function registerShutdownHandlers(): void {
 }
 
 /* ------------------------------------------------------------------ */
+/* Read-only commands                                                  */
+/* ------------------------------------------------------------------ */
+
+/** Prints to the console only. These verbs answer a question; they log nothing. */
+function say(lines: string[]): void {
+  // eslint-disable-next-line no-console
+  for (const line of lines) console.log(line);
+}
+
+/** Where the logs are and how big they have grown. */
+function describeLogs(): string[] {
+  const lines = [`Thư mục nhật ký: ${LOG_DIR}`, ''];
+  for (const [name, file] of Object.entries(LOG_FILES)) {
+    const full = path.join(LOG_DIR, file);
+    let size: string;
+    try {
+      size = `${Math.round(fs.statSync(full).size / 1024)} KB`;
+    } catch {
+      // Absent is a normal, meaningful state: error.log only exists once
+      // something has gone wrong.
+      size = '(chưa có)';
+    }
+    lines.push(`  ${file.padEnd(20)} ${size.padStart(10)}   ${LOG_DESCRIPTIONS[name] ?? ''}`);
+  }
+  lines.push('', `Xoay vòng ở ${MAX_LOG_BYTES / 1024 / 1024} MB, giữ ${MAX_LOG_GENERATIONS} thế hệ.`);
+  return lines;
+}
+
+const LOG_DESCRIPTIONS: Record<string, string> = {
+  launcher: 'quyết định khi khởi động',
+  server: 'toàn bộ đầu ra của máy chủ',
+  service: 'giám sát: khởi động, khởi động lại, tắt',
+  startup: 'kết quả kiểm tra mỗi lần khởi động',
+  error: 'chỉ lỗi — có nội dung nghĩa là có vấn đề',
+  backup: 'sao lưu',
+  restore: 'khôi phục',
+  verification: 'kết quả kiểm tra sao lưu / khôi phục',
+};
+
+/** A quick liveness answer, for a person or a monitoring script. */
+async function reportHealth(port: number): Promise<number> {
+  const reading = await readHealth(port);
+  if (reading === null) {
+    say([`Kas KHÔNG phản hồi tại http://localhost:${port}.`]);
+    return 1;
+  }
+  if (!reading.databaseOk) {
+    say([`Kas đang chạy nhưng cơ sở dữ liệu KHÔNG phản hồi (HTTP ${reading.status}).`]);
+    return 1;
+  }
+  say([`Kas hoạt động bình thường tại http://localhost:${port} (HTTP ${reading.status}).`]);
+  return 0;
+}
+
+/**
+ * The full check. Exit code carries the verdict so a script can use it: 0 for
+ * PASS, 1 for WARNING, 2 for FAIL.
+ */
+async function reportDiagnosis(port: number): Promise<number> {
+  const { diagnose, writeDeploymentReport } = await import('../production/diagnose');
+  const { formatReport } = await import('../production/deploymentCheck');
+
+  const diagnosis = await diagnose({ port, root: ROOT });
+  say(formatReport(diagnosis.report, diagnosis.version));
+
+  // The machine-readable form is written every time, so the file an operator
+  // is asked to send is never stale relative to what they just read.
+  try {
+    const file = await writeDeploymentReport(diagnosis, new Date(), LOG_DIR);
+    say(['', `Báo cáo chi tiết: ${file}`]);
+  } catch {
+    say(['', '(Không ghi được deployment-report.json — xem cảnh báo về thư mục nhật ký ở trên.)']);
+  }
+
+  return diagnosis.report.overall === 'PASS' ? 0 : diagnosis.report.overall === 'WARNING' ? 1 : 2;
+}
+
+/**
+ * Stop, then start again.
+ *
+ * IT RESTARTS INTO THE MODE IT WAS RUNNING IN. If Windows started Kas at boot,
+ * restarting it interactively would tie the hotel's server to the console
+ * window this command was typed in — and closing that window would take Kas
+ * down until the next reboot. The lock file records the mode, so the restart
+ * hands back to the scheduled task when that is where it came from.
+ */
+async function restart(port: number): Promise<number> {
+  const previous = readLock();
+  const wasService = previous?.mode === 'SERVICE';
+
+  const stopped = await requestStop(port);
+  say([stopped ? 'Đã dừng bản đang chạy.' : 'Không có bản nào đang chạy — chỉ khởi động.']);
+  if (stopped) await new Promise((resolve) => setTimeout(resolve, 3000));
+
+  if (wasService) {
+    try {
+      const { execFileSync } = await import('node:child_process');
+      execFileSync('schtasks.exe', ['/Run', '/TN', 'Kas'], { stdio: 'ignore' });
+      say(['Đã yêu cầu Windows khởi động lại Kas nền (Scheduled Task "Kas").']);
+      return 0;
+    } catch {
+      say([
+        'Không gọi được Scheduled Task "Kas" — khởi động nền trực tiếp thay thế.',
+        '(Kas sẽ dừng khi cửa sổ này đóng; hãy khởi động lại máy hoặc chạy KasService.cmd.)',
+      ]);
+    }
+  }
+
+  const child = spawn('cmd', ['/c', path.join(ROOT, wasService ? 'KasService.cmd' : 'Kas.cmd')], {
+    cwd: ROOT,
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+  });
+  child.unref();
+  say(['Đã khởi động lại Kas.']);
+  return 0;
+}
+
+/* ------------------------------------------------------------------ */
 /* Entry point                                                         */
 /* ------------------------------------------------------------------ */
 
@@ -449,17 +575,53 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   dotenv.config({ path: path.join(ROOT, '.env') });
 
   const port = Number.parseInt(process.env.PORT ?? '3001', 10);
-  const mode = parseMode(argv);
   logs = openLogs(LOG_DIR);
 
-  // `--stop` is not a startup: it asks an already-running runner to finish.
-  if (argv.includes('--stop')) {
-    const stopped = await requestStop(port);
-    info(stopped ? 'Đã gửi yêu cầu dừng tới Kas.' : 'Không tìm thấy tiến trình Kas nào đang chạy.');
-    return stopped ? 0 : 1;
+  // Everything that is NOT a startup is answered here and returns. Each one is
+  // read-only except RESTART, which is a stop followed by a start.
+  const command = parseCommand(argv);
+  switch (command.kind) {
+    case 'HELP':
+      say(helpText());
+      return 0;
+
+    case 'UNKNOWN':
+      // Reported rather than ignored: silently starting the application
+      // because someone mistyped a flag is how "I ran the diagnostic and
+      // nothing happened" becomes a support call.
+      say([unknownCommandMessage(command.argument), '', ...helpText()]);
+      return 1;
+
+    case 'VERSION':
+      say(versionReport());
+      return 0;
+
+    case 'LOGS':
+      say(describeLogs());
+      return 0;
+
+    case 'HEALTH':
+      return await reportHealth(port);
+
+    case 'DIAGNOSE':
+      return await reportDiagnosis(port);
+
+    case 'STOP': {
+      const stopped = await requestStop(port);
+      info(stopped ? 'Đã gửi yêu cầu dừng tới Kas.' : 'Không tìm thấy tiến trình Kas nào đang chạy.');
+      return stopped ? 0 : 1;
+    }
+
+    case 'RESTART':
+      return await restart(port);
+
+    case 'START':
+      break;
   }
 
+  const mode = command.mode;
   for (const line of startupBanner(mode, process.env.NODE_ENV)) startupLine(line);
+  startupLine(versionLine());
 
   const environment = await readEnvironment(port);
   for (const line of describeEnvironment(environment)) startupLine(`  ${line}`);

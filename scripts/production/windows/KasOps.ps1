@@ -226,24 +226,32 @@ function Invoke-KasHealthCheck {
 function Start-KasProduction {
     <#
     .SYNOPSIS
-        Starts the production server (built output, no dev server, no Vite).
+        REMOVED. Use Kas.cmd or KasService.cmd.
     .DESCRIPTION
-        Production serves the built SPA, its deep links and the API from ONE
-        origin on port 3001. It never runs `npm run dev`, Vite's port 5173, a
-        Quick Tunnel, hot reload, or any dev-test endpoint.
+        This used to run `node server\dist\index.js` directly. That bypasses
+        everything the production runner exists to provide: the single-instance
+        lock, the health monitor and its one-restart policy, the five rotated
+        log files, and the graceful shutdown that lets in-flight requests
+        finish. A second way to start the server is a second set of behaviours
+        to keep correct, and this one was strictly worse.
+
+            Kas.cmd              start, open the browser, hold the window
+            KasService.cmd       start in the background (no browser)
+            KasService.cmd stop  stop safely
+            Kas.cmd --diagnose   check the whole system
     #>
-    if ($env:NODE_ENV -ne 'production') {
-        throw 'NODE_ENV phai la "production" truoc khi khoi dong may chu that.'
-    }
-    Get-KasDatabaseUrl | Out-Null
+    throw @'
+Start-KasProduction da bi go bo.
 
-    $dist = Join-Path $script:RepoRoot 'server\dist\index.js'
-    if (-not (Test-Path $dist)) {
-        throw "Chua build. Chay `npm.cmd run build` truoc. (Khong tim thay $dist)"
-    }
+Dung mot trong cac lenh sau tai thu muc cai dat Kas:
+  Kas.cmd                 khoi dong va mo trinh duyet
+  KasService.cmd          khoi dong nen (khong mo trinh duyet)
+  KasService.cmd stop     tat an toan
+  Kas.cmd --diagnose      kiem tra toan bo he thong
 
-    Push-Location $script:RepoRoot
-    try { & node $dist } finally { Pop-Location }
+Ly do: chay truc tiep node bo qua khoa chong trung, giam sat suc khoe,
+nhat ky va tat an toan.
+'@
 }
 
 Export-ModuleMember -Function * -ErrorAction SilentlyContinue

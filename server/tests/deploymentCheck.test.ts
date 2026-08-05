@@ -1,0 +1,268 @@
+/**
+ * The deployment verdict: what counts as broken, and what merely counts as
+ * worth knowing.
+ *
+ * THE PROPERTY THIS FILE PROTECTS: FAIL means Kas cannot serve a booking.
+ * Nothing else may claim it. A diagnostic that reports "not Administrator" as a
+ * failure sends an operator chasing a permission problem on a working system;
+ * one that reports a full disk as a warning lets the hotel run until PostgreSQL
+ * cannot write. Getting that boundary right is the entire value of the tool,
+ * and it is the part a mock-heavy test would never touch.
+ *
+ * The second property is ORDER: failures print before warnings before passes.
+ * A report that buries one FAIL under twelve PASS lines has technically
+ * reported the fault and practically hidden it.
+ */
+import { describe, expect, it } from 'vitest';
+import {
+  BACKUP_STALE_HOURS,
+  MIN_FREE_DISK_BYTES,
+  MIN_NODE_MAJOR,
+  evaluateDeployment,
+  formatReport,
+  verdictLine,
+  type DeploymentFacts,
+} from '../src/production/deploymentCheck';
+import type { VersionInfo } from '../src/production/version';
+
+const NOW = new Date('2026-08-05T22:00:00.000Z');
+
+/** A machine where everything is right. */
+const healthy = (over: Partial<DeploymentFacts> = {}): DeploymentFacts => ({
+  nodeMajor: MIN_NODE_MAJOR,
+  windowsRelease: '10.0.19045',
+  administrator: true,
+  databaseConnected: true,
+  migrationsApplied: true,
+  serverBuildPresent: true,
+  clientBuildPresent: true,
+  uploadDirWritable: true,
+  backupDirWritable: true,
+  logDirWritable: true,
+  startupTaskRegistered: true,
+  backupTaskRegistered: true,
+  freeDiskBytes: 50 * 1024 * 1024 * 1024,
+  portInUse: true,
+  healthOk: true,
+  healthAnswered: true,
+  lastBackupAt: '2026-08-05T21:00:00.000Z',
+  lastVerification: 'OK backup-20260805T2100',
+  port: 3001,
+  ...over,
+});
+
+const check = (facts: DeploymentFacts, name: string) =>
+  evaluateDeployment(facts, NOW).checks.find((c) => c.name === name);
+
+const VERSION: VersionInfo = {
+  appVersion: '0.1.0',
+  gitCommit: 'abcdef1234567890',
+  buildDate: '2026-08-05T10:00:00.000Z',
+  environment: 'production',
+  nodeVersion: '22.0.0',
+};
+
+/* ================================================================== */
+/* A healthy machine                                                   */
+/* ================================================================== */
+describe('a correct deployment', () => {
+  it('passes everything', () => {
+    const report = evaluateDeployment(healthy(), NOW);
+    expect(report.overall).toBe('PASS');
+    expect(report.summary.fail).toBe(0);
+    expect(report.summary.warning).toBe(0);
+  });
+
+  it('checks every area the phase asked for', () => {
+    const names = evaluateDeployment(healthy(), NOW).checks.map((c) => c.name);
+    for (const expected of [
+      'node',
+      'windows',
+      'administrator',
+      'database',
+      'migrations',
+      'serverBuild',
+      'clientBuild',
+      'uploads',
+      'logs',
+      'backups',
+      'disk',
+      'health',
+      'startupTask',
+      'backupTask',
+      'lastBackup',
+    ]) {
+      expect(names, expected).toContain(expected);
+    }
+  });
+});
+
+/* ================================================================== */
+/* What is genuinely fatal                                             */
+/* ================================================================== */
+describe('failures', () => {
+  const fatal: [string, Partial<DeploymentFacts>][] = [
+    ['node', { nodeMajor: MIN_NODE_MAJOR - 1 }],
+    ['serverBuild', { serverBuildPresent: false }],
+    ['clientBuild', { clientBuildPresent: false }],
+    ['database', { databaseConnected: false }],
+    ['migrations', { migrationsApplied: false }],
+    ['uploads', { uploadDirWritable: false }],
+    ['logs', { logDirWritable: false }],
+    ['backups', { backupDirWritable: false }],
+    ['disk', { freeDiskBytes: MIN_FREE_DISK_BYTES - 1 }],
+  ];
+
+  it.each(fatal)('reports %s as FAIL when broken', (name, broken) => {
+    expect(check(healthy(broken), name)?.severity).toBe('FAIL');
+  });
+
+  it('makes the whole report FAIL when any single check fails', () => {
+    expect(evaluateDeployment(healthy({ databaseConnected: false }), NOW).overall).toBe('FAIL');
+  });
+
+  it('names the command that fixes a missing build', () => {
+    expect(check(healthy({ serverBuildPresent: false }), 'serverBuild')?.detail).toContain('npm run build');
+  });
+
+  it('sends a database failure to services.msc, not to Kas', () => {
+    // Restarting Kas does not start PostgreSQL, and that is the first thing
+    // anyone tries unless told otherwise.
+    expect(check(healthy({ databaseConnected: false }), 'database')?.detail).toContain('services.msc');
+  });
+
+  it('says what an unwritable uploads directory costs', () => {
+    expect(check(healthy({ uploadDirWritable: false }), 'uploads')?.detail).toContain('ảnh');
+  });
+});
+
+/* ================================================================== */
+/* What must NOT be fatal                                              */
+/* ================================================================== */
+describe('things that are not failures', () => {
+  it('treats missing Administrator as a warning, because Kas runs without it', () => {
+    // Only registering the boot task needs elevation. Calling this a failure
+    // would send someone chasing permissions on a working system.
+    const result = check(healthy({ administrator: false }), 'administrator');
+    expect(result?.severity).toBe('WARNING');
+    expect(result?.detail).toContain('vẫn chạy bình thường');
+  });
+
+  it('treats Kas not running as a warning', () => {
+    // --diagnose is run PRECISELY when Kas is down. Reporting that as a
+    // failure would bury the reason underneath it.
+    const facts = healthy({ healthOk: false, healthAnswered: false, portInUse: false });
+    expect(check(facts, 'health')?.severity).toBe('WARNING');
+  });
+
+  it('treats an unregistered boot task as a warning', () => {
+    expect(check(healthy({ startupTaskRegistered: false }), 'startupTask')?.severity).toBe('WARNING');
+  });
+
+  it('treats an unregistered backup task as a warning, and says what it costs', () => {
+    const result = check(healthy({ backupTaskRegistered: false }), 'backupTask');
+    expect(result?.severity).toBe('WARNING');
+    expect(result?.detail).toContain('sao lưu');
+  });
+
+  it('warns rather than fails when a measurement could not be taken', () => {
+    // An unread figure is not a bad figure. Guessing either way is worse.
+    expect(check(healthy({ freeDiskBytes: null }), 'disk')?.severity).toBe('WARNING');
+    expect(check(healthy({ windowsRelease: null }), 'windows')?.severity).toBe('WARNING');
+    expect(check(healthy({ migrationsApplied: null }), 'migrations')?.severity).toBe('WARNING');
+  });
+
+  it('makes the report WARNING, not FAIL, when only warnings exist', () => {
+    const report = evaluateDeployment(healthy({ administrator: false }), NOW);
+    expect(report.overall).toBe('WARNING');
+    expect(report.summary.fail).toBe(0);
+  });
+});
+
+/* ================================================================== */
+/* Running, but not serving                                            */
+/* ================================================================== */
+describe('the health check distinguishes three different problems', () => {
+  it('fails when the app answers but its database does not', () => {
+    const facts = healthy({ healthOk: false, healthAnswered: true });
+    const result = check(facts, 'health');
+    expect(result?.severity).toBe('FAIL');
+    expect(result?.detail).toContain('503');
+  });
+
+  it('fails when something else holds the port', () => {
+    // A different program on 3001 is a real fault with a different remedy from
+    // "Kas is not running".
+    const facts = healthy({ healthOk: false, healthAnswered: false, portInUse: true });
+    const result = check(facts, 'health');
+    expect(result?.severity).toBe('FAIL');
+    expect(result?.detail).toContain('không phải Kas');
+  });
+
+  it('names the port, so the remedy is actionable', () => {
+    const facts = healthy({ healthOk: false, healthAnswered: false, portInUse: true, port: 3999 });
+    expect(check(facts, 'health')?.detail).toContain('3999');
+  });
+});
+
+/* ================================================================== */
+/* Recovery readiness                                                  */
+/* ================================================================== */
+describe('backup age', () => {
+  it('passes a recent backup', () => {
+    expect(check(healthy(), 'lastBackup')?.severity).toBe('PASS');
+  });
+
+  it('warns when the newest backup is older than the schedule implies', () => {
+    // The nightly task silently not running is invisible otherwise: everything
+    // works, right up until somebody needs a backup.
+    const old = new Date(NOW.getTime() - (BACKUP_STALE_HOURS + 1) * 3_600_000).toISOString();
+    const result = check(healthy({ lastBackupAt: old }), 'lastBackup');
+    expect(result?.severity).toBe('WARNING');
+    expect(result?.detail).toContain('lịch sao lưu');
+  });
+
+  it('warns when there is no backup at all, and names the command', () => {
+    const result = check(healthy({ lastBackupAt: null }), 'lastBackup');
+    expect(result?.severity).toBe('WARNING');
+    expect(result?.detail).toContain('KasBackup.cmd');
+  });
+});
+
+/* ================================================================== */
+/* Presentation                                                        */
+/* ================================================================== */
+describe('the printed report', () => {
+  it('prints failures before warnings before passes', () => {
+    const facts = healthy({ databaseConnected: false, administrator: false });
+    const lines = formatReport(evaluateDeployment(facts, NOW), VERSION);
+    const firstFail = lines.findIndex((l) => l.startsWith('[FAIL]'));
+    const firstWarn = lines.findIndex((l) => l.startsWith('[WARN]'));
+    const firstPass = lines.findIndex((l) => l.startsWith('[ OK ]'));
+    expect(firstFail).toBeLessThan(firstWarn);
+    expect(firstWarn).toBeLessThan(firstPass);
+  });
+
+  it('leads with the version, so a report can be attributed to a build', () => {
+    const lines = formatReport(evaluateDeployment(healthy(), NOW), VERSION).join('\n');
+    expect(lines).toContain('0.1.0');
+    expect(lines).toContain('abcdef12');
+  });
+
+  it('ends with a verdict that carries the counts', () => {
+    const report = evaluateDeployment(healthy({ databaseConnected: false }), NOW);
+    expect(verdictLine(report)).toContain('FAIL');
+    expect(verdictLine(report)).toContain('1');
+  });
+
+  it('says the system is ready only when nothing is wrong', () => {
+    expect(verdictLine(evaluateDeployment(healthy(), NOW))).toContain('sẵn sàng');
+  });
+
+  it('carries no connection string in any message', () => {
+    const facts = healthy({ databaseConnected: false, migrationsApplied: false });
+    const lines = formatReport(evaluateDeployment(facts, NOW), VERSION).join('\n');
+    expect(lines).not.toContain('postgresql://');
+    expect(lines).not.toMatch(/:\/\/[^\s]*:[^\s]*@/);
+  });
+});

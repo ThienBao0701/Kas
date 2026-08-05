@@ -44,8 +44,13 @@ if (-not (Test-Path (Join-Path $InstallDir 'kas-release.json'))) {
 
 # Application files only. Everything absent from this list survives, which is
 # how operator data is protected — by never being named.
-$applicationItems = @('server\dist', 'client\dist', 'prisma', 'node_modules', 'runtime',
-                      'package.json', 'server\package.json', 'Kas.cmd', 'kas-release.json')
+# Must stay in step with RELEASE_PAYLOAD (server/src/installer/plan.ts).
+# 'runtime' was removed from the product and lingered here; KasService.cmd and
+# KasBackup.cmd were added and never arrived — so an uninstall left the two
+# background entry points behind while claiming to have removed the application.
+$applicationItems = @('server\dist', 'client\dist', 'prisma', 'node_modules',
+                      'package.json', 'server\package.json', 'Kas.cmd',
+                      'KasService.cmd', 'KasBackup.cmd', 'kas-release.json')
 $operatorItems = @('.env', 'server\uploads', 'logs')
 
 Write-Host ''
@@ -84,14 +89,23 @@ if (Test-Path $serviceCmd) {
     Start-Sleep -Seconds 2
 }
 
+# NO `2>$null` ON A NATIVE COMMAND. On PowerShell 5.1 redirecting a native
+# program's stderr wraps each line in an ErrorRecord (NativeCommandError), which
+# aborted this uninstall before it deleted anything the first time it was run
+# against a machine with no tasks registered. schtasks writes to stderr for the
+# ordinary "task not found" case, so that path is hit every time. The exit code
+# is the answer; stderr is left alone, exactly as KasOps.ps1 documents.
+$previousPreference = $ErrorActionPreference
+$ErrorActionPreference = 'SilentlyContinue'
 foreach ($taskName in @('Kas', 'Kas Backup')) {
-    $null = schtasks.exe /Query /TN $taskName 2>$null
+    schtasks.exe /Query /TN $taskName | Out-Null
     if ($LASTEXITCODE -eq 0) {
-        $null = schtasks.exe /Delete /TN $taskName /F 2>$null
+        schtasks.exe /Delete /TN $taskName /F | Out-Null
         if ($LASTEXITCODE -eq 0) { Write-Host "  da go Scheduled Task `"$taskName`"" }
         else { Write-Host "  KHONG go duoc Scheduled Task `"$taskName`" (can quyen Administrator)" -ForegroundColor Yellow }
     }
 }
+$ErrorActionPreference = $previousPreference
 
 $targets = if ($PurgeData) { $applicationItems + $operatorItems } else { $applicationItems }
 foreach ($item in $targets) {

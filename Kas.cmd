@@ -15,6 +15,15 @@ rem
 rem  Neu Kas da duoc cai dat de chay nen cung Windows thi file nay chi mo trinh
 rem  duyet toi ban dang chay - no KHONG khoi dong them tien trinh thu hai.
 rem
+rem  Cac lenh khac (khong thay doi du lieu):
+rem    Kas.cmd --diagnose   kiem tra toan bo he thong, ghi deployment-report.json
+rem    Kas.cmd --health     hoi nhanh /api/health
+rem    Kas.cmd --version    phien ban, commit, thoi diem build
+rem    Kas.cmd --logs       vi tri va kich thuoc cac tep nhat ky
+rem    Kas.cmd --restart    tat an toan roi khoi dong lai
+rem    Kas.cmd --stop       tat an toan
+rem    Kas.cmd --help       danh sach day du
+rem
 rem  ASCII-only: cua so cmd.exe mac dinh dung code page 437 va se hien thi sai
 rem  neu tep nay chua dau tieng Viet. Moi thong bao co dau do runner in ra.
 rem ---------------------------------------------------------------------------
@@ -43,13 +52,19 @@ if not exist "server\dist\service\runner.js" (
   exit /b 1
 )
 
-node "server\dist\service\runner.js"
+rem %* forwards every argument, which is what makes the verbs below reachable.
+rem Without it "Kas.cmd --diagnose" silently started the application instead.
+node "server\dist\service\runner.js" %*
 set EXITCODE=%ERRORLEVEL%
 
-rem Chi giu cua so lai khi co loi, de nguoi dung doc duoc chan doan.
-if not "%EXITCODE%"=="0" (
-  echo.
-  pause
+rem Giu cua so lai khi co loi - nhung CHI khi khong co tham so, tuc la truong hop
+rem double-click. Voi mot lenh nhu --diagnose (tra ve 1 hoac 2 de bao WARNING /
+rem FAIL) thi "pause" se treo script cua nguoi dung dang cho ket qua.
+if "%~1"=="" (
+  if not "%EXITCODE%"=="0" (
+    echo.
+    pause
+  )
 )
 
 exit /b %EXITCODE%
