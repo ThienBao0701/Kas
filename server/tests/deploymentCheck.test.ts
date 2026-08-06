@@ -13,6 +13,8 @@
  * A report that buries one FAIL under twelve PASS lines has technically
  * reported the fault and practically hidden it.
  */
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   BACKUP_STALE_HOURS,
@@ -46,6 +48,7 @@ const healthy = (over: Partial<DeploymentFacts> = {}): DeploymentFacts => ({
   healthOk: true,
   healthAnswered: true,
   servedClientIsBuild: true,
+  environment: 'production',
   lastBackupAt: '2026-08-05T21:00:00.000Z',
   lastVerification: 'OK backup-20260805T2100',
   port: 3001,
@@ -85,6 +88,7 @@ describe('a correct deployment', () => {
       'serverBuild',
       'clientBuild',
       'servedClient',
+      'environment',
       'uploads',
       'logs',
       'backups',
@@ -307,5 +311,73 @@ describe('the client the origin actually serves', () => {
 
   it('makes the whole report FAIL, so it cannot be scrolled past', () => {
     expect(evaluateDeployment(healthy({ servedClientIsBuild: false }), NOW).overall).toBe('FAIL');
+  });
+});
+
+/* ================================================================== */
+/* 6.4.2 — the setting the whole deployment hangs on                   */
+/* ================================================================== */
+describe('NODE_ENV', () => {
+  it('fails when the machine is running as development', () => {
+    // THE ROOT CAUSE, as data. `serveClient` is `SERVE_CLIENT ?? isProduction`,
+    // so a development machine never mounts express.static and answers every
+    // non-API request with a 404 — while the API keeps working perfectly.
+    // That combination cost a whole deployment.
+    expect(check(healthy({ environment: 'development' }), 'environment')?.severity).toBe('FAIL');
+  });
+
+  it('fails when it was never set at all', () => {
+    // The shipped template used to omit it entirely, and the schema defaults
+    // to development — so "unset" and "development" are the same fault.
+    const result = check(healthy({ environment: '' }), 'environment');
+    expect(result?.severity).toBe('FAIL');
+    expect(result?.detail).toContain('chưa đặt');
+  });
+
+  it('names the two lines that fix it, and the file they go in', () => {
+    const detail = check(healthy({ environment: 'development' }), 'environment')?.detail ?? '';
+    expect(detail).toContain('NODE_ENV=production');
+    expect(detail).toContain('SERVE_CLIENT=true');
+    expect(detail).toContain('.env');
+  });
+
+  it('says what the symptom looks like, so it is recognisable', () => {
+    const detail = check(healthy({ environment: 'development' }), 'environment')?.detail ?? '';
+    expect(detail).toContain('404');
+    expect(detail).toContain('API vẫn chạy');
+  });
+
+  it('passes in production', () => {
+    expect(check(healthy(), 'environment')?.severity).toBe('PASS');
+  });
+});
+
+/* ================================================================== */
+/* 6.4.2 — the shipped template must declare production               */
+/* ================================================================== */
+describe('the configuration template an install receives', () => {
+  const template = fs.readFileSync(
+    path.resolve(__dirname, '..', '..', '.env.production.example'),
+    'utf8',
+  );
+  /** Settings, not the prose around them: a commented line sets nothing. */
+  const active = template
+    .split(/\r?\n/)
+    .filter((line) => !line.trimStart().startsWith('#'))
+    .join('\n');
+
+  it('sets NODE_ENV=production as a real line, not a comment', () => {
+    // It appeared ONLY inside comments, because the Docker compose file used
+    // to supply it. On Windows there is no compose file and nothing else set
+    // it, so every install ran as development.
+    expect(active).toContain('NODE_ENV=production');
+  });
+
+  it('sets SERVE_CLIENT=true, so the built client is actually served', () => {
+    expect(active).toContain('SERVE_CLIENT=true');
+  });
+
+  it('pins the one port the proxy must target', () => {
+    expect(active).toContain('PORT=3001');
   });
 });

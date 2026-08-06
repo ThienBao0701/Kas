@@ -211,6 +211,7 @@ export async function gatherFacts(options: DiagnoseOptions = {}): Promise<Deploy
     healthAnswered: health !== null,
     // Only worth asking when something is actually answering the port.
     servedClientIsBuild: health !== null ? await servedClientIsBuild(port) : null,
+    environment: process.env.NODE_ENV ?? '',
     lastBackupAt: await lastBackupAt(BACKUP_DIR),
     lastVerification: lastVerificationLine(path.join(root, 'logs')),
     port,

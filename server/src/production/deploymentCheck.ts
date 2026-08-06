@@ -63,6 +63,8 @@ export interface DeploymentFacts {
    * caught it.
    */
   servedClientIsBuild: boolean | null;
+  /** NODE_ENV as the running process sees it. */
+  environment: string;
   /** Newest complete backup, ISO. Null when none exists. */
   lastBackupAt: string | null;
   /** Last line recorded in verification.log, if any. */
@@ -200,6 +202,26 @@ export function evaluateDeployment(facts: DeploymentFacts, now: Date = new Date(
         : facts.portInUse
           ? fail('health', `Cổng ${facts.port} đang bị chiếm nhưng không phải Kas.`)
           : warn('health', 'Kas hiện không chạy.'),
+  );
+
+  // --- The setting the whole deployment hangs on ---------------------------
+  //
+  // A FAIL, and it names the file and the line. `serveClient` is
+  // `SERVE_CLIENT ?? isProduction`, so a machine running as development never
+  // mounts express.static and answers every non-API request with a 404 — while
+  // the API keeps working perfectly. That combination cost a whole deployment,
+  // and the header of this report showed "Môi trường: development" the entire
+  // time without anything treating it as a fault.
+  checks.push(
+    facts.environment === 'production'
+      ? pass('environment', 'NODE_ENV = production.')
+      : fail(
+          'environment',
+          `NODE_ENV = ${facts.environment || '(chưa đặt)'}, không phải production. ` +
+            'Máy chủ sẽ KHÔNG phục vụ giao diện (manifest, sw.js, /assets đều trả 404) ' +
+            'dù API vẫn chạy. Hãy thêm NODE_ENV=production và SERVE_CLIENT=true vào .env ' +
+            'rồi khởi động lại bằng KasService.cmd.',
+        ),
   );
 
   // --- Is the thing on the port the PRODUCTION build? ----------------------

@@ -224,7 +224,30 @@ if (Test-Path $envPath) {
     Write-Log '  giu nguyen .env hien co (khong ghi de)'
 } else {
     Copy-Item (Join-Path $ReleaseRoot '.env.example') $envPath -Force
+
+    # The template declares NODE_ENV=production, and production REFUSES to
+    # start unless the upload and backup paths are absolute. Only the installer
+    # knows where this machine put them, so it writes them here — otherwise a
+    # fresh install would abort on first run with a wall of validation errors,
+    # and the natural fix an operator reaches for is to set NODE_ENV back to
+    # development, which is exactly the fault this release is repairing.
+    #
+    # Appended rather than templated so the file keeps its comments, and the
+    # values are machine-specific rather than shipped.
+    $resolved = @(
+        '',
+        '# --- Written by the installer for THIS machine ------------------------------',
+        '# Production requires absolute paths; these point inside the install folder,',
+        '# which is where the upgrade and uninstall logic already protects them.',
+        ('PROOF_UPLOAD_DIR={0}' -f (Join-Path $InstallDir 'server\uploads\booking-proofs')),
+        ('ISSUE_UPLOAD_DIR={0}' -f (Join-Path $InstallDir 'server\uploads\issue-photos')),
+        ('BACKUP_DIR={0}' -f (Join-Path $InstallDir 'backups')),
+        ''
+    )
+    Add-Content -LiteralPath $envPath -Value $resolved -Encoding utf8
+
     Write-Log '  da tao .env tu mau - CAN CHINH SUA truoc khi chay' 'Yellow'
+    Write-Log '    bat buoc: DATABASE_URL, SESSION_SECRET, INITIAL_ADMIN_*, APP_ORIGIN' 'Yellow'
 }
 
 # --- Folders ----------------------------------------------------------------
