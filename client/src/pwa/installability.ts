@@ -74,6 +74,30 @@ export function installBlockReason(env: InstallEnvironment): InstallBlockReason 
  * browser that simply has not offered the prompt yet (which is the normal state
  * for a few seconds after load, and permanently in Firefox).
  */
+/**
+ * An explanation for EVERY state, including the two that are not problems.
+ *
+ * The top-bar button is always visible, so pressing it must always say
+ * something. `installBlockMessage` deliberately returns null for an installed
+ * app and for a prompt the browser has not offered yet — correct for a passive
+ * notice, useless for a control someone just pressed.
+ */
+export function installExplanation(reason: InstallBlockReason | null): string {
+  switch (reason) {
+    case null:
+      return 'Có thể cài ứng dụng. Bấm để mở hộp thoại cài đặt của trình duyệt.';
+    case 'ALREADY_INSTALLED':
+      return 'Ứng dụng đã được cài trên máy này. Hãy mở Kas từ Desktop hoặc Start Menu.';
+    case 'PROMPT_NOT_OFFERED':
+      return (
+        'Trình duyệt chưa cho phép cài ngay lúc này. Nếu Kas đã được cài, hãy mở từ Desktop. ' +
+        'Nếu chưa, hãy dùng biểu tượng cài trên thanh địa chỉ, hoặc tải lại trang rồi thử lại.'
+      );
+    default:
+      return installBlockMessage(reason) ?? 'Không cài được ứng dụng trên trình duyệt này.';
+  }
+}
+
 export function installBlockMessage(reason: InstallBlockReason | null): string | null {
   switch (reason) {
     case 'INSECURE_ORIGIN':

@@ -109,23 +109,29 @@ describe('the install button in the shared shell', () => {
     expect(screen.getAllByTestId('pwa-install-button')).toHaveLength(1);
   });
 
-  it('is absent before the browser offers the prompt', async () => {
-    // Chrome fires beforeinstallprompt when IT decides the app qualifies.
-    // A button that cannot do anything yet is worse than no button.
+  it('is visible before the browser offers any prompt', async () => {
+    // The reported bug: Chrome had already accepted the app, so it never fired
+    // beforeinstallprompt again and the button was nowhere to be found.
     mockShell(ADMIN_USER);
     renderApp('/app/dashboard');
     await screen.findByRole('navigation', { name: 'Điều hướng chính' });
-    expect(screen.queryByTestId('pwa-install-button')).toBeNull();
+    expect(await screen.findByTestId('pwa-install-button')).toHaveTextContent('Tải ứng dụng');
   });
 
-  it('is absent on an insecure origin, where installing is impossible', async () => {
-    // http://<lan-ip>:3001 — Chromium refuses to install, so the bar shows
-    // nothing rather than a control that cannot work.
+  it('is visible for Reception on an insecure origin too', async () => {
     installableBrowser(false);
     mockShell(RECEPTIONIST_USER);
     renderApp('/app/new');
     await screen.findByRole('navigation', { name: 'Điều hướng chính' });
-    fireInstallPrompt();
-    expect(screen.queryByTestId('pwa-install-button')).toBeNull();
+    expect(await screen.findByTestId('pwa-install-button')).toBeInTheDocument();
+  });
+
+  it('explains itself instead of doing nothing when unavailable', async () => {
+    installableBrowser(false);
+    mockShell(RECEPTIONIST_USER);
+    renderApp('/app/new');
+    await screen.findByRole('navigation', { name: 'Điều hướng chính' });
+    await userEvent.click(await screen.findByTestId('pwa-install-button'));
+    expect(screen.getByTestId('pwa-install-explanation')).toBeInTheDocument();
   });
 });

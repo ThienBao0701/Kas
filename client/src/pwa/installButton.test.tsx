@@ -138,39 +138,71 @@ describe('on a secure origin', () => {
 });
 
 /* ================================================================== */
-/* 6.4.2 — the button Admin and Reception actually reach               */
+/* 6.4.2 — the top-bar button is ALWAYS visible                        */
 /* ================================================================== */
 describe('the inline variant in the top bar', () => {
-  it('offers the install action when the browser allows it', async () => {
+  it('is visible before the browser has offered anything', () => {
+    // Chrome fires beforeinstallprompt when IT decides, and never again once
+    // the app is installed. Hiding on that signal makes the button vanish
+    // exactly when somebody goes looking for it.
     render(<InstallButton variant="inline" />);
-    fireInstallPrompt();
-    expect(await screen.findByTestId('pwa-install-button')).toBeInTheDocument();
+    expect(screen.getByTestId('pwa-install-button')).toHaveTextContent('Tải ứng dụng');
   });
 
-  it('is labelled as downloading the application', async () => {
-    render(<InstallButton variant="inline" />);
-    fireInstallPrompt();
-    expect(await screen.findByTestId('pwa-install-button')).toHaveTextContent('Tải ứng dụng');
-  });
-
-  it('opens the browser dialog when pressed', async () => {
-    render(<InstallButton variant="inline" />);
-    const { prompt } = fireInstallPrompt();
-    await userEvent.click(await screen.findByTestId('pwa-install-button'));
-    expect(prompt).toHaveBeenCalledTimes(1);
-  });
-
-  it('renders nothing at all when installation is impossible', () => {
-    // A 64px bar is no place for three lines of prose, and the floating card
-    // on the same page already states the reason once.
+  it('is visible on an insecure origin, where installing is impossible', () => {
     setContext({ secure: false });
     render(<InstallButton variant="inline" />);
-    expect(screen.queryByTestId('pwa-install-button')).toBeNull();
-    expect(screen.queryByTestId('pwa-install-blocked')).toBeNull();
+    expect(screen.getByTestId('pwa-install-button')).toBeInTheDocument();
+  });
+
+  it('is visible when the app is already installed', () => {
+    setContext({ standalone: true });
+    render(<InstallButton variant="inline" />);
+    expect(screen.getByTestId('pwa-install-button')).toBeInTheDocument();
+  });
+
+  it('marks itself unavailable without using disabled', () => {
+    // A disabled button fires no click, and this one must explain itself.
+    render(<InstallButton variant="inline" />);
+    const button = screen.getByTestId('pwa-install-button');
+    expect(button).toHaveAttribute('aria-disabled', 'true');
+    expect(button).not.toBeDisabled();
+  });
+
+  it('explains itself when pressed while unavailable', async () => {
+    setContext({ secure: false });
+    render(<InstallButton variant="inline" />);
+    await userEvent.click(screen.getByTestId('pwa-install-button'));
+    expect(screen.getByTestId('pwa-install-explanation')).toHaveTextContent(/https|localhost/);
+  });
+
+  it('explains an already-installed app rather than staying silent', async () => {
+    setContext({ standalone: true });
+    render(<InstallButton variant="inline" />);
+    await userEvent.click(screen.getByTestId('pwa-install-button'));
+    expect(screen.getByTestId('pwa-install-explanation')).toHaveTextContent(/Desktop|Start Menu/);
+  });
+
+  it('closes the explanation when pressed again', async () => {
+    render(<InstallButton variant="inline" />);
+    const button = screen.getByTestId('pwa-install-button');
+    await userEvent.click(button);
+    expect(screen.getByTestId('pwa-install-explanation')).toBeInTheDocument();
+    await userEvent.click(button);
+    expect(screen.queryByTestId('pwa-install-explanation')).toBeNull();
+  });
+
+  it('becomes enabled and opens the dialog once a prompt arrives', async () => {
+    render(<InstallButton variant="inline" />);
+    const { prompt } = fireInstallPrompt();
+    const button = await screen.findByTestId('pwa-install-button');
+    await waitFor(() => expect(button).toHaveAttribute('aria-disabled', 'false'));
+    await userEvent.click(button);
+    expect(prompt).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId('pwa-install-explanation')).toBeNull();
   });
 
   it('still explains itself in the floating variant', () => {
-    // The two variants must not both go silent, or the reason disappears.
     setContext({ secure: false });
     render(<InstallButton />);
     expect(screen.getByTestId('pwa-install-blocked')).toBeInTheDocument();
