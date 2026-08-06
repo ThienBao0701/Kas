@@ -31,7 +31,46 @@ $ErrorActionPreference = 'Stop'
 
 # The release root is the parent of installer\, so the script works from
 # wherever the operator extracted the archive.
-$ReleaseRoot = Split-Path -Parent $PSScriptRoot
+# The payload root is FOUND, not assumed to sit a fixed number of levels up.
+#
+# This script runs from two different depths and the old `Split-Path -Parent`
+# was only right for one of them:
+#
+#   packaged release   <release>\installer\Install-Kas.ps1    -> one level up
+#   repository         scripts\production\windows\Install-...  -> three levels up
+#
+# From the repository it therefore looked for the plan module under
+# scripts\production\server\dist\..., which does not exist, and the install
+# died before doing anything. Walking up until the payload is actually there
+# handles both layouts and any future move of this file, without naming a path.
+function Resolve-KasReleaseRoot {
+    param([Parameter(Mandatory)][string]$StartDirectory)
+
+    # The plan module is the marker because it is the first thing the installer
+    # needs and it exists in both layouts.
+    $marker = 'server\dist\installer\plan.js'
+    $directory = $StartDirectory
+    while ($directory) {
+        if (Test-Path (Join-Path $directory $marker)) { return $directory }
+        $parent = Split-Path -Parent $directory
+        if (-not $parent -or $parent -eq $directory) { break }
+        $directory = $parent
+    }
+    return $null
+}
+
+$ReleaseRoot = Resolve-KasReleaseRoot -StartDirectory $PSScriptRoot
+if (-not $ReleaseRoot) {
+    throw @"
+Khong tim thay noi dung cai dat.
+
+Da tim nguoc len tu: $PSScriptRoot
+Can tim thay: server\dist\installer\plan.js
+
+Neu ban chay tu ban phat hanh: hay giai nen TOAN BO thu muc roi chay lai.
+Neu ban chay tu ma nguon: chay 'npm run build' truoc.
+"@
+}
 $LogDir = Join-Path $InstallDir 'logs'
 $LogFile = Join-Path $LogDir 'installer.log'
 
