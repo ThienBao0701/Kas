@@ -17,12 +17,31 @@ import { useInstallPrompt } from './useInstallPrompt';
  * empty corner of the screen. Silence there costs a support call and an
  * afternoon of debugging the manifest, which is not where the problem is.
  */
-export function InstallButton({ className = '' }: { className?: string }) {
+/**
+ * `card` — the floating affordance in the screen corner (PwaManager).
+ * `inline` — sits in the top bar, where every Admin and Reception screen has
+ *   it in reach. The explanation paragraph is suppressed there: a 64px bar is
+ *   no place for three lines of prose, and the floating card already carries
+ *   it on the same page.
+ */
+export type InstallButtonVariant = 'card' | 'inline';
+
+export function InstallButton({
+  className = '',
+  variant = 'card',
+}: {
+  className?: string;
+  variant?: InstallButtonVariant;
+}) {
   const { canInstall, reason, promptInstall } = useInstallPrompt();
   const [busy, setBusy] = useState(false);
   const message = installBlockMessage(reason);
 
   if (canInstall) {
+    const shape =
+      variant === 'inline'
+        ? 'rounded-xl border-brand-200 bg-brand-50 px-3 text-brand-700 hover:bg-brand-100'
+        : 'rounded-2xl border-slate-200 bg-white px-4 text-slate-700 shadow-lg hover:bg-slate-50';
     return (
       <button
         type="button"
@@ -34,13 +53,17 @@ export function InstallButton({ className = '' }: { className?: string }) {
           void promptInstall().finally(() => setBusy(false));
         }}
         data-testid="pwa-install-button"
-        className={`inline-flex min-h-[2.75rem] items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 shadow-lg hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 disabled:opacity-60 ${className}`}
+        className={`inline-flex min-h-[2.75rem] items-center gap-2 border text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 disabled:opacity-60 ${shape} ${className}`}
       >
         <Download className="h-4 w-4 text-brand-600" aria-hidden="true" />
-        Cài ứng dụng
+        Tải ứng dụng
       </button>
     );
   }
+
+  // In the bar, an impossible install is simply absent — the floating card on
+  // the same page states the reason once, and saying it twice is noise.
+  if (variant === 'inline') return null;
 
   if (message) {
     return (

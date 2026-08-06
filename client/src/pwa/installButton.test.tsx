@@ -136,3 +136,43 @@ describe('on a secure origin', () => {
     expect(screen.queryByTestId('pwa-install-blocked')).toBeNull();
   });
 });
+
+/* ================================================================== */
+/* 6.4.2 — the button Admin and Reception actually reach               */
+/* ================================================================== */
+describe('the inline variant in the top bar', () => {
+  it('offers the install action when the browser allows it', async () => {
+    render(<InstallButton variant="inline" />);
+    fireInstallPrompt();
+    expect(await screen.findByTestId('pwa-install-button')).toBeInTheDocument();
+  });
+
+  it('is labelled as downloading the application', async () => {
+    render(<InstallButton variant="inline" />);
+    fireInstallPrompt();
+    expect(await screen.findByTestId('pwa-install-button')).toHaveTextContent('Tải ứng dụng');
+  });
+
+  it('opens the browser dialog when pressed', async () => {
+    render(<InstallButton variant="inline" />);
+    const { prompt } = fireInstallPrompt();
+    await userEvent.click(await screen.findByTestId('pwa-install-button'));
+    expect(prompt).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders nothing at all when installation is impossible', () => {
+    // A 64px bar is no place for three lines of prose, and the floating card
+    // on the same page already states the reason once.
+    setContext({ secure: false });
+    render(<InstallButton variant="inline" />);
+    expect(screen.queryByTestId('pwa-install-button')).toBeNull();
+    expect(screen.queryByTestId('pwa-install-blocked')).toBeNull();
+  });
+
+  it('still explains itself in the floating variant', () => {
+    // The two variants must not both go silent, or the reason disappears.
+    setContext({ secure: false });
+    render(<InstallButton />);
+    expect(screen.getByTestId('pwa-install-blocked')).toBeInTheDocument();
+  });
+});

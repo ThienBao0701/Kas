@@ -2,6 +2,7 @@ import { useLocation } from 'react-router-dom';
 import { Menu } from 'lucide-react';
 import { AccountMenu } from './AccountMenu';
 import { NotificationBell } from './NotificationBell';
+import { InstallButton } from '../pwa/InstallButton';
 import { titleForPath } from './navigation';
 
 export function Topbar({ onOpenMenu }: { onOpenMenu: () => void }) {
@@ -22,6 +23,12 @@ export function Topbar({ onOpenMenu }: { onOpenMenu: () => void }) {
         <h1 className="text-base font-semibold text-slate-800">{title}</h1>
       </div>
       <div className="flex items-center gap-1">
+        {/*
+          One component, one mount point, both roles. Admin and Reception share
+          this bar, so the install affordance is on every authenticated screen
+          without a second implementation or a per-role variant.
+        */}
+        <InstallButton variant="inline" className="mr-1 hidden sm:inline-flex" />
         <NotificationBell />
         <AccountMenu />
       </div>
