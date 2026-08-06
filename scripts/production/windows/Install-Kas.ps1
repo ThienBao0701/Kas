@@ -110,13 +110,39 @@ $installedRelease = Join-Path $InstallDir 'kas-release.json'
 if (Test-Path $installedRelease) {
     $existingVersion = (Get-Content $installedRelease -Raw | ConvertFrom-Json).version
 }
-$existingInstall = [bool]$existingVersion
 
-# A folder with contents but no Kas marker belongs to something else.
-$targetOccupiedByOther = $false
-if ((Test-Path $InstallDir) -and -not $existingInstall) {
-    $targetOccupiedByOther = (Get-ChildItem $InstallDir -Force | Measure-Object).Count -gt 0
+# --- Is the target an existing Kas install? ---------------------------------
+#
+# NOT just "kas-release.json exists". That file only appeared in Phase 6.3, so
+# an installation predating it was classified as a FOREIGN folder and refused —
+# the one directory that must never be treated as a stranger is the one holding
+# the hotel's data. The markers are gathered here and judged by
+# isKasInstallation() in the plan module, so the rule is tested in one place.
+$installedPackageName = $null
+$installedPackage = Join-Path $InstallDir 'package.json'
+if (Test-Path $installedPackage) {
+    try { $installedPackageName = (Get-Content $installedPackage -Raw | ConvertFrom-Json).name } catch { }
 }
+
+$markers = @{
+    releaseMetadata = [bool](Test-Path $installedRelease)
+    packageName     = $installedPackageName
+    serverBuild     = [bool](Test-Path (Join-Path $InstallDir 'server\dist\index.js'))
+    clientBuild     = [bool](Test-Path (Join-Path $InstallDir 'client\dist\index.html'))
+    prismaSchema    = [bool](Test-Path (Join-Path $InstallDir 'prisma\schema.prisma'))
+    launcher        = [bool](Test-Path (Join-Path $InstallDir 'Kas.cmd'))
+    operatorData    = [bool]((Test-Path (Join-Path $InstallDir '.env')) -or
+                             (Test-Path (Join-Path $InstallDir 'server\uploads')))
+}
+
+# `existingInstall` and `targetOccupiedByOther` are decided from the markers by
+# the plan module, below — the decision script computes both before classifying.
+$existingInstall = $false
+$targetDirectoryHasContents = $false
+if (Test-Path $InstallDir) {
+    $targetDirectoryHasContents = (Get-ChildItem $InstallDir -Force | Measure-Object).Count -gt 0
+}
+$targetOccupiedByOther = $false
 
 $targetWritable = $false
 try {
@@ -183,6 +209,8 @@ $environmentJson = @{
     freeDiskBytes         = $freeDiskBytes
     portInUse             = $portInUse
     port                  = $installPort
+    markers               = $markers
+    targetHasContents     = $targetDirectoryHasContents
 } | ConvertTo-Json -Compress
 
 # node reads the environment and prints the decision as JSON, so the PowerShell
@@ -204,8 +232,24 @@ const fs = require('fs');
 const plan = require(process.argv[2]);
 // Strips a BOM if one ever reaches this file from elsewhere.
 const env = JSON.parse(fs.readFileSync(process.argv[3], 'utf8').replace(/^﻿/, ''));
+
+// Recognition BEFORE classification, both from the tested module. A legacy
+// install has no kas-release.json but is unmistakably Kas by its structure;
+// calling it a foreign folder refused to upgrade the one directory that holds
+// the hotel's data. A directory that is neither Kas nor empty is still refused.
+const isKas = plan.isKasInstallation(env.markers);
+env.existingInstall = isKas;
+env.targetOccupiedByOther = !isKas && env.targetHasContents === true;
+
 const action = plan.decideInstall(env);
-console.log(JSON.stringify({ action, lines: plan.describeInstall(action, env) }));
+console.log(
+  JSON.stringify({
+    action,
+    lines: plan.describeInstall(action, env),
+    recognisedAsKas: isKas,
+    legacy: isKas && env.markers.releaseMetadata !== true,
+  }),
+);
 '@
 
 [System.IO.File]::WriteAllText($environmentFile, $environmentJson, $utf8NoBom)
@@ -220,6 +264,9 @@ try {
 }
 
 foreach ($line in $decision.lines) { Write-Log "  $line" }
+if ($decision.legacy) {
+    Write-Log '  Ghi chu       : ban cai dat cu (truoc khi co kas-release.json) - nhan dien qua cau truc thu muc' 'Yellow'
+}
 Write-Host ''
 
 if ($decision.action.kind -eq 'ABORT') {

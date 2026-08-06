@@ -14,7 +14,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  KAS_PACKAGE_NAME,
   MIN_NODE_MAJOR,
+  isKasInstallation,
   BACKUP_DATA,
   CREATED_DIRECTORIES,
   MIN_INSTALL_DISK_BYTES,
@@ -31,6 +33,7 @@ import {
   shortcutSpecs,
   uninstallTargets,
   type InstallEnvironment,
+  type InstallMarkers,
 } from '../src/installer/plan';
 
 /** A machine where everything is ready and nothing is installed yet. */
@@ -521,5 +524,82 @@ describe('the port', () => {
   it('says nothing when the port is free', () => {
     const env = ready();
     expect(describeInstall(decideInstall(env), env).join('\n')).not.toContain('CẢNH BÁO');
+  });
+});
+
+/* ================================================================== */
+/* Recognising an install that predates kas-release.json               */
+/* ================================================================== */
+describe('recognising an existing Kas installation', () => {
+  const none: InstallMarkers = {
+    releaseMetadata: false,
+    packageName: null,
+    serverBuild: false,
+    clientBuild: false,
+    prismaSchema: false,
+    launcher: false,
+    operatorData: false,
+  };
+
+  it('recognises a modern install by its release metadata', () => {
+    expect(isKasInstallation({ ...none, releaseMetadata: true })).toBe(true);
+  });
+
+  it('recognises a LEGACY install with no release metadata', () => {
+    // THE BUG THIS FIXES. kas-release.json only appeared in Phase 6.3, so the
+    // hotel's own installation was classified as a foreign folder and refused
+    // — the one directory that must never be treated as a stranger.
+    const legacy: InstallMarkers = {
+      ...none,
+      packageName: KAS_PACKAGE_NAME,
+      serverBuild: true,
+      clientBuild: true,
+      prismaSchema: true,
+      operatorData: true,
+    };
+    expect(isKasInstallation(legacy)).toBe(true);
+  });
+
+  it('recognises it by package name alone', () => {
+    expect(isKasInstallation({ ...none, packageName: KAS_PACKAGE_NAME })).toBe(true);
+  });
+
+  it('recognises it by two structural markers alone', () => {
+    // A stripped install whose package.json was replaced or removed.
+    expect(isKasInstallation({ ...none, serverBuild: true, prismaSchema: true })).toBe(true);
+    expect(isKasInstallation({ ...none, clientBuild: true, operatorData: true })).toBe(true);
+  });
+
+  it('still refuses a folder holding somebody else’s work', () => {
+    // The check being relaxed exists to stop an install into Documents from
+    // later being uninstalled and taking the contents with it.
+    expect(isKasInstallation({ ...none, packageName: 'some-other-app' })).toBe(false);
+    expect(isKasInstallation(none)).toBe(false);
+  });
+
+  it('needs TWO structural markers, never one', () => {
+    // Any single one can occur innocently — a stray prisma folder, an
+    // unrelated client/dist. Two together in one directory do not.
+    for (const single of ['serverBuild', 'clientBuild', 'prismaSchema', 'launcher', 'operatorData'] as const) {
+      expect(isKasInstallation({ ...none, [single]: true }), single).toBe(false);
+    }
+  });
+
+  it('is not fooled by a Node project that merely has a package.json', () => {
+    expect(isKasInstallation({ ...none, packageName: 'express-demo' })).toBe(false);
+  });
+
+  it('classifies a recognised legacy install as an UPGRADE, preserving data', () => {
+    // No recorded version, so it cannot be a REPAIR — and every operator path
+    // is preserved, which is the whole point of getting this classification
+    // right rather than aborting.
+    const action = proceeding(
+      decideInstall(ready({ existingInstall: true, existingVersion: null, incomingVersion: '0.1.0' })),
+    );
+    expect(action.kind).toBe('UPGRADE');
+    expect(action.preserve).toEqual(PRESERVED_ON_UPGRADE);
+    expect(action.preserve).toContain('.env');
+    expect(action.preserve).toContain('server/uploads');
+    expect(action.preserve).toContain('backups');
   });
 });

@@ -68,6 +68,73 @@ export const RELEASE_PAYLOAD: readonly string[] = [
   'KasBackup.cmd',
 ];
 
+/* ------------------------------------------------------------------ */
+/* Recognising an existing Kas install                                 */
+/* ------------------------------------------------------------------ */
+
+/** The `name` field the repository's root package.json carries. */
+export const KAS_PACKAGE_NAME = 'hotel-booking-dispatch';
+
+/**
+ * What the installer found in the target directory.
+ *
+ * Gathered by the PowerShell script; judged here so the rule is tested and
+ * cannot drift between the two.
+ */
+export interface InstallMarkers {
+  /** `kas-release.json` — written by installs from Phase 6.3 onward. */
+  releaseMetadata: boolean;
+  /** The `name` in the target's root package.json, when it has one. */
+  packageName: string | null;
+  /** `server/dist/index.js` */
+  serverBuild: boolean;
+  /** `client/dist/index.html` */
+  clientBuild: boolean;
+  /** `prisma/schema.prisma` */
+  prismaSchema: boolean;
+  /** `Kas.cmd` */
+  launcher: boolean;
+  /** `.env` or `server/uploads` — the hotel's own data. */
+  operatorData: boolean;
+}
+
+/**
+ * Is this directory an existing Kas installation?
+ *
+ * WHY THIS IS NOT JUST "kas-release.json EXISTS". That file only appeared in
+ * Phase 6.3. An installation predating it is still unmistakably Kas — it has
+ * the built server, the built client, the Prisma schema and the hotel's own
+ * uploads — but the old check called it a foreign folder and refused to
+ * upgrade, which is precisely backwards: the one directory that must never be
+ * treated as a stranger is the one holding the hotel's data.
+ *
+ * THE RULE IS DELIBERATELY CONSERVATIVE, because the check it relaxes exists
+ * to stop an install into Documents or C:\ from later being uninstalled and
+ * taking the contents with it. Recognition needs either
+ *
+ *   - the release metadata, or
+ *   - a package.json that names this application, or
+ *   - TWO independent structural markers
+ *
+ * Two is the threshold because any single one can occur innocently: a stray
+ * `prisma/` folder, an unrelated `client/dist`. Two together, in one
+ * directory, do not.
+ */
+export function isKasInstallation(markers: InstallMarkers): boolean {
+  if (markers.releaseMetadata) return true;
+  if (markers.packageName === KAS_PACKAGE_NAME) return true;
+
+  const structural = [
+    markers.serverBuild,
+    markers.clientBuild,
+    markers.prismaSchema,
+    markers.launcher,
+    markers.operatorData,
+  ].filter(Boolean).length;
+
+  return structural >= 2;
+}
+
 export type InstallKind =
   /** Nothing installed at the target yet. */
   | 'FRESH'
