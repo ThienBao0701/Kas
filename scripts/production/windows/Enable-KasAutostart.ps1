@@ -85,28 +85,75 @@ if ($WhatIfOnly) {
 }
 
 # --- Register -----------------------------------------------------------------
-# The exit code is the answer; stderr is left alone. On PowerShell 5.1
-# redirecting a native command's stderr wraps each line in an ErrorRecord and,
-# under $ErrorActionPreference = 'Stop', aborts the script — schtasks writes to
-# stderr for ordinary conditions, so that path is hit routinely.
+#
+# Registered through the ScheduledTasks module, not schtasks.exe.
+#
+# WHAT WENT WRONG WITH schtasks.exe. The intention was to lift the default
+# 72-hour execution limit, which would otherwise stop a healthy server every
+# three days, and `/Change /ET` read like the way to say it. It is not. `/ET`
+# sets the TRIGGER'S END BOUNDARY - the moment after which the trigger stops
+# firing at all - so
+#
+#     schtasks /Change /TN 'Kas Backup' /ET 02:00
+#
+# asked Windows for a trigger that begins at 22:00 today and expires at 02:00
+# today, sixteen hours earlier. Windows said so, exactly:
+#
+#     ERROR: The task XML contains a value which is incorrectly formatted or
+#     out of range.
+#     (11,42):EndBoundary:2026-08-06T02:00:00
+#
+# Reproduced on this machine before the fix was written. The limit that was
+# actually wanted is ExecutionTimeLimit, which schtasks.exe cannot set from the
+# command line under any spelling - which is why the wrong knob got turned.
+#
+# `/Change` has a second disqualifying habit: it prompts on stdin for the run-as
+# password. In an unattended installer that is not an error, it is a hang.
 $previousPreference = $ErrorActionPreference
-$ErrorActionPreference = 'Continue'
+$ErrorActionPreference = 'Stop'
 $failed = $false
 
-try {
-    # /F replaces an existing registration, which is what makes this safe to
-    # re-run after an upgrade moved the install.
-    schtasks.exe /Create /TN 'Kas' /TR "`"$serviceCmd`"" /SC ONSTART /RU SYSTEM /RL HIGHEST /F | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "schtasks (Kas) tra ve ma $LASTEXITCODE" }
-    # The default 72-hour limit would stop a healthy server every three days.
-    schtasks.exe /Change /TN 'Kas' /ET 00:00 | Out-Null
-    Write-Host '  [OK] Kas          - khoi dong cung Windows' -ForegroundColor Green
+function Register-KasTask {
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$Command,
+        [Parameter(Mandatory)][string]$WorkingDirectory,
+        [Parameter(Mandatory)][object]$Trigger,
+        # [TimeSpan]::Zero means no limit. Anything else is a kill deadline.
+        [Parameter(Mandatory)][timespan]$TimeLimit
+    )
 
-    schtasks.exe /Create /TN 'Kas Backup' /TR "`"$backupCmd`"" /SC DAILY /ST 22:00 /RU SYSTEM /RL HIGHEST /F | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "schtasks (Kas Backup) tra ve ma $LASTEXITCODE" }
-    # Two hours is far longer than a backup takes; it stops an overrun from
-    # overlapping the next night's run.
-    schtasks.exe /Change /TN 'Kas Backup' /ET 02:00 | Out-Null
+    $action = New-ScheduledTaskAction -Execute $Command -WorkingDirectory $WorkingDirectory
+    # ServiceAccount is the logon type SYSTEM requires; RunLevel Highest is what
+    # /RL HIGHEST said before.
+    $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+    $settings = New-ScheduledTaskSettingsSet `
+        -ExecutionTimeLimit $TimeLimit `
+        -MultipleInstances IgnoreNew `
+        -AllowStartIfOnBatteries `
+        -DontStopIfGoingOnBatteries `
+        -StartWhenAvailable
+    # -Force replaces an existing registration, which is what makes this safe to
+    # re-run after an upgrade moved the install.
+    Register-ScheduledTask -TaskName $Name -Action $action -Trigger $Trigger `
+        -Principal $principal -Settings $settings -Force | Out-Null
+}
+
+try {
+    # A boot trigger fires while Windows is still starting its services. Thirty
+    # seconds lets PostgreSQL get as far as accepting connections, so the first
+    # attempt is a start rather than a restart.
+    $bootTrigger = New-ScheduledTaskTrigger -AtStartup
+    $bootTrigger.Delay = 'PT30S'
+    Register-KasTask -Name 'Kas' -Command $serviceCmd -WorkingDirectory $InstallDir `
+        -Trigger $bootTrigger -TimeLimit ([TimeSpan]::Zero)
+    Write-Host '  [OK] Kas          - khoi dong cung Windows (khong gioi han thoi gian chay)' -ForegroundColor Green
+
+    # Two hours is far longer than a backup takes. Here it means what /ET 02:00
+    # was mistakenly asked to mean: stop an overrun before it can overlap the
+    # next night's run.
+    Register-KasTask -Name 'Kas Backup' -Command $backupCmd -WorkingDirectory $InstallDir `
+        -Trigger (New-ScheduledTaskTrigger -Daily -At '22:00') -TimeLimit (New-TimeSpan -Hours 2)
     Write-Host '  [OK] Kas Backup   - sao luu hang ngay 22:00' -ForegroundColor Green
 } catch {
     $failed = $true
@@ -118,15 +165,26 @@ try {
 if ($failed) { exit 1 }
 
 # --- Prove it -----------------------------------------------------------------
+#
+# Read back from Windows rather than trusting that the call returned. The
+# previous version reported [OK] on a task whose /Change had just been rejected,
+# because only the /Create exit code was ever examined.
 Write-Host ''
 Write-Host '  Kiem tra lai:' -ForegroundColor Cyan
-$ErrorActionPreference = 'Continue'
 foreach ($task in 'Kas', 'Kas Backup') {
-    schtasks.exe /Query /TN $task | Out-Null
-    $state = if ($LASTEXITCODE -eq 0) { 'da dang ky' } else { 'KHONG THAY' }
-    Write-Host ("    {0,-12} {1}" -f $task, $state)
+    $registered = Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue
+    if ($null -eq $registered) {
+        Write-Host ("    {0,-12} KHONG THAY" -f $task) -ForegroundColor Red
+        $failed = $true
+        continue
+    }
+    $limit = $registered.Settings.ExecutionTimeLimit
+    $when = ($registered.Triggers | ForEach-Object { $_.CimClass.CimClassName }) -join ','
+    Write-Host ("    {0,-12} da dang ky  [{1}]  gioi han: {2}  chay duoi: {3}" -f `
+        $task, $when, $limit, $registered.Principal.UserId)
 }
-$ErrorActionPreference = $previousPreference
+
+if ($failed) { exit 1 }
 
 Write-Host ''
 Write-Host '  Xong. Kas se tu chay sau lan khoi dong may tiep theo.' -ForegroundColor Green

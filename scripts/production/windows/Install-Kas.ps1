@@ -390,7 +390,6 @@ Write-Log '  da tao loi tat Desktop va Start Menu'
 # Registration needs Administrator (it runs as SYSTEM). A per-user install
 # without elevation is still fully usable - the desktop shortcut starts Kas -
 # so a failure here is reported and the install continues.
-$serviceCmd = Join-Path $InstallDir 'KasService.cmd'
 $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
     [Security.Principal.WindowsBuiltInRole]::Administrator)
 
@@ -399,26 +398,24 @@ if (-not $isAdmin) {
     Write-Log '    de bat sau: mo PowerShell (Administrator) va chay lai trinh cai dat' 'Yellow'
 } else {
     try {
-        # /F replaces an existing task, which is what makes an upgrade repoint
-        # the task at the new payload instead of failing on "already exists".
-        $null = schtasks.exe /Create /TN 'Kas' /TR "`"$serviceCmd`"" /SC ONSTART /RU SYSTEM /RL HIGHEST /F
-        if ($LASTEXITCODE -ne 0) { throw "schtasks tra ve ma $LASTEXITCODE" }
+        # ONE implementation of the registration, called from both places that
+        # need it. It used to be written out twice - here and in
+        # Enable-KasAutostart.ps1 - and both copies carried the same wrong
+        # `schtasks /Change /ET` line, which is the shape this class of bug
+        # always takes. The rejected-XML story is documented in that script.
+        #
+        # Nightly backup is registered in the same call. It is a separate task
+        # from the runner on purpose: a backup that fails must never be able to
+        # stop the application, and a restart of the application must never skip
+        # a backup.
+        $autostart = Join-Path $PSScriptRoot 'Enable-KasAutostart.ps1'
+        if (-not (Test-Path $autostart)) { throw "khong tim thay $autostart" }
 
-        # The default 72-hour execution limit would stop a healthy server every
-        # three days at whatever hour it happened to start.
-        $null = schtasks.exe /Change /TN 'Kas' /ET 00:00 2>$null
+        & $autostart -InstallDir $InstallDir
+        if ($LASTEXITCODE -ne 0) { throw "Enable-KasAutostart tra ve ma $LASTEXITCODE" }
+
         Write-Log '  da dang ky khoi dong cung Windows (Scheduled Task "Kas")'
         Write-Log '    tat an toan:  KasService.cmd stop'
-
-        # Nightly backup at 22:00. Separate task from the runner on purpose: a
-        # backup that fails must never be able to stop the application, and a
-        # restart of the application must never skip a backup.
-        $backupCmd = Join-Path $InstallDir 'KasBackup.cmd'
-        $null = schtasks.exe /Create /TN 'Kas Backup' /TR "`"$backupCmd`"" /SC DAILY /ST 22:00 /RU SYSTEM /RL HIGHEST /F
-        if ($LASTEXITCODE -ne 0) { throw "schtasks (backup) tra ve ma $LASTEXITCODE" }
-        # Two hours is far longer than a backup takes; it exists so an overrun
-        # is stopped rather than left to overlap the next night's run.
-        $null = schtasks.exe /Change /TN 'Kas Backup' /ET 02:00 2>$null
         Write-Log '  da dang ky sao luu hang ngay 22:00 (Scheduled Task "Kas Backup")'
         Write-Log '    sao luu ngay:  KasBackup.cmd'
     } catch {

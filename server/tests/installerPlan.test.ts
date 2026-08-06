@@ -636,3 +636,68 @@ describe('the packager ships what a deployment needs', () => {
     expect(scripts.release).toContain('Package-Kas.ps1');
   });
 });
+
+/* ================================================================== */
+/* Scheduled task registration                                         */
+/* ================================================================== */
+describe('the autostart tasks are registered with a command that Windows accepts', () => {
+  const windows = (name: string): string =>
+    fs.readFileSync(
+      path.resolve(__dirname, '..', '..', 'scripts', 'production', 'windows', name),
+      'utf8',
+    );
+
+  /** Comments explain the bug by quoting it; only real statements are pinned. */
+  const statements = (text: string): string =>
+    text
+      .split(/\r?\n/)
+      .filter((line) => !line.trimStart().startsWith('#'))
+      .join('\n');
+
+  const autostart = windows('Enable-KasAutostart.ps1');
+  const installer = windows('Install-Kas.ps1');
+
+  it('never calls schtasks /Change /ET, which registration died on', () => {
+    // `/ET` is the TRIGGER'S END BOUNDARY, not the execution time limit it was
+    // reached for. `schtasks /Change /TN 'Kas Backup' /ET 02:00` asked for a
+    // trigger starting at 22:00 and expiring at 02:00 the same day, and Windows
+    // answered:
+    //
+    //   ERROR: The task XML contains a value which is incorrectly formatted or
+    //   out of range.
+    //   (11,42):EndBoundary:2026-08-06T02:00:00
+    //
+    // Reproduced on a live machine. The registration failed and the backup task
+    // was never created.
+    for (const script of [statements(autostart), statements(installer)]) {
+      expect(script).not.toMatch(/schtasks[^\n]*\/ET\b/);
+    }
+  });
+
+  it('sets the execution limit where it can actually be named', () => {
+    // ExecutionTimeLimit cannot be set from the schtasks command line under any
+    // spelling — which is why the wrong knob got turned. PT0S is "no limit",
+    // and without it the default PT72H stops a healthy server every three days.
+    expect(autostart).toContain('Register-ScheduledTask');
+    expect(autostart).toContain('-ExecutionTimeLimit');
+    expect(autostart).toMatch(/TimeSpan\]::Zero/);
+  });
+
+  it('runs both tasks as SYSTEM, so they start before anyone logs in', () => {
+    expect(autostart).toMatch(/-UserId 'SYSTEM'/);
+    expect(autostart).toContain('-LogonType ServiceAccount');
+  });
+
+  it('registers from ONE place — the installer delegates instead of copying', () => {
+    // The bug existed twice because the registration was written twice. The
+    // installer must call the script, not restate it.
+    expect(installer).toContain('Enable-KasAutostart.ps1');
+    expect(statements(installer)).not.toMatch(/schtasks[^\n]*\/Create/);
+  });
+
+  it('reads the tasks back from Windows instead of trusting the call', () => {
+    // The old code checked only the /Create exit code and printed [OK] over a
+    // /Change that Windows had just rejected.
+    expect(autostart).toContain('Get-ScheduledTask');
+  });
+});
