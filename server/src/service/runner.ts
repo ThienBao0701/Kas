@@ -43,6 +43,8 @@ import {
   MAX_LOG_BYTES,
   MAX_LOG_GENERATIONS,
   MAX_RESTARTS,
+  clientServingFault,
+  clientServingMessage,
   evaluateHealth,
   decideLock,
   fatalMessage,
@@ -625,6 +627,23 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
 
   const environment = await readEnvironment(port);
   for (const line of describeEnvironment(environment)) startupLine(`  ${line}`);
+
+  // Will this process actually serve the app it is about to start? Mirrors
+  // `serveClient` in config/env.ts, read from the .env dotenv just loaded.
+  const serveClientEnabled =
+    process.env.SERVE_CLIENT !== undefined
+      ? /^(1|true|yes|on)$/i.test(process.env.SERVE_CLIENT.trim())
+      : process.env.NODE_ENV === 'production';
+  startupLine(`  Phục vụ giao diện: ${serveClientEnabled ? 'có' : 'KHÔNG'}`);
+
+  const servingFault = clientServingFault(mode, environment.clientBuildPresent, serveClientEnabled);
+  if (servingFault === 'FATAL') {
+    // Refused rather than started. A production service that answers /api and
+    // 404s the application is the failure this whole incident was.
+    fault(clientServingMessage(servingFault));
+    return 1;
+  }
+  if (servingFault === 'WARNING') startupLine(clientServingMessage(servingFault));
 
   // Single instance, before anything is started or written.
   const lockDecision = decideLock({

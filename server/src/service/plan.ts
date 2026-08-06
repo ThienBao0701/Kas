@@ -187,6 +187,52 @@ export function decideLock(state: LockState): LockDecision {
   return { kind: 'ALREADY_STARTING' };
 }
 
+/* ------------------------------------------------------------------ */
+/* Will this runtime actually serve the app?                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The build is on disk, but will the process serve it?
+ *
+ * `serveClient` is `SERVE_CLIENT ?? isProduction`, so a machine whose .env says
+ * `NODE_ENV=development` starts a server that mounts no static files at all:
+ * index.html, manifest.webmanifest, sw.js and /assets/* every one a 404, while
+ * /api answers perfectly. The application looks alive from every angle anyone
+ * normally checks.
+ *
+ * That combination ran a hotel for an entire deployment. The build was present
+ * the whole time — nothing ever asked Express to serve it.
+ *
+ * FATAL IN SERVICE MODE. KasService.cmd is the production entry point; a
+ * production service that cannot serve the application is not a degraded
+ * start, it is a failed one, and failing loudly at boot is far cheaper than
+ * discovering it from a receptionist who cannot install the app.
+ *
+ * A WARNING interactively, because that is also how a developer runs a
+ * checkout, and refusing there would break a legitimate way to work.
+ */
+export function clientServingFault(
+  mode: RunMode,
+  clientBuildPresent: boolean,
+  serveClientEnabled: boolean,
+): 'FATAL' | 'WARNING' | null {
+  // Nothing to serve is a different problem, already reported by the build check.
+  if (!clientBuildPresent || serveClientEnabled) return null;
+  return mode === 'SERVICE' ? 'FATAL' : 'WARNING';
+}
+
+/** What to tell the operator, naming the two lines that fix it. */
+export function clientServingMessage(fault: 'FATAL' | 'WARNING'): string {
+  const cause =
+    'Giao diện đã build nhưng tiến trình này KHÔNG phục vụ nó: ' +
+    'manifest.webmanifest, sw.js và /assets đều sẽ trả 404 (API vẫn chạy bình thường). ' +
+    'Nguyên nhân: .env đang đặt NODE_ENV=development và không đặt SERVE_CLIENT.';
+  const remedy = 'Hãy thêm vào .env:  NODE_ENV=production  và  SERVE_CLIENT=true';
+  return fault === 'FATAL'
+    ? `KHÔNG THỂ KHỞI ĐỘNG DỊCH VỤ. ${cause} ${remedy}`
+    : `CẢNH BÁO: ${cause} ${remedy}`;
+}
+
 /** What to tell the operator when a second copy was launched. */
 export function lockMessage(decision: LockDecision): string {
   switch (decision.kind) {

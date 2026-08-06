@@ -18,6 +18,8 @@ import {
   MAX_LOG_BYTES,
   MAX_LOG_GENERATIONS,
   MAX_RESTARTS,
+  clientServingFault,
+  clientServingMessage,
   MIN_FREE_DISK_BYTES,
   decideLock,
   evaluateHealth,
@@ -381,5 +383,49 @@ describe('production wording', () => {
   it('says which way it was started', () => {
     expect(startupBanner('SERVICE', 'production').join('\n')).toContain('dịch vụ nền');
     expect(startupBanner('INTERACTIVE', 'production').join('\n')).toContain('thủ công');
+  });
+});
+
+/* ================================================================== */
+/* 6.4.2 — a service that would not serve the app                      */
+/* ================================================================== */
+describe('starting a runtime that cannot serve the client', () => {
+  it('is FATAL in service mode', () => {
+    // KasService.cmd is the production entry point. A production service that
+    // answers /api and 404s index.html, the manifest and every asset is not a
+    // degraded start — it is the exact failure that ran a hotel for a whole
+    // deployment with nobody able to install the app.
+    expect(clientServingFault('SERVICE', true, false)).toBe('FATAL');
+  });
+
+  it('is only a warning interactively', () => {
+    // Kas.cmd is also how a developer runs a checkout, where NODE_ENV is
+    // legitimately development. Refusing there would break a real workflow.
+    expect(clientServingFault('INTERACTIVE', true, false)).toBe('WARNING');
+  });
+
+  it('says nothing when the client will be served', () => {
+    for (const mode of ['SERVICE', 'INTERACTIVE'] as const) {
+      expect(clientServingFault(mode, true, true), mode).toBeNull();
+    }
+  });
+
+  it('stays silent when there is no build to serve', () => {
+    // A missing build is a different fault with its own message; reporting
+    // both would send the operator down two paths for one problem.
+    expect(clientServingFault('SERVICE', false, false)).toBeNull();
+  });
+
+  it('names the symptom AND the two lines that fix it', () => {
+    const message = clientServingMessage('FATAL');
+    expect(message).toContain('404');
+    expect(message).toContain('API vẫn chạy');
+    expect(message).toContain('NODE_ENV=production');
+    expect(message).toContain('SERVE_CLIENT=true');
+  });
+
+  it('refuses out loud in service mode, advises interactively', () => {
+    expect(clientServingMessage('FATAL')).toContain('KHÔNG THỂ KHỞI ĐỘNG');
+    expect(clientServingMessage('WARNING')).toContain('CẢNH BÁO');
   });
 });
