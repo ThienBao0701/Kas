@@ -66,6 +66,12 @@ export const RELEASE_PAYLOAD: readonly string[] = [
   'KasService.cmd',
   // The nightly backup entry point. Application code, same reasoning.
   'KasBackup.cmd',
+  // The recovery path for an install made without Administrator, where task
+  // registration was skipped. It must live in the INSTALL directory, not only
+  // in the release folder — the release folder gets deleted, and then the one
+  // script that fixes "Kas does not come back after a reboot" is gone with it.
+  'Enable-KasAutostart.cmd',
+  'Enable-KasAutostart.ps1',
 ];
 
 /* ------------------------------------------------------------------ */

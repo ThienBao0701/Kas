@@ -160,7 +160,9 @@ $payloadComplete = $true
 # Package-Kas.ps1. Three lists of the same thing is two too many, but the two
 # PowerShell ones cannot import the TypeScript one; a test asserts the packager
 # matches, and this list is what refuses an incomplete release.
-foreach ($item in 'server\dist', 'client\dist', 'prisma', 'node_modules', 'package.json', 'Kas.cmd', 'KasService.cmd', 'KasBackup.cmd') {
+foreach ($item in 'server\dist', 'client\dist', 'prisma', 'node_modules', 'package.json',
+                  'Kas.cmd', 'KasService.cmd', 'KasBackup.cmd',
+                  'Enable-KasAutostart.cmd', 'Enable-KasAutostart.ps1') {
     if (-not (Test-Path (Join-Path $ReleaseRoot $item))) { $payloadComplete = $false }
 }
 
@@ -291,7 +293,9 @@ foreach ($item in 'server\dist', 'client\dist', 'prisma', 'node_modules') {
 # They were absent here, so an elevated install registered tasks referencing
 # files that had never been copied — no boot start and no nightly backup, with
 # nothing failing until the machine was next restarted.
-foreach ($item in 'package.json', 'Kas.cmd', 'KasService.cmd', 'KasBackup.cmd', 'kas-release.json', 'server\package.json') {
+foreach ($item in 'package.json', 'Kas.cmd', 'KasService.cmd', 'KasBackup.cmd',
+                  'Enable-KasAutostart.cmd', 'Enable-KasAutostart.ps1',
+                  'kas-release.json', 'server\package.json') {
     $source = Join-Path $ReleaseRoot $item
     if (Test-Path $source) { Copy-Item $source (Join-Path $InstallDir $item) -Force }
 }

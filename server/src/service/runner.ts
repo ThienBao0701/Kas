@@ -506,8 +506,25 @@ async function reportHealth(port: number): Promise<number> {
  * PASS, 1 for WARNING, 2 for FAIL.
  */
 async function reportDiagnosis(port: number): Promise<number> {
-  const { diagnose, writeDeploymentReport } = await import('../production/diagnose');
-  const { formatReport } = await import('../production/deploymentCheck');
+  const { formatReport, unconfiguredReport } = await import('../production/deploymentCheck');
+
+  // Loading diagnose.ts pulls in config/env, which THROWS when .env is still
+  // the installer's template. Left uncaught that surfaced as a bare "Lỗi không
+  // mong đợi" at the end of every fresh install — the diagnostic failing in the
+  // one situation it exists for. The loader's message names the offending
+  // variables, so it is reported as the FAIL it is.
+  const loaded = await import('../production/diagnose').catch((error: unknown) => {
+    const message = (error as Error).message ?? String(error);
+    // Only the configuration failure is reported as one. Anything else — a
+    // missing build, a corrupt file — is rethrown to the top-level handler,
+    // which writes the stack to error.log. Mislabelling a broken install as a
+    // .env problem would send the operator to edit a file that is fine.
+    if (!message.startsWith('Invalid environment configuration')) throw error;
+    say(unconfiguredReport(message));
+    return null;
+  });
+  if (loaded === null) return 2;
+  const { diagnose, writeDeploymentReport } = loaded;
 
   const diagnosis = await diagnose({ port, root: ROOT });
   say(formatReport(diagnosis.report, diagnosis.version));

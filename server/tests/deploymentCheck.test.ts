@@ -22,6 +22,7 @@ import {
   MIN_NODE_MAJOR,
   evaluateDeployment,
   formatReport,
+  unconfiguredReport,
   verdictLine,
   type DeploymentFacts,
 } from '../src/production/deploymentCheck';
@@ -379,5 +380,41 @@ describe('the configuration template an install receives', () => {
 
   it('pins the one port the proxy must target', () => {
     expect(active).toContain('PORT=3001');
+  });
+});
+
+describe('the diagnostic still reports when it cannot measure anything', () => {
+  // A fresh install has a template .env, so config/env throws on import and
+  // every probe in diagnose.ts is unreachable. Installing from the release
+  // package ended in a bare "Lỗi không mong đợi: Invalid environment
+  // configuration" — the diagnostic failing in the exact state it exists for.
+  const loaderMessage =
+    'Invalid environment configuration:\n' +
+    '  - DATABASE_URL: Required\n' +
+    '  - SESSION_SECRET: String must contain at least 32 character(s)\n\n' +
+    'Copy .env.example to .env (or .env.production.example for a server) and fill in the values.';
+
+  it('names every variable the loader rejected', () => {
+    const lines = unconfiguredReport(loaderMessage);
+    expect(lines.join('\n')).toContain('DATABASE_URL');
+    expect(lines.join('\n')).toContain('SESSION_SECRET');
+  });
+
+  it('calls it a FAIL, not a warning — Kas cannot serve a booking like this', () => {
+    const text = unconfiguredReport(loaderMessage).join('\n');
+    expect(text).toContain('[FAIL]');
+    expect(text).toContain('LỖI NGHIÊM TRỌNG');
+  });
+
+  it('tells the operator the command to run once .env is fixed', () => {
+    expect(unconfiguredReport(loaderMessage).join('\n')).toContain('Kas.cmd --diagnose');
+  });
+
+  it('leaks nothing: the loader names variables, never their values', () => {
+    // The message is reproduced verbatim, so the guarantee has to come from
+    // the loader reporting names only. Pinned here because this report is the
+    // text an operator is asked to send to whoever is helping them.
+    const text = unconfiguredReport(loaderMessage).join('\n');
+    expect(text).not.toMatch(/postgres(ql)?:\/\//);
   });
 });

@@ -603,3 +603,36 @@ describe('recognising an existing Kas installation', () => {
     expect(action.preserve).toContain('backups');
   });
 });
+
+/* ================================================================== */
+/* The release ships the autostart helper                              */
+/* ================================================================== */
+describe('the packager ships what a deployment needs', () => {
+  const packager = fs.readFileSync(
+    path.resolve(__dirname, '..', '..', 'scripts', 'production', 'windows', 'Package-Kas.ps1'),
+    'utf8',
+  );
+
+  it('includes the autostart script an operator runs after a non-elevated install', () => {
+    // The installer skips task registration without Administrator, so this is
+    // the recovery path. A release without it leaves the operator with a
+    // machine that never starts Kas after a reboot and nothing to run.
+    expect(packager).toContain('Enable-KasAutostart.ps1');
+    expect(packager).toContain('Enable-KasAutostart.cmd');
+  });
+
+  it('puts the .cmd at the top of the release, not in a subfolder', () => {
+    // Something you have to go looking for in a subfolder is something that
+    // does not get run.
+    expect(packager).toMatch(/Enable-KasAutostart\.cmd'\)\s*\(Join-Path \$stage/);
+  });
+
+  it('is reachable through one documented npm command', () => {
+    const scripts = (
+      JSON.parse(
+        fs.readFileSync(path.resolve(__dirname, '..', '..', 'package.json'), 'utf8'),
+      ) as { scripts: Record<string, string> }
+    ).scripts;
+    expect(scripts.release).toContain('Package-Kas.ps1');
+  });
+});

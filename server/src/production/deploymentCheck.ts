@@ -318,3 +318,31 @@ export function formatReport(report: DeploymentReport, version: VersionInfo): st
   lines.push('', verdictLine(report));
   return lines;
 }
+
+/**
+ * The report for the one case where nothing can be measured at all.
+ *
+ * Every probe in diagnose.ts needs the configuration — upload paths, backup
+ * path, the database URL — so when `.env` has not been filled in, the module
+ * cannot even load and there are no facts to judge. That is exactly the state a
+ * machine is in one second after a fresh install, which is precisely when an
+ * operator runs the diagnostic, and until this existed they got an unhandled
+ * "Lỗi không mong đợi" and no idea which line of .env was wrong.
+ *
+ * `detail` is the loader's own message, which already names every failing
+ * variable. It is reproduced verbatim rather than summarised: the loader knows
+ * what it rejected and a second wording of it would eventually disagree.
+ */
+export function unconfiguredReport(detail: string): string[] {
+  return [
+    '===============================================',
+    '  Kas — chẩn đoán hệ thống',
+    '===============================================',
+    '',
+    '[FAIL] cấu hình      Chưa cấu hình xong .env — không thể kiểm tra phần còn lại.',
+    '',
+    ...detail.split('\n'),
+    '',
+    'KẾT LUẬN: LỖI NGHIÊM TRỌNG. Sửa .env rồi chạy lại:  Kas.cmd --diagnose',
+  ];
+}

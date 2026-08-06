@@ -151,9 +151,16 @@ if ($BundleNode) {
 # --- 6. Installer ----------------------------------------------------------
 $installerDir = Join-Path $stage 'installer'
 New-Item -ItemType Directory -Path $installerDir -Force | Out-Null
-foreach ($script in 'Install-Kas.ps1', 'Uninstall-Kas.ps1') {
+foreach ($script in 'Install-Kas.ps1', 'Uninstall-Kas.ps1', 'Enable-KasAutostart.ps1') {
     Copy-Item (Join-Path $PSScriptRoot $script) (Join-Path $installerDir $script) -Force
 }
+
+# The autostart helper sits at the TOP of the release, not inside installer\,
+# because it is the one thing an operator runs by hand after a non-elevated
+# install — and something you have to go looking for in a subfolder is
+# something that does not get run.
+Copy-Item (Join-Path $PSScriptRoot 'Enable-KasAutostart.cmd') (Join-Path $stage 'Enable-KasAutostart.cmd') -Force
+Copy-Item (Join-Path $PSScriptRoot 'Enable-KasAutostart.ps1') (Join-Path $stage 'Enable-KasAutostart.ps1') -Force
 Copy-Item (Join-Path $PSScriptRoot 'Install-Kas.cmd') (Join-Path $stage 'Install-Kas.cmd') -Force
 
 # Records the version so an upgrade can tell what it is replacing, and the
