@@ -52,6 +52,17 @@ export interface DeploymentFacts {
   healthOk: boolean;
   /** The app answered at all, even a 503. */
   healthAnswered: boolean;
+  /**
+   * Whether the origin is serving the BUILT client rather than a dev server.
+   *
+   * Null when it could not be asked (nothing is running). This exists because
+   * an entire deployment once ran on the Vite dev server: everything worked,
+   * because Vite proxies /api to the real backend, but the built manifest and
+   * service worker were never served and the app was permanently
+   * uninstallable. Health was 200 throughout. Nothing else here would have
+   * caught it.
+   */
+  servedClientIsBuild: boolean | null;
   /** Newest complete backup, ISO. Null when none exists. */
   lastBackupAt: string | null;
   /** Last line recorded in verification.log, if any. */
@@ -189,6 +200,24 @@ export function evaluateDeployment(facts: DeploymentFacts, now: Date = new Date(
         : facts.portInUse
           ? fail('health', `Cổng ${facts.port} đang bị chiếm nhưng không phải Kas.`)
           : warn('health', 'Kas hiện không chạy.'),
+  );
+
+  // --- Is the thing on the port the PRODUCTION build? ----------------------
+  //
+  // A FAIL, not a warning. The application is fully usable in this state —
+  // which is exactly what makes it dangerous: it looks correct from every
+  // other angle, and the only symptom is that nobody can install the app.
+  checks.push(
+    facts.servedClientIsBuild === null
+      ? warn('servedClient', 'Không kiểm tra được bản giao diện đang phục vụ (Kas chưa chạy).')
+      : facts.servedClientIsBuild
+        ? pass('servedClient', 'Đang phục vụ bản build production (có manifest.webmanifest).')
+        : fail(
+            'servedClient',
+            'Địa chỉ này đang phục vụ MÁY CHỦ DEV, không phải bản build. ' +
+              'Ứng dụng vẫn chạy nhưng KHÔNG cài được (không có manifest/service worker). ' +
+              'Hãy dừng `npm run dev`, trỏ tunnel/proxy vào cổng 3001 và khởi động bằng KasService.cmd.',
+          ),
   );
 
   // --- Windows integration ------------------------------------------------

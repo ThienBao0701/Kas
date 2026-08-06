@@ -45,6 +45,7 @@ const healthy = (over: Partial<DeploymentFacts> = {}): DeploymentFacts => ({
   portInUse: true,
   healthOk: true,
   healthAnswered: true,
+  servedClientIsBuild: true,
   lastBackupAt: '2026-08-05T21:00:00.000Z',
   lastVerification: 'OK backup-20260805T2100',
   port: 3001,
@@ -83,6 +84,7 @@ describe('a correct deployment', () => {
       'migrations',
       'serverBuild',
       'clientBuild',
+      'servedClient',
       'uploads',
       'logs',
       'backups',
@@ -264,5 +266,46 @@ describe('the printed report', () => {
     const lines = formatReport(evaluateDeployment(facts, NOW), VERSION).join('\n');
     expect(lines).not.toContain('postgresql://');
     expect(lines).not.toMatch(/:\/\/[^\s]*:[^\s]*@/);
+  });
+});
+
+/* ================================================================== */
+/* 6.4.2 — production running the DEVELOPMENT server                   */
+/* ================================================================== */
+describe('the client the origin actually serves', () => {
+  it('fails when a dev server is answering instead of the build', () => {
+    // THE PRODUCTION FAULT THIS EXISTS TO CATCH. The tunnel pointed at Vite on
+    // 5173, Vite proxied /api to the real backend, and everything worked —
+    // logins, dispatch, bookings. Health was 200 throughout. The only casualty
+    // was that no manifest and no service worker were ever served, so the app
+    // could not be installed and nothing said why.
+    const result = check(healthy({ servedClientIsBuild: false }), 'servedClient');
+    expect(result?.severity).toBe('FAIL');
+  });
+
+  it('names the remedy, not just the fault', () => {
+    const detail = check(healthy({ servedClientIsBuild: false }), 'servedClient')?.detail ?? '';
+    expect(detail).toContain('npm run dev');
+    expect(detail).toContain('3001');
+    expect(detail).toContain('KasService.cmd');
+  });
+
+  it('explains that the app still works, which is what hid it', () => {
+    const detail = check(healthy({ servedClientIsBuild: false }), 'servedClient')?.detail ?? '';
+    expect(detail).toContain('vẫn chạy');
+    expect(detail).toContain('KHÔNG cài được');
+  });
+
+  it('passes when the built manifest is being served', () => {
+    expect(check(healthy({ servedClientIsBuild: true }), 'servedClient')?.severity).toBe('PASS');
+  });
+
+  it('warns rather than fails when nothing is running to ask', () => {
+    // Not the same as a No. Kas being down is reported by the health check.
+    expect(check(healthy({ servedClientIsBuild: null }), 'servedClient')?.severity).toBe('WARNING');
+  });
+
+  it('makes the whole report FAIL, so it cannot be scrolled past', () => {
+    expect(evaluateDeployment(healthy({ servedClientIsBuild: false }), NOW).overall).toBe('FAIL');
   });
 });

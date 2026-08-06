@@ -56,8 +56,25 @@ describe('vite.config.ts — file encoding', () => {
 });
 
 describe('vite.config.ts — dev server', () => {
-  it('allows the operator tunnel hostname', () => {
-    expect(cfg.server?.allowedHosts).toContain('kasbookingapp.com');
+  it('does NOT allow the production hostname', () => {
+    // THIS TEST USED TO ASSERT THE OPPOSITE, and that is why it is worth
+    // reading. It pinned `allowedHosts: ['kasbookingapp.com']` so the dev
+    // server would answer the operator's tunnel — and the hotel then ran an
+    // entire deployment on that dev server. It worked: Vite proxies /api to
+    // the real backend, so logins, dispatch and bookings were all fine. The
+    // only casualty was that /manifest.webmanifest and /sw.js came back as
+    // HTML, so the app could never be installed and nothing said why.
+    //
+    // With the hostname absent, Vite refuses the tunnel outright — "Blocked
+    // request. This host is not allowed" — which turns a silent wrong-mode
+    // deployment into an immediate, obvious failure. Production is served by
+    // the backend on one origin, which is what KasService.cmd starts.
+    expect(cfg.server?.allowedHosts ?? []).not.toContain('kasbookingapp.com');
+  });
+
+  it('names no production hostname at all', () => {
+    // Any entry here is a hostname the DEVELOPMENT server will answer to.
+    expect(RAW_TEXT).not.toContain('allowedHosts');
   });
 
   it('still binds to all interfaces for LAN access', () => {

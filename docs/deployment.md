@@ -39,7 +39,23 @@ npm run build      # build cả server và client
 npm start          # chạy backend (mặc định cổng 3001), phục vụ luôn giao diện đã build
 ```
 
-Trong lúc phát triển có thể dùng:
+> **`npm run dev` KHÔNG BAO GIỜ dùng cho máy chủ thật.**
+>
+> Máy chủ dev (cổng 5173) phục vụ `/src/main.tsx` và `@vite/client`, **không**
+> phục vụ `manifest.webmanifest` hay service worker đã build. Ứng dụng vẫn chạy
+> bình thường — đăng nhập, điều phối, đặt phòng đều được, vì Vite chuyển tiếp
+> `/api` sang backend — nên **không có dấu hiệu gì cho thấy sai**. Triệu chứng
+> duy nhất là không cài được ứng dụng: không có nút cài, không có biểu tượng cài
+> trên thanh địa chỉ.
+>
+> Đây là lỗi đã xảy ra thật: tunnel trỏ vào cổng 5173 và cả bản triển khai chạy
+> ở chế độ phát triển. Máy chủ thật chỉ khởi động bằng `KasService.cmd` (hoặc
+> Scheduled Task "Kas"), phục vụ mọi thứ trên **một cổng duy nhất, 3001**.
+>
+> Kiểm tra bất cứ lúc nào: `Kas.cmd --diagnose` — mục `clientBuild` sẽ báo lỗi
+> nếu địa chỉ đang phục vụ bản dev thay vì bản build.
+
+Trong lúc phát triển (chỉ trên máy lập trình viên) có thể dùng:
 
 ```bash
 npm run dev        # backend :3001 + client dev :5173 (client proxy /api sang backend)

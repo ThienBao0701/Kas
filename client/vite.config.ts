@@ -102,8 +102,25 @@ export default defineConfig({
     // Bind to all interfaces so receptionist machines on the LAN can reach the
     // dev server; production is served same-origin by the backend.
     host: true,
-    // Reachable through the operator's tunnel hostname as well as the LAN.
-    allowedHosts: ['kasbookingapp.com'],
+    //
+    // THE PRODUCTION HOSTNAME IS DELIBERATELY NOT ALLOW-LISTED HERE.
+    //
+    // It used to be, "reachable through the operator's tunnel hostname as well
+    // as the LAN" — and that one line is how the hotel ran on the DEVELOPMENT
+    // server for an entire deployment. The tunnel pointed at 5173, Vite
+    // accepted the production hostname because it was listed here, and Vite's
+    // own /api proxy forwarded to the real backend. Everything worked:
+    // logins, dispatch, bookings. Nothing looked wrong.
+    //
+    // But a dev server serves /src/main.tsx and @vite/client, and never the
+    // built manifest or service worker, so the app was permanently
+    // uninstallable and nobody could see why — the symptom was a missing
+    // button, three layers away from the cause.
+    //
+    // Without this entry Vite refuses the tunnel outright with "Blocked
+    // request. This host is not allowed", which turns a silent wrong-mode
+    // deployment into an immediate, obvious failure. Production is served by
+    // the backend on one origin; that is what KasService.cmd starts.
     proxy: {
       '/api': {
         target: BACKEND_URL,

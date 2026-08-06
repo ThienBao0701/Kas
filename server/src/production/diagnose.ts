@@ -118,6 +118,38 @@ async function portInUse(port: number): Promise<boolean> {
   });
 }
 
+/**
+ * Is the origin serving the BUILT client, or a development server?
+ *
+ * Asked by fetching the one file that only exists in a build. A Vite dev server
+ * answers every unknown path with its index.html, so the reply comes back as
+ * HTML rather than JSON — which is precisely how an entire deployment ran in
+ * development mode without anyone noticing: the app worked, because Vite
+ * proxies /api to the real backend, and the only casualty was installability.
+ *
+ * Null means the question could not be asked, which is not the same as a No.
+ */
+export async function servedClientIsBuild(port: number): Promise<boolean | null> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3000);
+    const response = await fetch(`http://localhost:${port}/manifest.webmanifest`, {
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (!response.ok) return false;
+
+    const contentType = response.headers.get('content-type') ?? '';
+    if (contentType.includes('html')) return false;
+    // Content type alone is not enough — a static host may serve the file as
+    // octet-stream. The body is the evidence: a manifest is a JSON object.
+    const body = (await response.text()).trimStart();
+    return body.startsWith('{');
+  } catch {
+    return null;
+  }
+}
+
 /** When the newest COMPLETE backup was taken, from its own manifest. */
 async function lastBackupAt(backupRoot: string): Promise<string | null> {
   for (const name of await listBackups(backupRoot)) {
@@ -177,6 +209,8 @@ export async function gatherFacts(options: DiagnoseOptions = {}): Promise<Deploy
     portInUse: health !== null ? true : await portInUse(port),
     healthOk: health?.status === 200 && health.databaseOk,
     healthAnswered: health !== null,
+    // Only worth asking when something is actually answering the port.
+    servedClientIsBuild: health !== null ? await servedClientIsBuild(port) : null,
     lastBackupAt: await lastBackupAt(BACKUP_DIR),
     lastVerification: lastVerificationLine(path.join(root, 'logs')),
     port,
