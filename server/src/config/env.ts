@@ -268,7 +268,18 @@ const envSchema = z
 
     // Uploads and backups must live on persistent volumes, never inside the
     // disposable container filesystem.
-    for (const key of ['PROOF_UPLOAD_DIR', 'ISSUE_UPLOAD_DIR', 'BACKUP_DIR'] as const) {
+    //
+    // CHARGE_UPLOAD_DIR belongs here for a sharper reason than the others: a
+    // relative value resolves inside the application directory, which a release
+    // REPLACES. Charge documents are financial evidence, so a deployment would
+    // quietly destroy them — and nothing would report it, because writing them
+    // there succeeds. Refusing to boot is the only safe response.
+    for (const key of [
+      'PROOF_UPLOAD_DIR',
+      'ISSUE_UPLOAD_DIR',
+      'CHARGE_UPLOAD_DIR',
+      'BACKUP_DIR',
+    ] as const) {
       if (!path.isAbsolute(value[key])) {
         fail(key, `${key} must be an absolute path in production (a persistent volume)`);
       }

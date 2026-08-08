@@ -61,6 +61,7 @@ const PRODUCTION_ENV: NodeJS.ProcessEnv = {
   INITIAL_ADMIN_FULL_NAME: 'Quản trị viên',
   PROOF_UPLOAD_DIR: '/data/uploads/booking-proofs',
   ISSUE_UPLOAD_DIR: '/data/uploads/issue-photos',
+  CHARGE_UPLOAD_DIR: '/data/uploads/charge-documents',
   BACKUP_DIR: '/data/backups',
   ENABLE_DEV_TEST_TOOLS: 'false',
 };
@@ -132,6 +133,39 @@ describe('production configuration', () => {
       SESSION_SECRET: 'x'.repeat(20),
     });
     expect(dev.success).toBe(true);
+  });
+
+  it('1c. production refuses a RELATIVE upload or backup path, CHARGE_UPLOAD_DIR included', () => {
+    /*
+      A relative path resolves inside the application directory — which a
+      release REPLACES. For charge documents that is the sharpest case: they are
+      financial evidence, writing them there succeeds silently, and the next
+      deployment deletes them. Refusing to boot is the only safe response.
+    */
+    for (const key of [
+      'PROOF_UPLOAD_DIR',
+      'ISSUE_UPLOAD_DIR',
+      'CHARGE_UPLOAD_DIR',
+      'BACKUP_DIR',
+    ] as const) {
+      const relative = parseEnvironment(prod({ [key]: 'server/uploads/somewhere' }));
+      expect(relative.success, key).toBe(false);
+      expect(errorFor(relative, key), key).toContain('absolute path in production');
+    }
+
+    // The default is relative, so an omitted CHARGE_UPLOAD_DIR must be refused
+    // in production exactly as an explicitly relative one is. This is the case
+    // that actually occurs: a launcher that simply never sets the variable.
+    const omitted = prod();
+    delete omitted.CHARGE_UPLOAD_DIR;
+    const result = parseEnvironment(omitted);
+    expect(result.success).toBe(false);
+    expect(errorFor(result, 'CHARGE_UPLOAD_DIR')).toContain('absolute path in production');
+
+    // An absolute value is accepted, so the guard rejects the shape and not the
+    // variable itself.
+    expect(parseEnvironment(prod({ CHARGE_UPLOAD_DIR: 'C:\\KasData\\uploads\\charge-documents' })).success)
+      .toBe(true);
   });
 
   it('2. every required variable is named when missing, without echoing secrets', () => {
