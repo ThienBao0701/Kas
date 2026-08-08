@@ -20,6 +20,7 @@ import { ApiError, toUserMessage } from '../api/errors';
 import { formatDate, formatDateTime, formatFileSize, formatMoney } from '../lib/format';
 import { Card } from './Card';
 import { Button } from './Button';
+import { Input } from './Input';
 import { Modal } from './Modal';
 import { ErrorAlert } from './ErrorAlert';
 import { PaymentBadge } from './Badges';
@@ -73,21 +74,42 @@ export function ProofSection({
 /* Upload (receptionist)                                                       */
 /* -------------------------------------------------------------------------- */
 
+const CREATOR_NAME_REQUIRED = 'Vui lòng nhập tên người tạo đơn';
+
 function UploadCard({ booking: b, onChanged }: { booking: BookingDetail; onChanged?: (m: string) => void }) {
   const [file, setFile] = useState<File | null>(null);
-  const [note, setNote] = useState('');
+  const [creatorName, setCreatorName] = useState('');
+  const [nameError, setNameError] = useState<string | null>(null);
   const rejected = b.verificationStatus === 'REJECTED';
   const lastRejection = [...b.proofs].reverse().find((p) => p.status === 'REJECTED');
 
   const submit = useMutation({
-    mutationFn: () => bookingsApi.submitProof(b.id, file!, note),
+    // Carried on the existing optional `note` field — the request contract is
+    // unchanged, so nothing on the server had to move for this.
+    mutationFn: () => bookingsApi.submitProof(b.id, file!, creatorName.trim()),
     onSuccess: () => {
       // Only clear on success; a failure keeps the image so the user can retry.
       setFile(null);
-      setNote('');
+      setCreatorName('');
+      setNameError(null);
       onChanged?.('Đã gửi ảnh cho Admin kiểm tra.');
     },
   });
+
+  /**
+   * The creator's name is required, and it is checked HERE rather than by
+   * disabling the button. A disabled control explains nothing: a receptionist
+   * with an image attached and no name would see a dead button and no reason
+   * for it. Clicking tells them exactly which field is missing.
+   */
+  function handleSubmit() {
+    if (creatorName.trim().length === 0) {
+      setNameError(CREATOR_NAME_REQUIRED);
+      return;
+    }
+    setNameError(null);
+    submit.mutate();
+  }
 
   return (
     <Card className={`p-5 ${rejected ? 'border-red-200 bg-red-50/40' : 'border-brand-200 bg-brand-50/40'}`}>
@@ -120,20 +142,30 @@ function UploadCard({ booking: b, onChanged }: { booking: BookingDetail; onChang
 
       {submit.isError ? <div className="mt-3"><ErrorAlert>{toUserMessage(submit.error)}</ErrorAlert></div> : null}
 
-      <label className="mt-4 block text-sm font-medium text-slate-600">
-        Ghi chú cho Admin (không bắt buộc)
-        <textarea
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          rows={2}
+      {/*
+        Reuses the shared Input, which already carries this app's field-error
+        treatment: red border, aria-invalid, and the message wired to the field
+        by aria-describedby. Nothing bespoke to keep in step with the rest.
+      */}
+      <div className="mt-4">
+        <Input
+          label="Tên người tạo đơn"
+          value={creatorName}
+          onChange={(e) => {
+            setCreatorName(e.target.value);
+            // Clear as soon as they start fixing it — leaving the message up
+            // while they type reads as though it is still wrong.
+            if (nameError) setNameError(null);
+          }}
+          error={nameError ?? undefined}
           maxLength={1000}
-          className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
-          placeholder="Ví dụ: đã tạo trên hệ thống, mã nội bộ…"
+          disabled={submit.isPending}
+          placeholder="Ví dụ: Nguyễn Văn A"
         />
-      </label>
+      </div>
 
       <div className="mt-4">
-        <Button onClick={() => submit.mutate()} disabled={!file || submit.isPending} loading={submit.isPending}>
+        <Button onClick={handleSubmit} disabled={!file || submit.isPending} loading={submit.isPending}>
           <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
           {submit.isPending ? 'Đang gửi ảnh...' : 'Gửi Admin kiểm tra'}
         </Button>

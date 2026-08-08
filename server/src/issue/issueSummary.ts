@@ -10,10 +10,13 @@
  * branches with zero unresolved issues); a receptionist sees ONLY their own
  * branch, and can never widen the scope.
  */
-import type { Prisma } from '@prisma/client';
+import type { Prisma, UserRole } from '@prisma/client';
 import { prisma } from '../db/prisma';
 
-type Actor = { id: number; role: 'ADMIN' | 'RECEPTIONIST'; branchId: number | null; fullName: string };
+// The full role enum, not a two-member union: a new role must not silently fail
+// to compile here. Which roles are ALLOWED is decided by the checks below and
+// by branch scoping, never by narrowing this type.
+type Actor = { id: number; role: UserRole; branchId: number | null; fullName: string };
 
 export interface BranchIssueSummary {
   branchId: number;

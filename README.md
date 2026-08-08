@@ -17,19 +17,24 @@ npm install
 copy .env.example .env    # then edit .env (SESSION_SECRET, INITIAL_ADMIN_*)
 npm run db:migrate
 npm run db:seed
-npm run dev               # starts the backend (:3001) and the frontend (:5173) together
+npm run dev               # starts the backend (:3002) and the frontend (:5173) together
 ```
 
 Then open the frontend at **http://localhost:5173** and log in with the initial
-Admin from `.env`. The backend API runs on **http://localhost:3001**; in
+Admin from `.env`. The backend API runs on **http://localhost:3002**; in
 development the Vite dev server proxies `/api` to it, so the browser stays
 same-origin and the session cookie flows automatically.
+
+> **Development uses 3002, production uses 3001.** They are separate on purpose,
+> so both can run at the same time. If development is ever pointed back at 3001
+> and a production service is listening, the dev frontend will proxy `/api` into
+> the production backend and show live data behind a local-looking UI.
 
 To run the two servers separately:
 
 ```bash
-npm run dev -w server     # backend only, http://localhost:3001
-npm run dev -w client     # frontend only, http://localhost:5173 (proxies /api → :3001)
+npm run dev -w server     # backend only, http://localhost:3002
+npm run dev -w client     # frontend only, http://localhost:5173 (proxies /api → :3002)
 ```
 
 **Sessions & credentials:** authentication is a server-side session addressed by
@@ -120,7 +125,7 @@ copy .env.example .env    # then set SESSION_SECRET and INITIAL_ADMIN_*
 npm run db:migrate
 npm run db:seed
 npm run dev
-# POST http://localhost:3001/api/auth/login  { username, password }
+# POST http://localhost:3002/api/auth/login  { username, password }
 # -> then POST /api/auth/change-password to clear the forced change
 ```
 

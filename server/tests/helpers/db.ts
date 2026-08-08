@@ -29,11 +29,24 @@ export async function resetBookingData(): Promise<void> {
   await testPrisma.bookingGuest.deleteMany();
   await testPrisma.bookingNightPrice.deleteMany();
   await testPrisma.bookingRoom.deleteMany();
+  // A charge document may reference a Booking, so it goes before Booking. Its
+  // children are cascaded, but naming them keeps the reset working if a cascade
+  // is ever relaxed — and keeps the shape visible.
+  await testPrisma.chargeDocumentAudit.deleteMany();
+  await testPrisma.chargeDocumentAttachment.deleteMany();
+  await testPrisma.chargeDocument.deleteMany();
   await testPrisma.booking.deleteMany();
 }
 
 export async function resetAll(): Promise<void> {
   await resetBookingData();
+  // ChargeDocument holds RESTRICT FKs to Branch and User (a charge document is
+  // financial evidence — deleting a branch must not silently take it with it),
+  // so it is cleared before either. resetBookingData already did this; the
+  // repeat is harmless and keeps resetAll readable on its own.
+  await testPrisma.chargeDocumentAudit.deleteMany();
+  await testPrisma.chargeDocumentAttachment.deleteMany();
+  await testPrisma.chargeDocument.deleteMany();
   // HotelIssue holds RESTRICT FKs to User/Branch, so it must be cleared first.
   await testPrisma.hotelIssue.deleteMany();
   // Room-mapping rows reference both Branch and User; clear them before either.

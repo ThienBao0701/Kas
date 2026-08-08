@@ -311,7 +311,11 @@ export function buildOtaReview(input: BuildOtaReviewInput): OtaReview {
     blockingReasons.push('Còn hạng phòng chưa gán mã nội bộ.');
   }
   if (branchPrice == null) blockingReasons.push('Thiếu giá chi nhánh.');
-  if (paymentMode === 'CN' && guestBookedPrice == null) {
+  // Agoda only: its CN note prints GIÁ KHÁCH ĐẶT, so the figure is required to
+  // build one. CTrip's note prints the creation date in that position and never
+  // reads the guest-booked price, so demanding it would block a dispatch over a
+  // number that appears nowhere on the note.
+  if (input.source === 'AGODA' && paymentMode === 'CN' && guestBookedPrice == null) {
     blockingReasons.push('Thiếu giá khách đặt (bắt buộc khi thanh toán CN).');
   }
   if (!note.ok) blockingReasons.push(note.error);

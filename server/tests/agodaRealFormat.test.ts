@@ -471,7 +471,7 @@ describe('confirmed Agoda booking 1756192483', () => {
 
   it('produces the exact hotel-payment note', () => {
     const r = review(REAL, CN1, { paymentMode: 'HOTEL_PAYMENT' });
-    expect(r.note).toBe('AGD 1756192483_2SUP_2DEM 2.012.236 THANH TOÁN KHÁCH SẠN');
+    expect(r.note).toBe('AGD 1756192483_2SUP_2DEM 2.012.236 THANH TOÁN TẠI KHÁCH SẠN');
     expect(r.canDispatch).toBe(true);
   });
 

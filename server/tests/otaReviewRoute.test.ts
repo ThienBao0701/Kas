@@ -12,6 +12,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app';
 import { seedBranches } from '../src/db/seed';
 import { resetAll, testPrisma } from './helpers/db';
+import { hcmDayMonthDots } from '../src/booking/otaPmsNote';
 import {
   ADMIN_PASSWORD,
   RECEPTIONIST_PASSWORD,
@@ -24,6 +25,9 @@ const CTRIP_RAW = fs.readFileSync(
   path.join(__dirname, 'fixtures', 'ctrip', '04-confirmed-partner-reservation.txt'),
   'utf8',
 );
+
+/** CTrip's second line is the creation day — today for a review built now. */
+const CREATED = hcmDayMonthDots(new Date());
 
 let app: ReturnType<typeof createApp>;
 let adminAgent: Awaited<ReturnType<typeof loginAgent>>['agent'];
@@ -101,7 +105,7 @@ describe('CTrip review endpoint', () => {
     expect(r.rooms[0].requiresManualMapping).toBe(false);
     expect(r.canDispatch).toBe(true);
     expect(r.note).toBe(
-      'CTRIP_1658113703317875_1STAN_7DEM 4.645.956 CN\nGIÁ KHÁCH ĐẶT 6.637.080 KHONG AN SANG',
+      `CTRIP_1658113703317875_1STAN_7DEM 4.645.956 CN\n${CREATED} KHONG AN SANG`,
     );
     expect(r.blockingReasons).toEqual([]);
     expect(r.breakfastIncluded).toBe(false);
@@ -116,20 +120,22 @@ describe('CTrip review endpoint', () => {
     const r = res.body.review;
     expect(r.rooms[0].pmsCode).toBe('STAN');
     expect(r.note).toBe(
-      'CTRIP_1658113703317875_1STAN_7DEM 4.645.956 CN\nGIÁ KHÁCH ĐẶT 6.637.080 KHONG AN SANG',
+      `CTRIP_1658113703317875_1STAN_7DEM 4.645.956 CN\n${CREATED} KHONG AN SANG`,
     );
     expect(r.canDispatch).toBe(true);
   });
 
-  it('switches to the exact hotel-payment note on one line', async () => {
+  it('switches to the exact hotel-payment note, keeping both lines', async () => {
     const res = await review({
       source: 'CTRIP',
       rawText: CTRIP_RAW,
       overrides: { paymentMode: 'HOTEL_PAYMENT', rooms: [MAPPED_ROOM] },
     });
     const note = res.body.review.note as string;
-    expect(note).toBe('CTRIP_1658113703317875_1STAN_7DEM 4.645.956 THANH TOÁN KHÁCH SẠN');
-    expect(note.split('\n')).toHaveLength(1);
+    expect(note).toBe(
+      `CTRIP_1658113703317875_1STAN_7DEM 4.645.956 THANH TOÁN TẠI KHÁCH SẠN\n${CREATED} KHONG AN SANG`,
+    );
+    expect(note.split('\n')).toHaveLength(2);
     expect(note).not.toContain('GIÁ KHÁCH ĐẶT');
   });
 
@@ -290,9 +296,12 @@ describe('Admin corrections', () => {
       rawText: CTRIP_RAW,
       overrides: { branchPrice: 5_000_000, guestBookedPrice: 7_000_000, rooms: [MAPPED_ROOM] },
     });
+    // The branch price reaches the note. The guest-booked price no longer
+    // appears on a CTrip note at all, edited or not.
     expect(res.body.review.note).toBe(
-      'CTRIP_1658113703317875_1STAN_7DEM 5.000.000 CN\nGIÁ KHÁCH ĐẶT 7.000.000 KHONG AN SANG',
+      `CTRIP_1658113703317875_1STAN_7DEM 5.000.000 CN\n${CREATED} KHONG AN SANG`,
     );
+    expect(res.body.review.note).not.toContain('7.000.000');
   });
 
   it('supports adding a second room line', async () => {
@@ -321,21 +330,18 @@ describe('Admin corrections', () => {
     expect(res.body.review.note).toContain('_1STAN_2SUP_7DEM');
   });
 
-  it('blocks a CN note with no guest-booked price but allows hotel payment', async () => {
-    const cn = await review({
-      source: 'CTRIP',
-      rawText: CTRIP_RAW,
-      overrides: { guestBookedPrice: null, rooms: [MAPPED_ROOM] },
-    });
-    expect(cn.body.review.canDispatch).toBe(false);
-    expect(cn.body.review.blockingReasons.some((b: string) => b.includes('giá khách đặt'))).toBe(true);
-
-    const hotel = await review({
-      source: 'CTRIP',
-      rawText: CTRIP_RAW,
-      overrides: { guestBookedPrice: null, paymentMode: 'HOTEL_PAYMENT', rooms: [MAPPED_ROOM] },
-    });
-    expect(hotel.body.review.canDispatch).toBe(true);
+  it('dispatches a CTrip reservation with no guest-booked price, in either mode', async () => {
+    // The figure no longer reaches a CTrip note, so it can no longer block one.
+    for (const paymentMode of ['CN', 'HOTEL_PAYMENT'] as const) {
+      const res = await review({
+        source: 'CTRIP',
+        rawText: CTRIP_RAW,
+        overrides: { guestBookedPrice: null, paymentMode, rooms: [MAPPED_ROOM] },
+      });
+      expect(res.body.review.canDispatch, paymentMode).toBe(true);
+      expect(res.body.review.blockingReasons, paymentMode).toEqual([]);
+      expect(res.body.review.note, paymentMode).toContain(`\n${CREATED} KHONG AN SANG`);
+    }
   });
 
   it('rejects a malformed override rather than coercing it', async () => {

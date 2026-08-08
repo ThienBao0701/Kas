@@ -130,6 +130,24 @@ export function contactLabel(phone: string | null | undefined): string {
 }
 
 /**
+ * The contact segment: the label followed by the number itself, e.g.
+ * "CÓ WA +966598331083" or "CÓ ZL 0901234567".
+ *
+ * THE NUMBER IS PRINTED VERBATIM — trimmed and nothing else. A leading "+" is
+ * part of an international number and is kept; no spacing, grouping or country
+ * prefix is added or removed. The receptionist dials or messages exactly what
+ * is on the note, so a number this screen "tidied" is a number that no longer
+ * connects.
+ *
+ * "NO CONTACT" stands alone: there is no number to append.
+ */
+export function contactSegment(phone: string | null | undefined): string {
+  const label = contactLabel(phone);
+  if (label === 'NO CONTACT') return label;
+  return `${label} ${(phone ?? '').trim()}`;
+}
+
+/**
  * Extracts a concise arrival-time note from specialRequest, e.g.
  * "Khách dự kiến đến khoảng 13:00." → "KHÁCH ĐẾN KHOẢNG 13:00".
  * Returns '' when there is no arrival-time information (never a placeholder).
@@ -172,7 +190,7 @@ export function buildPmsNote(b: BookingDetail, now: Date = new Date()): PmsNoteR
   const arrival = arrivalNote(b.specialRequest);
   // For a partner booking the contact label (CÓ ZL / CÓ WA / NO CONTACT) is
   // replaced by "ĐƠN ĐỐI TÁC"; breakfast, date, arrival and requests are kept.
-  const contact = b.businessType === 'PARTNER' ? 'ĐƠN ĐỐI TÁC' : contactLabel(b.phone);
+  const contact = b.businessType === 'PARTNER' ? 'ĐƠN ĐỐI TÁC' : contactSegment(b.phone);
   const line2 = `${breakfast ? 'ĂN SÁNG ' : ''}${hcmDayMonth(now)} ${contact}${
     arrival ? ` ${arrival}` : ''
   }`;

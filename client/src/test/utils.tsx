@@ -16,6 +16,17 @@ export const ADMIN_USER: AuthUser = {
   mustChangePassword: false,
 };
 
+/** Bộ phận đặt phòng: global, so no branch — exactly like an admin's shape. */
+export const BOOKING_DEPARTMENT_USER: AuthUser = {
+  id: 3,
+  username: 'datphong',
+  fullName: 'Bộ phận đặt phòng',
+  role: 'BOOKING_DEPARTMENT',
+  branch: null,
+  active: true,
+  mustChangePassword: false,
+};
+
 export const RECEPTIONIST_USER: AuthUser = {
   id: 2,
   username: 'letan',

@@ -13,6 +13,15 @@ function firePasteImage(type = 'image/png') {
   });
 }
 
+/**
+ * The proof upload will not submit without a creator name. Every test that
+ * exercises a successful submission fills it, so the assertions stay about
+ * what they were written to test rather than about the new required field.
+ */
+async function fillCreatorName(user: ReturnType<typeof userEvent.setup>, name = 'Lễ tân Một') {
+  await user.type(screen.getByLabelText('Tên người tạo đơn'), name);
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -123,12 +132,15 @@ describe('BookingDetailPage — simplified copy surface', () => {
     expect(screen.queryByLabelText(/toàn bộ phòng/i)).not.toBeInTheDocument();
   });
 
-  it('shows the phone placeholder and no warning when phone is missing', async () => {
+  it('shows a receptionist no phone field, and no warning, when phone is missing', async () => {
+    // The phone field is Admin-only now; a missing number was never a warning
+    // and must not become one just because the field went away.
     mockDetail({ ...NEW_BOOKING, phone: null });
     renderApp('/app/booking/b1');
 
-    expect(await screen.findByText('(Hiển thị số điện thoại)')).toBeInTheDocument();
-    // A missing phone must never raise a warning banner.
+    expect(await screen.findByRole('heading', { name: 'Nguyễn Văn A' })).toBeInTheDocument();
+    expect(screen.queryByText('Số điện thoại')).not.toBeInTheDocument();
+    expect(screen.queryByText('(Hiển thị số điện thoại)')).not.toBeInTheDocument();
     expect(screen.queryByText(/Cảnh báo/)).not.toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
@@ -161,10 +173,11 @@ describe('BookingDetailPage — receptionist proof upload', () => {
     const user = userEvent.setup();
     renderApp('/app/booking/b1');
 
-    // Only the four main fields have a copy button; supporting fields do not.
+    // Reception's two main fields carry copy buttons; the note has its own.
     expect(await screen.findByRole('heading', { name: 'Nguyễn Văn A' })).toBeInTheDocument();
     expect(screen.getByLabelText('Sao chép Tên khách')).toBeInTheDocument();
-    expect(screen.getByLabelText('Sao chép Mã Booking')).toBeInTheDocument();
+    expect(screen.getByLabelText('Sao chép Tổng tiền')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Sao chép Mã Booking')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Sao chép PMS Note' })).toBeInTheDocument();
 
     // Upload card wording, and the submit button is disabled until a file is chosen.
@@ -180,6 +193,7 @@ describe('BookingDetailPage — receptionist proof upload', () => {
     await user.upload(input, file);
     expect(submitBtn).toBeEnabled();
 
+    await fillCreatorName(user);
     await user.click(submitBtn);
 
     // Success feedback + the proofs endpoint was called with a multipart POST.
@@ -188,6 +202,85 @@ describe('BookingDetailPage — receptionist proof upload', () => {
       ([url, init]) => String(url) === '/api/bookings/b1/proofs' && (init as RequestInit).method === 'POST',
     );
     expect(called).toBe(true);
+  });
+
+  it('will not submit without a creator name, and says which field is missing', async () => {
+    const fetchMock = installApiMock({
+      'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),
+      'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
+      'GET /api/bookings/b1': () => ({ status: 200, body: { booking: NEW_BOOKING } }),
+      'POST /api/bookings/b1/proofs': () => ({ status: 201, body: { booking: PENDING_BOOKING } }),
+    });
+    const user = userEvent.setup();
+    renderApp('/app/booking/b1');
+
+    const submitBtn = await screen.findByRole('button', { name: 'Gửi Admin kiểm tra' });
+    const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'proof.png', { type: 'image/png' });
+    await user.upload(document.querySelector('input[type="file"]') as HTMLInputElement, file);
+
+    // The button stays clickable with the name empty — on purpose. A disabled
+    // button would give the receptionist no reason for the refusal.
+    expect(submitBtn).toBeEnabled();
+    await user.click(submitBtn);
+
+    expect(screen.getByText('Vui lòng nhập tên người tạo đơn')).toBeInTheDocument();
+    expect(screen.getByLabelText('Tên người tạo đơn')).toHaveAttribute('aria-invalid', 'true');
+    // Nothing was sent.
+    expect(fetchMock.mock.calls.some(([u]) => String(u) === '/api/bookings/b1/proofs')).toBe(false);
+    // And the chosen image is still there to submit once the name is filled.
+    expect(screen.getByText('proof.png')).toBeInTheDocument();
+  });
+
+  it('clears the validation message as soon as the name is typed, then submits', async () => {
+    const fetchMock = installApiMock({
+      'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),
+      'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
+      'GET /api/bookings/b1': () => ({ status: 200, body: { booking: NEW_BOOKING } }),
+      'POST /api/bookings/b1/proofs': () => ({ status: 201, body: { booking: PENDING_BOOKING } }),
+    });
+    const user = userEvent.setup();
+    renderApp('/app/booking/b1');
+
+    const submitBtn = await screen.findByRole('button', { name: 'Gửi Admin kiểm tra' });
+    const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'proof.png', { type: 'image/png' });
+    await user.upload(document.querySelector('input[type="file"]') as HTMLInputElement, file);
+    await user.click(submitBtn);
+    expect(screen.getByText('Vui lòng nhập tên người tạo đơn')).toBeInTheDocument();
+
+    await fillCreatorName(user);
+    expect(screen.queryByText('Vui lòng nhập tên người tạo đơn')).toBeNull();
+
+    await user.click(submitBtn);
+    expect(await screen.findByText('Đã gửi ảnh cho Admin kiểm tra.')).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([u]) => String(u) === '/api/bookings/b1/proofs')).toBe(true);
+  });
+
+  it('treats a name of only spaces as missing', async () => {
+    const fetchMock = installApiMock({
+      'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),
+      'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
+      'GET /api/bookings/b1': () => ({ status: 200, body: { booking: NEW_BOOKING } }),
+      'POST /api/bookings/b1/proofs': () => ({ status: 201, body: { booking: PENDING_BOOKING } }),
+    });
+    const user = userEvent.setup();
+    renderApp('/app/booking/b1');
+
+    const submitBtn = await screen.findByRole('button', { name: 'Gửi Admin kiểm tra' });
+    const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'proof.png', { type: 'image/png' });
+    await user.upload(document.querySelector('input[type="file"]') as HTMLInputElement, file);
+    await user.type(screen.getByLabelText('Tên người tạo đơn'), '   ');
+    await user.click(submitBtn);
+
+    expect(screen.getByText('Vui lòng nhập tên người tạo đơn')).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([u]) => String(u) === '/api/bookings/b1/proofs')).toBe(false);
+  });
+
+  it('no longer offers the optional admin note', async () => {
+    mockDetail(NEW_BOOKING);
+    renderApp('/app/booking/b1');
+
+    expect(await screen.findByLabelText('Tên người tạo đơn')).toBeInTheDocument();
+    expect(screen.queryByText('Ghi chú cho Admin (không bắt buộc)')).toBeNull();
   });
 
   it('does not expose OCR details to the receptionist (only a received note)', async () => {
@@ -258,6 +351,7 @@ describe('BookingDetailPage — receptionist proof upload', () => {
     expect(await screen.findByText(/^pasted-proof-\d+\.png$/)).toBeInTheDocument();
     expect(submitBtn).toBeEnabled();
 
+    await fillCreatorName(user);
     await user.click(submitBtn);
     expect(await screen.findByText('Đã gửi ảnh cho Admin kiểm tra.')).toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([u, i]) => String(u) === '/api/bookings/b1/proofs' && (i as RequestInit).method === 'POST')).toBe(true);
@@ -284,6 +378,7 @@ describe('BookingDetailPage — receptionist proof upload', () => {
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     await user.upload(input, file);
 
+    await fillCreatorName(user);
     await user.click(screen.getByRole('button', { name: 'Gửi Admin kiểm tra' }));
     expect(await screen.findByText('Đã gửi ảnh cho Admin kiểm tra.')).toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([u, i]) => String(u) === '/api/bookings/b1/proofs' && (i as RequestInit).method === 'POST')).toBe(true);
@@ -305,6 +400,7 @@ describe('BookingDetailPage — receptionist proof upload', () => {
     await user.upload(input, file);
     expect(screen.getByText('proof.png')).toBeInTheDocument();
 
+    await fillCreatorName(user);
     await user.click(submitBtn);
     // The image preview is preserved so the receptionist can retry.
     expect(await screen.findByText('Lỗi máy chủ.')).toBeInTheDocument();
@@ -336,6 +432,7 @@ describe('BookingDetailPage — receptionist proof upload', () => {
     const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'proof.png', { type: 'image/png' });
     await user.upload(document.querySelector('input[type="file"]') as HTMLInputElement, file);
 
+    await fillCreatorName(user);
     await user.click(submitBtn);
     // While the deferred upload is in flight the button shows the uploading label
     // and is disabled — a second click cannot fire a duplicate request.

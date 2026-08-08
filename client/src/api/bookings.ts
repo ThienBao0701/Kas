@@ -374,6 +374,15 @@ export const BUSINESS_TYPE_LABEL: Record<BusinessType, string> = {
   UNKNOWN: 'Chưa xác định',
 };
 
+/** What the server stored after an Admin picked an internal room class. */
+export interface ManualRoomClassResult {
+  roomIndex: number;
+  roomClassId: string;
+  displayName: string;
+  pmsCode: string;
+  status: 'MANUAL';
+}
+
 // --- Editing payloads ------------------------------------------------------
 export interface RoomEdit {
   roomIndex: number;
@@ -418,6 +427,19 @@ export const bookingsApi = {
   markReady: (id: string, note?: string) => api.post<{ booking: BookingDetail }>(`/admin/bookings/${id}/ready`, { note }),
   send: (id: string, branchId: number, acknowledgedWarningCodes: string[]) =>
     api.post<{ booking: BookingDetail }>(`/admin/bookings/${id}/send`, { branchId, acknowledgedWarningCodes }),
+
+  /**
+   * The Admin chooses the internal room class for one room.
+   *
+   * The server validates the class against the booking's branch and its ACTIVE
+   * mapping version and stores the choice as MANUAL, so what comes back is the
+   * snapshot the PMS note will actually be generated from — not a local guess.
+   */
+  setRoomClass: (id: string, roomIndex: number, roomClassId: string) =>
+    api.put<{ room: ManualRoomClassResult }>(
+      `/bookings/${id}/rooms/${roomIndex}/room-class`,
+      { roomClassId },
+    ),
 
   detail: (id: string) => api.get<{ booking: BookingDetail }>(`/bookings/${id}`),
 

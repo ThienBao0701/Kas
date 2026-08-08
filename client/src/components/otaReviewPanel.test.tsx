@@ -155,8 +155,12 @@ describe('renders the server review', () => {
     expect(screen.getByDisplayValue('2026-08-01')).toBeInTheDocument();
     expect(screen.getByDisplayValue('2026-08-08')).toBeInTheDocument();
     expect(screen.getByTestId('ota-nights')).toHaveTextContent('7');
-    expect(screen.getByLabelText('Giá chi nhánh')).toHaveValue('4645956');
-    expect(screen.getByLabelText('Giá khách đặt')).toHaveValue('6637080');
+    // CTrip's payout field is labelled Công nợ, and CTrip shows no
+    // guest-booked price at all — its note no longer carries one.
+    expect(screen.getByLabelText('Công nợ')).toHaveValue('4645956');
+    expect(screen.queryByLabelText('Giá khách đặt')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Original room rate/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Giá chi nhánh/)).not.toBeInTheDocument();
   });
 
   it('shows Agoda price labels naming the platform fields', async () => {
@@ -425,15 +429,14 @@ describe('breakfast', () => {
 });
 
 describe('payment mode', () => {
-  it('offers exactly CN and THANH TOÁN KHÁCH SẠN', async () => {
+  it('offers exactly CN and THANH TOÁN TẠI KHÁCH SẠN', async () => {
     mockReview(RESOLVED);
     mount();
 
     const select = await screen.findByLabelText('Hình thức thanh toán');
     const options = within(select as HTMLElement).getAllByRole('option').map((o) => o.textContent);
-    expect(options).toEqual(['CN', 'THANH TOÁN KHÁCH SẠN']);
-    // Never the wrong wording.
-    expect(options).not.toContain('THANH TOÁN TẠI KHÁCH SẠN');
+    // The operator confirmed "TẠI" belongs in this phrase.
+    expect(options).toEqual(['CN', 'THANH TOÁN TẠI KHÁCH SẠN']);
   });
 
   it('switching to hotel payment shows the one-line note', async () => {
@@ -486,7 +489,7 @@ describe('payment mode', () => {
     mount();
 
     await screen.findByTestId('ota-review');
-    const branchPrice = screen.getByLabelText('Giá chi nhánh');
+    const branchPrice = screen.getByLabelText('Công nợ');
     await userEvent.clear(branchPrice);
     await userEvent.type(branchPrice, '5000000');
     // The draft holds exactly what was typed — no server value mixed in.
@@ -500,9 +503,12 @@ describe('payment mode', () => {
     });
   });
 
-  it('sends an edited guest-booked price on blur', async () => {
-    const { bodies } = mockReview(RESOLVED);
-    mount();
+  it('sends an edited guest-booked price on blur (Agoda, which still has one)', async () => {
+    const { bodies } = mockReview({
+      ...RESOLVED,
+      review: { ...RESOLVED.review, source: 'AGODA' },
+    });
+    mount('AGODA');
 
     await screen.findByTestId('ota-review');
     const guestPrice = screen.getByLabelText('Giá khách đặt');
@@ -514,6 +520,60 @@ describe('payment mode', () => {
       const last = bodies[bodies.length - 1] as { overrides?: { guestBookedPrice?: number } };
       expect(last.overrides?.guestBookedPrice).toBe(7_000_000);
     });
+  });
+});
+
+/* ================================================================== */
+/* The note is editable                                                */
+/* ================================================================== */
+
+describe('the PMS note editor', () => {
+  it('is an editable field, not a read-only block', async () => {
+    mockReview(RESOLVED);
+    mount();
+
+    const note = (await screen.findByTestId('ota-note')) as HTMLTextAreaElement;
+    expect(note.tagName).toBe('TEXTAREA');
+    expect(note.readOnly).toBe(false);
+    expect(note.disabled).toBe(false);
+    // No dark read-only styling left on it.
+    expect(note.className).not.toContain('bg-slate-900');
+    expect(note.className).not.toContain('text-slate-50');
+  });
+
+  it('accepts a hand edit and says the sent note is still the generated one', async () => {
+    mockReview(RESOLVED);
+    mount();
+
+    const note = (await screen.findByTestId('ota-note')) as HTMLTextAreaElement;
+    await userEvent.clear(note);
+    await userEvent.type(note, 'SUA TAY');
+
+    expect(note).toHaveValue('SUA TAY');
+    expect(screen.getByTestId('ota-note-edited')).toBeInTheDocument();
+  });
+
+  it('copies the edited text rather than the server original', async () => {
+    mockReview(RESOLVED);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    vi.stubGlobal('isSecureContext', true);
+    mount();
+
+    const note = await screen.findByTestId('ota-note');
+    await userEvent.clear(note);
+    await userEvent.type(note, 'SUA TAY');
+    await userEvent.click(screen.getByRole('button', { name: /Sao chép note/ }));
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('SUA TAY'));
+  });
+
+  it('shows no edited notice before anything is typed', async () => {
+    mockReview(RESOLVED);
+    mount();
+
+    await screen.findByTestId('ota-note');
+    expect(screen.queryByTestId('ota-note-edited')).not.toBeInTheDocument();
   });
 });
 

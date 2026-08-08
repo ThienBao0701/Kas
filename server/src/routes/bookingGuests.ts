@@ -25,9 +25,25 @@ import {
   updateGuestSchema,
   type GuestActor,
 } from '../booking/guestService';
-import { applyLatestMapping, previewLatestMapping } from '../room/roomSnapshotService';
+import {
+  applyLatestMapping,
+  previewLatestMapping,
+  setManualRoomClass,
+} from '../room/roomSnapshotService';
 
 const reasonSchema = z.object({ reason: z.string().trim().min(1, 'Cần nêu lý do.').max(500) });
+
+const roomClassSelectionSchema = z.object({
+  roomClassId: z.string().trim().min(1, 'Chưa chọn mã hạng phòng nội bộ.'),
+});
+
+function roomIndexOf(raw: string | undefined): number {
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1) {
+    throw ApiError.notFound('Không tìm thấy hạng phòng trong đơn này.');
+  }
+  return value;
+}
 
 function actorOf(req: Parameters<Parameters<Router['get']>[1]>[0]): GuestActor {
   const user = req.currentUser;
@@ -50,6 +66,10 @@ export function createBookingGuestsRouter(): Router {
   router.use('/bookings/:id/guests', requireAuth, requirePasswordChanged);
   router.use('/bookings/:id/audit', requireAuth, requirePasswordChanged);
   router.use('/bookings/:id/room-mapping', requireAuth, requirePasswordChanged);
+  // The room-class selector. Authentication is mounted per prefix here, so a
+  // new path without its own line would reach the handler with no session and
+  // fail as "not signed in" rather than as the thing it actually is.
+  router.use('/bookings/:id/rooms', requireAuth, requirePasswordChanged);
 
   // GET /api/bookings/:id/guests
   router.get('/bookings/:id/guests', (req, res, next) => {
@@ -131,6 +151,24 @@ export function createBookingGuestsRouter(): Router {
       const { reason } = reasonSchema.parse(req.body ?? {});
       const result = await applyLatestMapping(bookingIdOf(req.params.id), reason, actorOf(req));
       res.json(result);
+    })().catch(next);
+  });
+
+  // PUT /api/bookings/:id/rooms/:roomIndex/room-class — the Admin chooses the
+  // internal room class for one room. Admin-only and audited; the service
+  // validates the class against the booking's branch and ACTIVE mapping
+  // version and records the choice as MANUAL, so the note the receptionist
+  // eventually pastes is generated from exactly what was selected here.
+  router.put('/bookings/:id/rooms/:roomIndex/room-class', (req, res, next) => {
+    (async () => {
+      const { roomClassId } = roomClassSelectionSchema.parse(req.body ?? {});
+      const room = await setManualRoomClass(
+        bookingIdOf(req.params.id),
+        roomIndexOf(req.params.roomIndex),
+        roomClassId,
+        actorOf(req),
+      );
+      res.json({ room });
     })().catch(next);
   });
 

@@ -14,11 +14,17 @@ export interface ManagedUser {
   lastLoginAt: string | null;
 }
 
+/** The roles this screen can create. An admin is bootstrapped, never minted here. */
+export type ManageableRole = 'RECEPTIONIST' | 'BOOKING_DEPARTMENT';
+
 export interface CreateUserInput {
   username: string;
   fullName: string;
   temporaryPassword: string;
-  branchId: number;
+  /** Omitted means RECEPTIONIST, as it always did. */
+  role?: ManageableRole;
+  /** Required for a receptionist; must be absent for Bộ phận đặt phòng (global). */
+  branchId?: number;
 }
 
 export const adminUsersApi = {

@@ -161,7 +161,7 @@ describe('what dispatch stores', () => {
     });
     expect(booking.adminPmsNote).toBe(res.body.review.note);
     expect(booking.adminPmsNote).not.toContain('\n');
-    expect(booking.adminPmsNote).toContain('THANH TOÁN KHÁCH SẠN');
+    expect(booking.adminPmsNote).toContain('THANH TOÁN TẠI KHÁCH SẠN');
   });
 
   it('stores the payment mode the Admin reviewed', async () => {

@@ -87,11 +87,15 @@ function detail(id: string, overrides: Record<string, unknown> = {}) {
   };
 }
 
-/** Chooses a PNG file in the inline upload card and submits it for review. */
+/**
+ * Chooses a PNG file in the inline upload card, names the creator (required)
+ * and submits it for review.
+ */
 async function uploadAndSubmit(user: ReturnType<typeof userEvent.setup>) {
   const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'proof.png', { type: 'image/png' });
   const input = document.querySelector('input[type="file"]') as HTMLInputElement;
   await user.upload(input, file);
+  await user.type(screen.getByLabelText('Tên người tạo đơn'), 'Lễ tân Một');
   await user.click(screen.getByRole('button', { name: 'Gửi Admin kiểm tra' }));
 }
 

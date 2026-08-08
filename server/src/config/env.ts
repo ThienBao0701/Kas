@@ -33,6 +33,7 @@ export const FILE_BACKED_SECRETS = [
   'SESSION_SECRET',
   'INITIAL_ADMIN_PASSWORD',
   'DATABASE_URL',
+  'CARD_ENCRYPTION_KEY',
 ] as const;
 
 /**
@@ -155,12 +156,35 @@ const envSchema = z
     // lowers it so the pure-JS implementation does not dominate run time.
     BCRYPT_COST: z.coerce.number().int().min(4).max(15).default(10),
 
+    /**
+     * AES-256-GCM key for card numbers in the Chứng từ module: 32 random bytes,
+     * base64. Also accepted as CARD_ENCRYPTION_KEY_FILE (Docker/systemd secret).
+     *
+     * DEDICATED, NEVER DERIVED FROM SESSION_SECRET. Rotating the session secret
+     * is a routine action that merely logs everyone out; if card numbers hung
+     * off it, that same routine action would destroy every stored PAN with no
+     * error until someone tried to read one. The two also belong to different
+     * trust domains — cookie integrity and cardholder data at rest.
+     *
+     * Optional here so every existing command (migrations, backups, the parser
+     * tests) still boots without it. The charge module refuses to encrypt or
+     * decrypt when it is absent, rather than falling back to anything weaker.
+     *
+     * LOSING THIS KEY MAKES EVERY STORED CARD NUMBER UNRECOVERABLE. It belongs
+     * in the backup procedure beside the database, and production must have its
+     * own key — never the development one.
+     */
+    CARD_ENCRYPTION_KEY: z.string().min(1).optional(),
+
     // Where proof-of-creation screenshots are stored on the server filesystem.
     // Only metadata + a safe relative path live in the database; never the
     // image bytes. Relative values are resolved against the repository root.
     PROOF_UPLOAD_DIR: z.string().min(1).default('server/uploads/booking-proofs'),
     // Where receptionist issue-report photos are stored (same rules as proofs).
     ISSUE_UPLOAD_DIR: z.string().min(1).default('server/uploads/issue-photos'),
+    // Where Chứng từ attachments are stored (same rules again: private disk,
+    // server-generated names, never served as static content).
+    CHARGE_UPLOAD_DIR: z.string().min(1).default('server/uploads/charge-documents'),
 
     // --- Developer test tools (demo data + branch switch + reset) ---
     // Gates every /api/dev-test endpoint and the demo/reset UI. MUST stay false in
@@ -331,6 +355,8 @@ const absolute = (value: string): string =>
 
 export const PROOF_UPLOAD_DIR = absolute(env.PROOF_UPLOAD_DIR);
 export const ISSUE_UPLOAD_DIR = absolute(env.ISSUE_UPLOAD_DIR);
+/** Where Chứng từ attachments are stored. Same rules as proofs: private disk. */
+export const CHARGE_UPLOAD_DIR = absolute(env.CHARGE_UPLOAD_DIR);
 export const BACKUP_DIR = absolute(env.BACKUP_DIR);
 export const CLIENT_DIST_DIR = absolute(env.CLIENT_DIST_DIR);
 

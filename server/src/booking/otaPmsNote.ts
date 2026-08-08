@@ -10,14 +10,22 @@
  *     GIÁ KHÁCH ĐẶT 4.507.750 KHONG AN SANG
  *
  *   Agoda,  hotel payment — ONE line, nothing appended:
- *     AGD 1756162808_1SUP_4DEM 2.728.024 THANH TOÁN KHÁCH SẠN
+ *     AGD 1756162808_1SUP_4DEM 2.728.024 THANH TOÁN TẠI KHÁCH SẠN
  *
  *   CTrip,  card payment (CN):
- *     CTRIP_1658113703317875_1STAN_7DEM 4.645.956 CN
- *     GIÁ KHÁCH ĐẶT 6.637.080 KHONG AN SANG
+ *     CTRIP_1433813478564103_1DEL_5DEM 4.677.208 CN
+ *     07.08 KHONG AN SANG
  *
- *   CTrip,  hotel payment — ONE line, nothing appended:
- *     CTRIP_1658113703317875_1STAN_7DEM 4.645.956 THANH TOÁN KHÁCH SẠN
+ *   CTrip,  hotel payment — the SAME two lines:
+ *     CTRIP_1433813478564103_1DEL_5DEM 4.677.208 THANH TOÁN TẠI KHÁCH SẠN
+ *     07.08 KHONG AN SANG
+ *
+ * CTRIP'S SECOND LINE IS A DATE, NOT A PRICE. It carries the day the booking is
+ * created — "07.08" is when the reservation was entered, never the check-in —
+ * and it replaced the guest-booked price the note used to print. CTrip
+ * therefore no longer needs a guest-booked price for its note at all, and both
+ * payment modes get the same two lines. Agoda is untouched: its CN note still
+ * carries GIÁ KHÁCH ĐẶT and its hotel-payment note is still a single line.
  *
  * Two prefix differences that are easy to get wrong and are asserted directly:
  *   - "AGD" is followed by a SPACE before the booking code.
@@ -38,14 +46,30 @@ export type OtaNoteSource = 'AGODA' | 'CTRIP';
  */
 export type OtaPaymentMode = 'CN' | 'HOTEL_PAYMENT';
 
-/** The exact Vietnamese wording. "THANH TOÁN KHÁCH SẠN" — never "TẠI". */
+/** The exact Vietnamese wording, confirmed by the operator: "TẠI" is included. */
 export const OTA_PAYMENT_LABEL: Record<OtaPaymentMode, string> = {
   CN: 'CN',
-  HOTEL_PAYMENT: 'THANH TOÁN KHÁCH SẠN',
+  HOTEL_PAYMENT: 'THANH TOÁN TẠI KHÁCH SẠN',
 };
 
 /** The confirmed no-breakfast wording. */
 export const NO_BREAKFAST_TEXT = 'KHONG AN SANG';
+
+const HCM_OFFSET_MS = 7 * 60 * 60 * 1000;
+
+/**
+ * The booking's creation day as CTrip's note prints it: "07.08" — dot-separated
+ * DD.MM in Asia/Ho_Chi_Minh, the timezone the hotel actually works in.
+ *
+ * Read from the clock rather than the reservation because the note is built
+ * once, at dispatch, and that IS the creation moment. It is not the check-in
+ * date and must never be taken from one.
+ */
+export function hcmDayMonthDots(now: Date): string {
+  const iso = new Date(now.getTime() + HCM_OFFSET_MS).toISOString().slice(0, 10);
+  const [, month, day] = iso.split('-');
+  return `${day}.${month}`;
+}
 
 /** One room line: how many rooms of one resolved internal code. */
 export interface OtaNoteRoomLine {
@@ -70,6 +94,12 @@ export interface OtaNoteInput {
    * inventing one.
    */
   breakfastIncluded: boolean;
+  /**
+   * When the booking is being created. CTrip's second line prints this as
+   * DD.MM; every other layout ignores it. Injectable so the exact string stays
+   * testable.
+   */
+  createdAt?: Date;
 }
 
 export type OtaNoteResult =
@@ -115,14 +145,17 @@ export function buildOtaPmsNote(input: OtaNoteInput): OtaNoteResult {
   if (input.branchPrice == null) {
     missing.push(input.source === 'AGODA' ? 'Net rate' : 'Your payout');
   }
-  // The guest-booked price is only ever RENDERED on a CN note, so it is only
-  // ever REQUIRED for one.
-  if (input.paymentMode === 'CN' && input.guestBookedPrice == null) {
-    missing.push(input.source === 'AGODA' ? 'Reference sell rate' : 'Original room rate');
+  // The guest-booked price is only ever RENDERED on an AGODA CN note, so that
+  // is the only note it is REQUIRED for. CTrip's note prints the creation date
+  // in its place and no longer reads the price at all — demanding it would
+  // block a dispatch over a figure that appears nowhere.
+  if (input.source === 'AGODA' && input.paymentMode === 'CN' && input.guestBookedPrice == null) {
+    missing.push('Reference sell rate');
   }
   // No positive-breakfast wording has been approved. Refusing is the honest
   // outcome; inventing a phrase would put unapproved text in front of a guest.
-  if (input.paymentMode === 'CN' && input.breakfastIncluded) {
+  // CTrip now always prints a breakfast line, so it is checked for both modes.
+  if (input.breakfastIncluded && (input.source === 'CTRIP' || input.paymentMode === 'CN')) {
     missing.push('nội dung ăn sáng (chưa được duyệt)');
   }
 
@@ -142,7 +175,15 @@ export function buildOtaPmsNote(input: OtaNoteInput): OtaNoteResult {
     `${prefix}_${roomFragments(input.rooms)}_${input.nights}DEM ` +
     `${formatVndDots(input.branchPrice!)} ${OTA_PAYMENT_LABEL[input.paymentMode]}`;
 
-  // A hotel-payment note is exactly one line: no guest-booked price, no
+  // CTrip: the same two lines whichever way the guest pays. The second is the
+  // creation day and the breakfast wording — a single "\n", so the two lines
+  // are consecutive and never separated by a blank one.
+  if (input.source === 'CTRIP') {
+    const created = hcmDayMonthDots(input.createdAt ?? new Date());
+    return { ok: true, text: `${line1}\n${created} ${NO_BREAKFAST_TEXT}` };
+  }
+
+  // Agoda, hotel payment: exactly one line — no guest-booked price, no
   // breakfast suffix, no trailing newline.
   if (input.paymentMode === 'HOTEL_PAYMENT') {
     return { ok: true, text: line1 };

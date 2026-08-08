@@ -1,4 +1,4 @@
-import type { IssueCategory, IssueStatus, Prisma } from '@prisma/client';
+import type { IssueCategory, IssueStatus, Prisma, UserRole } from '@prisma/client';
 import { prisma } from '../db/prisma';
 import { ApiError } from '../lib/errors';
 import { getClock, type Clock } from '../lib/clock';
@@ -8,7 +8,8 @@ import {
   sniffImageMime,
 } from './issueStorage';
 
-type Actor = { id: number; role: 'ADMIN' | 'RECEPTIONIST'; branchId: number | null; fullName: string };
+// The full role enum — see issueSummary.ts. Access is decided at runtime.
+type Actor = { id: number; role: UserRole; branchId: number | null; fullName: string };
 
 export interface UploadedPhoto {
   buffer: Buffer;

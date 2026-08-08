@@ -5,6 +5,7 @@ import { createBranchesRouter } from './branches';
 import { createAdminBranchesRouter } from './adminBranches';
 import { createAdminRoomMappingRouter } from './adminRoomMapping';
 import { createBookingGuestsRouter } from './bookingGuests';
+import { createChargeDocumentsRouter } from './chargeDocuments';
 import { createAdminUsersRouter } from './adminUsers';
 import { createBookingsRouter } from './bookings';
 import { createBookingLifecycleRouter } from './bookingLifecycle';
@@ -37,6 +38,8 @@ export function createApiRouter(): Router {
   // Guest and lifecycle routes are more specific than /bookings/:id, so they
   // mount first — otherwise /bookings/:id would swallow /bookings/:id/receive.
   router.use(createBookingGuestsRouter());
+  // Chứng từ. Self-contained: it mounts its own auth + role gate on its prefix.
+  router.use(createChargeDocumentsRouter());
   router.use(createBookingLifecycleRouter());
   router.use(createBookingsRouter());
   router.use(createNotificationsRouter());

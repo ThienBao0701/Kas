@@ -7,6 +7,8 @@ import { ApiError, toUserMessage } from '../api/errors';
 import { branchLabel } from '../auth/types';
 import { AgodaPartnerCard } from '../components/AgodaPartnerCard';
 import { OtaReviewPanel } from '../components/OtaReviewPanel';
+import { BookingComRoomReview } from '../components/BookingComRoomReview';
+import { UNMAPPED_ROOM_MESSAGE, everyRoomHasPmsCode } from '../lib/bookingComRoomClass';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
 import { ErrorAlert } from '../components/ErrorAlert';
@@ -128,6 +130,15 @@ export function DispatchPage() {
   const [sendError, setSendError] = useState<string | null>(null);
   const [saveNote, setSaveNote] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  /**
+   * The saved booking, as the server last returned it.
+   *
+   * Kept beside `form` rather than derived from it because the room-class
+   * snapshot and the branch configuration are server-owned: `form` holds what
+   * the Admin is typing, this holds what has actually been stored. The PMS note
+   * preview is built from the two merged together.
+   */
+  const [saved, setSaved] = useState<BookingDetail | null>(null);
 
   const branches = useQuery({ queryKey: ['branches'], queryFn: () => branchesApi.list(), staleTime: 5 * 60_000 });
 
@@ -164,6 +175,7 @@ export function DispatchPage() {
     if (detailQuery.data) {
       const b = detailQuery.data.booking;
       setForm(toForm(b));
+      setSaved(b);
       setWarnings(b.warnings);
       if (b.branchId) setBranchId(b.branchId);
     }
@@ -173,11 +185,44 @@ export function DispatchPage() {
     mutationFn: () => bookingsApi.update(draftId!, buildEdit(form!, branchId)),
     onSuccess: (res) => {
       setForm(toForm(res.booking));
+      setSaved(res.booking);
       setWarnings(res.booking.warnings);
       setSaveNote('Đã lưu thay đổi.');
       setTimeout(() => setSaveNote(null), 2000);
     },
   });
+
+  /**
+   * Applies the snapshot the server stored for one room.
+   *
+   * Written from the RESPONSE, never from the option that was clicked: the
+   * server is what decided the selection was valid for this branch and version,
+   * and the note below is regenerated from this state.
+   */
+  const applyRoomClass = (
+    roomIndex: number,
+    roomClassId: string,
+    pmsCode: string,
+    displayName: string,
+  ) =>
+    setSaved((b) =>
+      b
+        ? {
+            ...b,
+            rooms: b.rooms.map((r) =>
+              r.roomIndex === roomIndex
+                ? {
+                    ...r,
+                    roomClassId,
+                    roomClassPmsCode: pmsCode,
+                    roomClassDisplayName: displayName,
+                    roomClassStatus: 'MANUAL' as const,
+                  }
+                : r,
+            ),
+          }
+        : b,
+    );
 
   const updateForm = (patch: Partial<FormState>) => setForm((f) => (f ? { ...f, ...patch } : f));
 
@@ -224,6 +269,39 @@ export function DispatchPage() {
     () => branches.data?.branches.find((b) => b.id === branchId),
     [branches.data, branchId],
   );
+
+  /**
+   * The booking as the PMS note will read it once the current edits are saved.
+   *
+   * Server-owned facts — the room-class snapshot, the branch's breakfast rule,
+   * the business type — come from `saved`. Everything the Admin is typing comes
+   * from `form`. Dispatch saves before it sends, so what this previews is what
+   * reception will generate from the stored booking.
+   */
+  const notePreview = useMemo<BookingDetail | null>(() => {
+    if (!saved || !form) return null;
+    const typedRoomName = new Map(form.rooms.map((r) => [r.roomIndex, r.roomType]));
+    return {
+      ...saved,
+      bookingCode: form.bookingCode || null,
+      customerName: form.customerName || null,
+      phone: form.phone || null,
+      checkInDate: form.checkInDate || null,
+      checkOutDate: form.checkOutDate || null,
+      totalAmount: parseAmount(form.totalAmount),
+      paymentStatus: form.paymentStatus,
+      specialRequest: form.specialRequest || null,
+      // The room-class snapshot is the server's; only the typed name is local.
+      rooms: saved.rooms.map((r) => ({
+        ...r,
+        roomType: typedRoomName.get(r.roomIndex) ?? r.roomType,
+      })),
+    };
+  }, [saved, form]);
+
+  // The selector and the server both work from the SAVED branch.
+  const branchDirty = saved != null && (saved.branchId ?? undefined) !== branchId;
+  const roomsMapped = notePreview ? everyRoomHasPmsCode(notePreview.rooms) : false;
 
   // --- Agoda / CTrip: server-authoritative review ---
   if (otaRawText !== null && (source === 'AGODA' || source === 'CTRIP')) {
@@ -319,7 +397,14 @@ export function DispatchPage() {
     return <PageHeader title="Nhập đơn Booking.com" description="Đang tải thông tin đã trích xuất…" />;
   }
 
-  const canSend = branchId !== undefined && form.customerName.trim() !== '' && form.bookingCode.trim() !== '';
+  // Every room must carry an internal code: the note a receptionist pastes is
+  // generated from that snapshot, and a missing one silently falls back to the
+  // legacy keyword abbreviation rather than the branch's real PMS code.
+  const canSend =
+    branchId !== undefined &&
+    form.customerName.trim() !== '' &&
+    form.bookingCode.trim() !== '' &&
+    roomsMapped;
 
   return (
     <div className="space-y-5">
@@ -443,6 +528,21 @@ export function DispatchPage() {
         </Card>
       ))}
 
+      {/*
+        Room classes + the Booking.com PMS note. Placed after the room prices
+        and before the branch/send card so the Admin reads the booking, then
+        confirms what it maps to, then decides to send — the note is the last
+        thing seen before dispatch, which is what it is for.
+      */}
+      {notePreview ? (
+        <BookingComRoomReview
+          booking={notePreview}
+          branchId={saved?.branchId ?? undefined}
+          branchDirty={branchDirty}
+          onRoomClassChanged={applyRoomClass}
+        />
+      ) : null}
+
       {/* Branch + send */}
       <Card className="p-5">
         <Field label="Chọn chi nhánh gửi đến">
@@ -477,6 +577,13 @@ export function DispatchPage() {
           <div className="mt-3">
             <ErrorAlert>{toUserMessage(saveMut.error)}</ErrorAlert>
           </div>
+        ) : null}
+
+        {/* Says WHY the button is disabled, rather than leaving it dead. */}
+        {branchId !== undefined && !roomsMapped ? (
+          <p className="mt-3 text-sm text-red-700" data-testid="dispatch-room-blocking">
+            {UNMAPPED_ROOM_MESSAGE}
+          </p>
         ) : null}
 
         <div className="mt-4 flex flex-wrap items-center gap-2">

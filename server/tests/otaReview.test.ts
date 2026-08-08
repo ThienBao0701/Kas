@@ -14,6 +14,10 @@
 import { describe, expect, it } from 'vitest';
 import { buildOtaReview, type OtaReviewBranch } from '../src/booking/otaReview';
 import { normalizeText } from '../src/booking/text';
+import { hcmDayMonthDots } from '../src/booking/otaPmsNote';
+
+/** CTrip's second line is the creation day — today for a review built now. */
+const CREATED = hcmDayMonthDots(new Date());
 
 /** A branch with only the mappings it really has. */
 function branch(
@@ -138,7 +142,7 @@ describe('Agoda review', () => {
 
   it('produces the exact hotel-payment note, on one line', () => {
     const r = agoda({}, { paymentMode: 'HOTEL_PAYMENT' });
-    expect(r.note).toBe('AGD 1756162808_1SUP_4DEM 2.728.024 THANH TOÁN KHÁCH SẠN');
+    expect(r.note).toBe('AGD 1756162808_1SUP_4DEM 2.728.024 THANH TOÁN TẠI KHÁCH SẠN');
     expect(r.note!.split('\n')).toHaveLength(1);
     expect(r.note).not.toContain('GIÁ KHÁCH ĐẶT');
     expect(r.note).not.toContain('KHONG AN SANG');
@@ -201,17 +205,20 @@ describe('CTrip review', () => {
   it('produces the exact CN note, with an underscore straight after CTRIP', () => {
     const r = ctrip();
     expect(r.note).toBe(
-      'CTRIP_1658113703317875_1STAN_7DEM 4.645.956 CN\nGIÁ KHÁCH ĐẶT 6.637.080 KHONG AN SANG',
+      `CTRIP_1658113703317875_1STAN_7DEM 4.645.956 CN\n${CREATED} KHONG AN SANG`,
     );
     expect(r.note!.startsWith('CTRIP_')).toBe(true);
     expect(r.note!.startsWith('CTRIP ')).toBe(false);
     expect(r.canDispatch).toBe(true);
   });
 
-  it('produces the exact hotel-payment note, on one line', () => {
+  it('produces the exact hotel-payment note, on the same two lines', () => {
+    // CTrip prints the creation day whichever way the guest pays.
     const r = ctrip({}, { paymentMode: 'HOTEL_PAYMENT' });
-    expect(r.note).toBe('CTRIP_1658113703317875_1STAN_7DEM 4.645.956 THANH TOÁN KHÁCH SẠN');
-    expect(r.note!.split('\n')).toHaveLength(1);
+    expect(r.note).toBe(
+      `CTRIP_1658113703317875_1STAN_7DEM 4.645.956 THANH TOÁN TẠI KHÁCH SẠN\n${CREATED} KHONG AN SANG`,
+    );
+    expect(r.note!.split('\n')).toHaveLength(2);
   });
 
   it('keeps Your payout and Original room rate distinct', () => {
@@ -389,7 +396,18 @@ describe('validation', () => {
 
     const hotel = agoda({ guestBookedPrice: null }, { paymentMode: 'HOTEL_PAYMENT' });
     expect(hotel.canDispatch).toBe(true);
-    expect(hotel.note).toContain('THANH TOÁN KHÁCH SẠN');
+    expect(hotel.note).toContain('THANH TOÁN TẠI KHÁCH SẠN');
+  });
+
+  it('never requires the guest-booked price for CTrip, in either mode', () => {
+    // CTrip's note prints the creation day where that price used to sit, so
+    // blocking a dispatch on it would be blocking on a figure nobody reads.
+    for (const paymentMode of ['CN', 'HOTEL_PAYMENT'] as const) {
+      const r = ctrip({ guestBookedPrice: null }, { paymentMode });
+      expect(r.canDispatch, paymentMode).toBe(true);
+      expect(r.blockingReasons, paymentMode).toEqual([]);
+      expect(r.note, paymentMode).toContain(`\n${CREATED} KHONG AN SANG`);
+    }
   });
 
   it('normalises a submitted breakfast=true to false instead of blocking', () => {

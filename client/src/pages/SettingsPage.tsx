@@ -123,22 +123,39 @@ function CreateUserModal({
   onClose: () => void;
   onCreated: () => void;
 }) {
-  const [form, setForm] = useState<CreateUserInput>({ username: '', fullName: '', temporaryPassword: '', branchId: 0 });
+  const EMPTY: CreateUserInput = {
+    username: '',
+    fullName: '',
+    temporaryPassword: '',
+    role: 'RECEPTIONIST',
+    branchId: 0,
+  };
+  const [form, setForm] = useState<CreateUserInput>(EMPTY);
+  const isReceptionist = form.role !== 'BOOKING_DEPARTMENT';
 
   const create = useMutation({
-    mutationFn: () => adminUsersApi.create(form),
+    // Bộ phận đặt phòng is global, so no branch is sent at all — the server
+    // refuses one, and sending 0 would be a validation error rather than "none".
+    mutationFn: () =>
+      adminUsersApi.create(
+        isReceptionist ? form : { ...form, branchId: undefined },
+      ),
     onSuccess: () => {
-      setForm({ username: '', fullName: '', temporaryPassword: '', branchId: 0 });
+      setForm(EMPTY);
       onCreated();
     },
   });
 
-  const valid = form.username.trim() && form.fullName.trim() && form.temporaryPassword.length >= 8 && form.branchId > 0;
+  const valid =
+    form.username.trim() &&
+    form.fullName.trim() &&
+    form.temporaryPassword.length >= 8 &&
+    (!isReceptionist || (form.branchId ?? 0) > 0);
 
   return (
     <Modal
       open={open}
-      title="Thêm tài khoản lễ tân"
+      title="Thêm tài khoản"
       onClose={onClose}
       footer={
         <>
@@ -162,15 +179,41 @@ function CreateUserModal({
           <input className={`${inputClass} mt-1`} value={form.temporaryPassword} onChange={(e) => setForm({ ...form, temporaryPassword: e.target.value })} />
         </label>
         <label className="block text-sm font-medium text-slate-600">
-          Chi nhánh
-          <select className={`${inputClass} mt-1`} value={form.branchId || ''} onChange={(e) => setForm({ ...form, branchId: Number(e.target.value) })}>
-            <option value="">— Chọn chi nhánh —</option>
-            {branches.map((b) => (
-              // Only ACTIVE branches reach here: /api/branches filters them out.
-              <option key={b.id} value={b.id}>{branchLabel(b)}</option>
-            ))}
+          Vai trò
+          <select
+            aria-label="Vai trò"
+            className={`${inputClass} mt-1`}
+            value={form.role ?? 'RECEPTIONIST'}
+            onChange={(e) =>
+              setForm({ ...form, role: e.target.value as CreateUserInput['role'], branchId: 0 })
+            }
+          >
+            <option value="RECEPTIONIST">Lễ tân</option>
+            <option value="BOOKING_DEPARTMENT">Bộ phận đặt phòng</option>
           </select>
         </label>
+        {/*
+          A branch belongs to a receptionist alone. Bộ phận đặt phòng works
+          across every branch and picks one on each charge document, so offering
+          the field would imply a scope the account does not have.
+        */}
+        {isReceptionist ? (
+          <label className="block text-sm font-medium text-slate-600">
+            Chi nhánh
+            <select aria-label="Chi nhánh" className={`${inputClass} mt-1`} value={form.branchId || ''} onChange={(e) => setForm({ ...form, branchId: Number(e.target.value) })}>
+              <option value="">— Chọn chi nhánh —</option>
+              {branches.map((b) => (
+                // Only ACTIVE branches reach here: /api/branches filters them out.
+                <option key={b.id} value={b.id}>{branchLabel(b)}</option>
+              ))}
+            </select>
+          </label>
+        ) : (
+          <p className="rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-600">
+            Tài khoản bộ phận đặt phòng làm việc trên tất cả chi nhánh và chọn chi nhánh trong từng
+            chứng từ.
+          </p>
+        )}
       </div>
     </Modal>
   );

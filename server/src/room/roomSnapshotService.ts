@@ -160,6 +160,133 @@ export async function previewLatestMapping(
 /** Booking states whose snapshots are frozen for good. */
 const FROZEN_STATUSES = ['COMPLETED', 'ARCHIVED'] as const;
 
+export interface ManualRoomClassResult {
+  roomIndex: number;
+  roomClassId: string;
+  displayName: string;
+  pmsCode: string;
+  status: 'MANUAL';
+}
+
+/**
+ * An Admin explicitly chooses the internal room class for ONE room of a booking.
+ *
+ * This is the write path behind the Admin's "Mã nội bộ" selector. It exists
+ * because automatic resolution can only match a name it recognises: a room the
+ * branch has no alias for stays UNRESOLVED, and the note then falls back to the
+ * legacy keyword abbreviation. Someone has to be able to say what the room
+ * actually is — and have that answer persist, because the note the receptionist
+ * pastes is generated from this snapshot, not from anything on the Admin's
+ * screen.
+ *
+ * WHAT IT DOES NOT DO: it never guesses, and it never accepts a class from
+ * another branch. The chosen id is put through the SAME resolver the automatic
+ * path uses, with `explicitRoomClassId` set — that resolver already refuses an
+ * id which is not an active class of this branch's ACTIVE mapping version, and
+ * already reports such a selection as MANUAL. So the branch/version rule is
+ * enforced in exactly one place for both paths, and a stale dropdown (a branch
+ * changed in another tab, a mapping version activated meanwhile) is rejected
+ * here rather than silently written.
+ *
+ * Recorded as MANUAL, which `applyRoomClassSnapshots` then refuses to overwrite
+ * automatically — the Admin's decision outlives every later routine operation.
+ */
+export async function setManualRoomClass(
+  bookingId: string,
+  roomIndex: number,
+  roomClassId: string,
+  actor: GuestActor,
+  client: PrismaClient = defaultPrisma,
+  now: Date = new Date(),
+): Promise<ManualRoomClassResult> {
+  if (actor.role !== 'ADMIN') {
+    throw ApiError.forbidden('Chỉ quản trị viên mới được chọn mã hạng phòng nội bộ.');
+  }
+
+  const booking = await client.booking.findUnique({
+    where: { id: bookingId },
+    select: {
+      id: true,
+      branchId: true,
+      status: true,
+      rooms: {
+        where: { roomIndex },
+        select: {
+          id: true,
+          roomIndex: true,
+          roomType: true,
+          roomClassSourceText: true,
+          roomClassDisplayName: true,
+          roomClassPmsCode: true,
+        },
+      },
+    },
+  });
+  if (!booking) throw ApiError.notFound('Không tìm thấy đơn đặt phòng.');
+
+  if ((FROZEN_STATUSES as readonly string[]).includes(booking.status)) {
+    throw ApiError.conflict('Đơn đã hoàn thành hoặc lưu trữ — không đổi được mã hạng phòng.', {
+      status: booking.status,
+    });
+  }
+  // Without a branch there is no catalogue to validate against, so there is
+  // nothing that could legitimately be chosen yet.
+  if (booking.branchId == null) {
+    throw ApiError.validation('Vui lòng chọn chi nhánh trước khi chọn mã hạng phòng nội bộ.');
+  }
+
+  const room = booking.rooms[0];
+  if (!room) throw ApiError.notFound('Không tìm thấy hạng phòng trong đơn này.');
+
+  const mapping = await loadActiveMapping(booking.branchId, client);
+  const resolution = resolveRoomClass(
+    {
+      branchId: booking.branchId,
+      // Preserved so the snapshot still records what the OTA actually said.
+      sourceRoomName: room.roomClassSourceText ?? room.roomType,
+      explicitRoomClassId: roomClassId,
+    },
+    mapping,
+  );
+
+  // The resolver answers MANUAL only when the id is an active class of THIS
+  // branch's active version. Anything else comes back UNRESOLVED and is refused
+  // here rather than written as a blank snapshot.
+  if (resolution.status !== 'MANUAL') {
+    throw ApiError.validation(
+      'Mã hạng phòng không thuộc cấu hình đang áp dụng của chi nhánh này. Vui lòng chọn lại.',
+    );
+  }
+
+  await client.$transaction(async (tx) => {
+    await tx.bookingRoom.update({ where: { id: room.id }, data: toSnapshot(resolution, now) });
+    await tx.bookingAuditEvent.create({
+      data: {
+        bookingId,
+        // The EXISTING action, deliberately: it already means "this booking's
+        // room mapping was changed by a person", which is exactly what this is.
+        // A new enum member would need a database migration to record something
+        // the `reason` below already states unambiguously.
+        action: 'BOOKING_ROOM_MAPPING_REAPPLIED',
+        field: `room ${room.roomIndex}`,
+        oldValue: `${room.roomClassDisplayName ?? '—'} / ${room.roomClassPmsCode ?? '—'}`,
+        newValue: `${resolution.displayName} / ${resolution.pmsCode}`,
+        reason: 'Quản trị viên chọn mã hạng phòng nội bộ (chọn thủ công).',
+        actorUserId: actor.id,
+        actorRole: actor.role,
+      },
+    });
+  });
+
+  return {
+    roomIndex: room.roomIndex,
+    roomClassId: resolution.roomClassId!,
+    displayName: resolution.displayName!,
+    pmsCode: resolution.pmsCode!,
+    status: 'MANUAL',
+  };
+}
+
 /**
  * Explicitly re-resolves a booking against its branch's CURRENT active mapping.
  *

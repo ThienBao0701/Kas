@@ -102,21 +102,28 @@ const ROOM = {
 };
 
 /* ================================================================== */
-/* H1 — payment wording per source                                     */
+/* H1 — payment wording per source (ADMIN card)                        */
 /* ================================================================== */
+/**
+ * H1 was "PAY BEFORE CHECK-IN shown for an Agoda reservation whose mail says
+ * CN": the wrong payment wording reaching a branch. The field now lives on the
+ * ADMIN card only, so every assertion here mounts as an Admin — that is where
+ * the behaviour H1 fixed still has to hold. Reception's own (empty) case is
+ * covered in receptionDetailFields.test.tsx.
+ */
 describe('H1 payment display', () => {
   it('keeps PAY BEFORE CHECK-IN for Booking.com', () => {
-    mount(booking({ paymentStatus: 'PAY_BEFORE' }));
+    mount(booking({ paymentStatus: 'PAY_BEFORE' }), true);
     expect(screen.getByText('PAY BEFORE CHECK-IN')).toBeInTheDocument();
   });
 
   it('keeps PAY AFTER CHECK-IN for Booking.com', () => {
-    mount(booking({ paymentStatus: 'PAY_AFTER' }));
+    mount(booking({ paymentStatus: 'PAY_AFTER' }), true);
     expect(screen.getByText('PAY AFTER CHECK-IN')).toBeInTheDocument();
   });
 
   it('shows the Agoda wording exactly as the parser produced it', () => {
-    mount(otaBooking('AGODA', 'CN'));
+    mount(otaBooking('AGODA', 'CN'), true);
     expect(screen.getByText('CN')).toBeInTheDocument();
     // Never translated into the Booking.com vocabulary.
     expect(screen.queryByText('PAY BEFORE CHECK-IN')).toBeNull();
@@ -125,30 +132,43 @@ describe('H1 payment display', () => {
 
   it('shows a different Agoda wording verbatim too', () => {
     // Proves nothing is mapped: whatever the mail said is what appears.
-    mount(otaBooking('AGODA', 'Pay at Hotel'));
+    mount(otaBooking('AGODA', 'Pay at Hotel'), true);
     expect(screen.getByText('Pay at Hotel')).toBeInTheDocument();
   });
 
   it('shows no payment field for CTrip, which states none', () => {
     // The CTrip parser extracts no payment value. An invented one is exactly
     // the sort of thing a branch would act on.
-    mount(otaBooking('CTRIP', null));
+    mount(otaBooking('CTRIP', null), true);
     expect(screen.queryByText('Thanh toán')).toBeNull();
     expect(screen.queryByText('PAY BEFORE CHECK-IN')).toBeNull();
   });
 
   it('shows no payment field for an Agoda mail that stated none', () => {
-    mount(otaBooking('AGODA', null));
+    mount(otaBooking('AGODA', null), true);
     expect(screen.queryByText('Thanh toán')).toBeNull();
+  });
+
+  it('shows a receptionist no payment field whatever the source said', () => {
+    // The wording cannot be wrong on a screen that does not carry it.
+    mount(otaBooking('AGODA', 'CN'), false);
+    expect(screen.queryByText('Thanh toán')).toBeNull();
+    expect(screen.queryByText('CN')).toBeNull();
   });
 });
 
 /* ================================================================== */
 /* H2 — phone                                                          */
 /* ================================================================== */
+/**
+ * H2 was about WHICH bookings get a phone field. The field itself is now
+ * ADMIN-ONLY — reception reads the number off the PMS note instead — so the H2
+ * rule is asserted where the field still exists, plus one case proving
+ * reception never sees it whatever the source said.
+ */
 describe('H2 phone section', () => {
   it('hides the phone entirely for an OTA booking without one', () => {
-    mount(otaBooking('AGODA', 'CN'));
+    mount(otaBooking('AGODA', 'CN'), true);
     expect(screen.queryByText('Số điện thoại')).toBeNull();
     // No placeholder either — that would send someone looking for a number
     // that was never sent.
@@ -156,15 +176,21 @@ describe('H2 phone section', () => {
   });
 
   it('shows the phone for an OTA booking that does have one', () => {
-    mount(otaBooking('AGODA', 'CN', { phone: '0987654321' }));
+    mount(otaBooking('AGODA', 'CN', { phone: '0987654321' }), true);
     expect(screen.getByText('Số điện thoại')).toBeInTheDocument();
     expect(screen.getByText('0987654321')).toBeInTheDocument();
   });
 
   it('leaves Booking.com unchanged, placeholder and all', () => {
-    mount(booking({ phone: null }));
+    mount(booking({ phone: null }), true);
     expect(screen.getByText('Số điện thoại')).toBeInTheDocument();
     expect(screen.getByText('(Hiển thị số điện thoại)')).toBeInTheDocument();
+  });
+
+  it('shows a receptionist no phone field at all', () => {
+    mount(booking({ phone: '0987654321' }), false);
+    expect(screen.queryByText('Số điện thoại')).toBeNull();
+    expect(screen.queryByText('(Hiển thị số điện thoại)')).toBeNull();
   });
 });
 
@@ -259,12 +285,11 @@ describe('H8 reception booking detail', () => {
 /* Booking.com is untouched                                            */
 /* ================================================================== */
 describe('Booking.com is unchanged by every hotfix', () => {
-  it('renders the same four main fields it always did', () => {
-    mount(booking({ rooms: [ROOM] }));
+  it('renders the same four main fields it always did, for an Admin', () => {
+    mount(booking({ rooms: [ROOM] }), true);
     for (const label of ['Tên khách', 'Số điện thoại', 'Mã Booking', 'Tổng tiền']) {
       expect(screen.getByText(label), label).toBeInTheDocument();
     }
-    expect(screen.getByText('PAY BEFORE CHECK-IN')).toBeInTheDocument();
   });
 
   it('still generates its PMS note', () => {
@@ -277,30 +302,31 @@ describe('Booking.com is unchanged by every hotfix', () => {
   });
 });
 
+/** 5.2b chose WHICH wording the Admin card shows, so these mount as Admin. */
 describe('5.2b reviewed payment', () => {
   it('shows the mode the Admin reviewed, not the mail wording', () => {
-    mount(otaBooking('AGODA', 'Pay at Hotel', { reviewedPaymentMode: 'CN' }));
+    mount(otaBooking('AGODA', 'Pay at Hotel', { reviewedPaymentMode: 'CN' }), true);
     expect(screen.getByText('CN')).toBeInTheDocument();
     expect(screen.queryByText('Pay at Hotel')).toBeNull();
   });
 
   it('shows the reviewed mode for CTrip, which used to show nothing', () => {
-    mount(otaBooking('CTRIP', null, { reviewedPaymentMode: 'HOTEL_PAYMENT' }));
-    expect(screen.getByText('THANH TOÁN KHÁCH SẠN')).toBeInTheDocument();
+    mount(otaBooking('CTRIP', null, { reviewedPaymentMode: 'HOTEL_PAYMENT' }), true);
+    expect(screen.getByText('THANH TOÁN TẠI KHÁCH SẠN')).toBeInTheDocument();
   });
 
   it('falls back to the mail wording for a booking dispatched before 5.2b', () => {
-    mount(otaBooking('AGODA', 'CN', { reviewedPaymentMode: null }));
+    mount(otaBooking('AGODA', 'CN', { reviewedPaymentMode: null }), true);
     expect(screen.getByText('CN')).toBeInTheDocument();
   });
 
   it('still shows nothing when neither exists', () => {
-    mount(otaBooking('CTRIP', null, { reviewedPaymentMode: null }));
+    mount(otaBooking('CTRIP', null, { reviewedPaymentMode: null }), true);
     expect(screen.queryByText('Thanh toán')).toBeNull();
   });
 
   it('leaves Booking.com on its own badge', () => {
-    mount(booking({ paymentStatus: 'PAY_BEFORE', reviewedPaymentMode: null }));
+    mount(booking({ paymentStatus: 'PAY_BEFORE', reviewedPaymentMode: null }), true);
     expect(screen.getByText('PAY BEFORE CHECK-IN')).toBeInTheDocument();
   });
 });

@@ -16,10 +16,10 @@ export type OtaReviewSource = 'AGODA' | 'CTRIP';
 /** How the guest pays, as the operator words it. */
 export type OtaPaymentMode = 'CN' | 'HOTEL_PAYMENT';
 
-/** The exact Vietnamese wording — never "THANH TOÁN TẠI KHÁCH SẠN". */
+/** The exact Vietnamese wording, confirmed by the operator: "TẠI" is included. */
 export const OTA_PAYMENT_LABEL: Record<OtaPaymentMode, string> = {
   CN: 'CN',
-  HOTEL_PAYMENT: 'THANH TOÁN KHÁCH SẠN',
+  HOTEL_PAYMENT: 'THANH TOÁN TẠI KHÁCH SẠN',
 };
 
 export const OTA_SOURCE_LABEL: Record<OtaReviewSource, string> = {

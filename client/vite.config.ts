@@ -3,9 +3,15 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
-// The backend runs on :3001 in development; the client dev server proxies
-// /api to it so the browser stays same-origin and the session cookie flows.
-const BACKEND_URL = process.env.BACKEND_URL ?? 'http://localhost:3001';
+// The DEVELOPMENT backend runs on :3002; the client dev server proxies /api to
+// it so the browser stays same-origin and the session cookie flows.
+//
+// 3002, NOT 3001. Production listens on 3001, and this default is the single
+// line that decides which backend the dev frontend talks to. Pointed at 3001 it
+// would serve a local-looking UI backed by live production data whenever the
+// production service is running — the dev backend would not even need to be up.
+// Nothing here may be "simplified" back to the production port.
+const BACKEND_URL = process.env.BACKEND_URL ?? 'http://localhost:3002';
 
 export default defineConfig({
   plugins: [

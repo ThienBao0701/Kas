@@ -39,6 +39,9 @@ export default defineConfig({
       NODE_ENV: 'test',
       DATABASE_URL: testDatabaseUrl,
       SESSION_SECRET: 'test-session-secret-value',
+      // A throwaway 32-byte key so card encryption is exercised for real in
+      // tests. Deliberately NOT the development key, and it never leaves here.
+      CARD_ENCRYPTION_KEY: 'dGVzdC1jYXJkLWtleS0zMi1ieXRlcy1leGFjdGx5ISE=',
       // Cheapest valid bcrypt cost so hashing does not dominate the suite.
       BCRYPT_COST: '4',
       PROOF_UPLOAD_DIR: testProofDir,

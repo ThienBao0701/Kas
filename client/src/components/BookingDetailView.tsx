@@ -22,8 +22,21 @@ const MISSING_PHONE = '(Hiển thị số điện thoại)';
 /** How the reviewed payment mode reads to an operator. Never translated further. */
 const PAYMENT_MODE_LABEL: Record<string, string> = {
   CN: 'CN',
-  HOTEL_PAYMENT: 'THANH TOÁN KHÁCH SẠN',
+  HOTEL_PAYMENT: 'THANH TOÁN TẠI KHÁCH SẠN',
 };
+
+/**
+ * Hotel policy times, shown beside the stay dates in the header, in 12-hour
+ * form with the Vietnamese part of day spelled out.
+ *
+ * They are the same for every reservation: the hotel applies one arrival and
+ * one departure time to all of them, and no source sends a per-booking time.
+ * Constants rather than booking fields precisely BECAUSE they are policy — a
+ * screen that read them off the booking would imply they can differ per guest.
+ * Display only: nothing writes them back and no logic reads them.
+ */
+const CHECK_IN_TIME = '02:00PM (CHIỀU)';
+const CHECK_OUT_TIME = '12:00PM (TRƯA)';
 
 /** Booking.com is the only source that reliably supplies a guest phone. */
 function hasPhoneSection(booking: BookingDetail): boolean {
@@ -32,7 +45,29 @@ function hasPhoneSection(booking: BookingDetail): boolean {
 }
 
 /**
- * The payment field, per source.
+ * One "<label> : <date>   <time>" line in the sticky header.
+ *
+ * The DATE is always the booking's own — never a constant — so every booking
+ * renders its own stay. The TIME is the hotel policy constant beside it.
+ *
+ * BOLD THROUGHOUT, icon included: the two lines are the first thing read on
+ * this screen and they are read together, so no part of either is allowed to
+ * recede. Label and date carry fixed widths so the check-in and check-out
+ * columns line up under one another instead of drifting with the text.
+ */
+function StayLine({ label, date, time }: { label: string; date: string | null | undefined; time: string }) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 font-bold text-slate-900">
+      <CalendarCheck2 className="h-4 w-4 stroke-[2.5] text-brand-600" aria-hidden="true" />
+      <span className="w-24">{label} :</span>
+      <span className="w-24">{formatDate(date)}</span>
+      <span>{time}</span>
+    </div>
+  );
+}
+
+/**
+ * The payment field, per source. ADMIN-ONLY — see the supporting-fields block.
  *
  * H1 — the PAY BEFORE / PAY AFTER CHECK-IN wording belongs to Booking.com,
  * whose `paymentStatus` genuinely means that. Applying it to an OTA booking
@@ -151,12 +186,16 @@ export function BookingDetailView({
             <h1 className="mt-2 truncate text-xl font-semibold text-slate-900">
               {b.customerName ?? 'Khách chưa rõ'}
             </h1>
-            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-700">
-              <span className="inline-flex items-center gap-1.5 font-medium">
-                <CalendarCheck2 className="h-4 w-4 text-brand-600" aria-hidden="true" />
-                Nhận phòng: <span className="font-semibold text-slate-900">{formatDate(b.checkInDate)}</span>
-              </span>
-              <span className="font-mono text-slate-500">{b.bookingCode ?? '—'}</span>
+            {/*
+              Both ends of the stay, each with the hotel's fixed policy time.
+              The booking code that used to sit here is gone: it is a value a
+              receptionist COPIES, and it already has a copy button of its own
+              in the main card below. Duplicating it here gave them a second,
+              uncopyable rendering of the same string to mistype from.
+            */}
+            <div className="mt-2 space-y-1 text-sm text-slate-700">
+              <StayLine label="Nhận phòng" date={b.checkInDate} time={CHECK_IN_TIME} />
+              <StayLine label="Trả phòng" date={b.checkOutDate} time={CHECK_OUT_TIME} />
             </div>
           </div>
         </div>
@@ -168,6 +207,18 @@ export function BookingDetailView({
           <ClipboardList className="h-4 w-4 text-brand-600" aria-hidden="true" />
           Thông tin chính
         </div>
+        {/*
+          RECEPTION sees two fields: the guest and the amount. The booking code
+          and the phone number were removed from THEIR card only — reception
+          reads the code off the PMS note they paste, and the phone is not
+          something they dial from this screen.
+
+          THE PHONE IS NOT GONE FROM THE SYSTEM. It is still on the booking, and
+          the PMS note below still prints it beside the contact label — removing
+          the field here removes a display, not the data.
+
+          ADMIN keeps all four, unchanged.
+        */}
         <div className="grid gap-3 sm:grid-cols-2">
           <CopyField label="Tên khách" value={b.customerName} />
           {/*
@@ -177,7 +228,7 @@ export function BookingDetailView({
             entirely. Booking.com keeps its placeholder: there the number is
             expected and its absence is worth noticing.
           */}
-          {showPhone ? (
+          {isAdmin && showPhone ? (
             <CopyField
               label="Số điện thoại"
               value={b.phone ?? MISSING_PHONE}
@@ -185,24 +236,35 @@ export function BookingDetailView({
               mono
             />
           ) : null}
-          <CopyField label="Mã Booking" value={b.bookingCode} mono />
+          {isAdmin ? <CopyField label="Mã Booking" value={b.bookingCode} mono /> : null}
           <CopyField label="Tổng tiền" value={formatMoney(b.totalAmount, b.currency)} copyValue={formatAmountCopy(b.totalAmount)} />
         </div>
 
-        {/* Supporting read-only fields (no copy buttons) */}
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          {/*
-            Branch is ADMIN-only. A receptionist is standing in the hotel the
-            booking was sent to, so naming it tells them something they used to
-            get here. An Admin dispatches across eight branches and does need to
-            see which one received it. Branch FILTERING and permissions are
-            untouched — only this line went.
-          */}
-          {isAdmin ? <ReadField label="Chi nhánh" value={b.branch?.address ?? '—'} /> : null}
-          <PaymentField booking={b} />
-          <ReadField label="Check-in" value={formatDate(b.checkInDate)} />
-          <ReadField label="Check-out" value={formatDate(b.checkOutDate)} />
-        </div>
+        {/*
+          Supporting read-only fields (no copy buttons) — ADMIN ONLY, all of them.
+
+          RECEPTION gets the four copyable essentials and nothing else. Payment,
+          Check-in and Check-out were removed from their card: the two dates are
+          in the header now, where they are read on every booking, so repeating
+          them here was the same value twice on one screen.
+
+          ADMIN keeps every field it has always had. An Admin dispatches across
+          eight branches and reconciles payment terms against what the OTA said;
+          a receptionist is standing in the one hotel the booking was sent to and
+          acts on the four fields above. Branch FILTERING and permissions are
+          untouched — this gate is presentational.
+
+          The gate wraps the whole block rather than each child, so reception
+          gets no empty grid holding margin under the four fields.
+        */}
+        {isAdmin ? (
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <ReadField label="Chi nhánh" value={b.branch?.address ?? '—'} />
+            <PaymentField booking={b} />
+            <ReadField label="Check-in" value={formatDate(b.checkInDate)} />
+            <ReadField label="Check-out" value={formatDate(b.checkOutDate)} />
+          </div>
+        ) : null}
         {b.specialRequest ? (
           <div className="mt-3">
             <ReadField label="Ghi chú / Yêu cầu đặc biệt" value={b.specialRequest} />

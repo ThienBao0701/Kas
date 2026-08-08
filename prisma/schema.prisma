@@ -44,9 +44,47 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+/// ADMIN            = the dispatch centre; sees every branch.
+/// RECEPTIONIST     = one branch, bound by `User.branchId`.
+/// BOOKING_DEPARTMENT = Bộ phận đặt phòng. GLOBAL like an admin (branchId is
+///   null): it works across branches and picks the branch on each charge
+///   document. It is NOT an admin — it reaches the Chứng từ module and nothing
+///   else that is admin-only.
 enum UserRole {
   ADMIN
   RECEPTIONIST
+  BOOKING_DEPARTMENT
+}
+
+/// Where a charge document stands. A new document is CHUA_XU_LY — never
+/// assumed charged before the result is known.
+/// CHUA_XU_LY  = "Chưa xử lý"
+/// DA_BI_CHARGE = "Đã bị charge" — the ONLY status counted in charge totals.
+/// CHARGE_THAT_BAI = "Charge thất bại"
+enum ChargeStatus {
+  CHUA_XU_LY
+  DA_BI_CHARGE
+  CHARGE_THAT_BAI
+}
+
+/// Which of the three upload slots an attachment belongs to.
+enum ChargeAttachmentCategory {
+  GUEST_IMAGE
+  CHARGE_DOCUMENT
+  CARD_IMAGE
+}
+
+/// Auditable actions on a charge document.
+///
+/// CARD_REVEALED records THAT the card number was shown, by whom and when —
+/// never the number itself. No audit row ever carries card data.
+enum ChargeAuditAction {
+  CREATED
+  UPDATED
+  STATUS_CHANGED
+  ATTACHMENT_ADDED
+  ATTACHMENT_REMOVED
+  CARD_REVEALED
 }
 
 /// The booking lifecycle.
@@ -372,6 +410,10 @@ model User {
   roomMappingsCreated   BranchRoomMappingVersion[] @relation("RoomMappingCreatedBy")
   roomMappingsActivated BranchRoomMappingVersion[] @relation("RoomMappingActivatedBy")
   bookingAuditEvents    BookingAuditEvent[]
+  chargeDocumentsCreated ChargeDocument[]           @relation("ChargeCreatedBy")
+  chargeDocumentsUpdated ChargeDocument[]           @relation("ChargeUpdatedBy")
+  chargeAttachments      ChargeDocumentAttachment[]
+  chargeAuditEvents      ChargeDocumentAudit[]
 
   @@index([branchId])
   @@index([role])
@@ -458,6 +500,132 @@ model Branch {
   changeLogs          BranchChangeLog[]
   roomMappingVersions BranchRoomMappingVersion[]
   roomClasses         BranchRoomClass[]
+  chargeDocuments     ChargeDocument[]
+}
+
+/// A charge document ("Chứng từ"): evidence that a guest was, or was not,
+/// charged — and why.
+///
+/// THE CARD NUMBER IS NEVER STORED IN PLAINTEXT. `cardNumberCipher` holds an
+/// AES-256-GCM ciphertext whose key lives only in CARD_ENCRYPTION_KEY, outside
+/// this database. `cardLast4` is the masked form every ordinary screen, report
+/// and export uses; the full number is reachable only through the explicit,
+/// audited reveal endpoint.
+///
+/// THERE IS NO CVV/CVC/CID COLUMN, AND THERE MUST NEVER BE ONE. A card security
+/// code is Sensitive Authentication Data: it may not be retained after
+/// authorization, encrypted or not.
+///
+/// `bookingId` is nullable ON PURPOSE. A charge document is frequently raised
+/// from an external reservation that was never dispatched through Kas, so
+/// `bookingCode` is kept as free text and the relation is a bonus, not a
+/// requirement — forcing it would make those documents impossible to record.
+model ChargeDocument {
+  id       String @id @default(cuid())
+  branchId Int
+  /// Set only when the external code matches a booking Kas actually holds.
+  bookingId String?
+
+  guestName   String
+  /// The reservation code as the external system states it. Free text.
+  bookingCode String
+  /// Whole VND, like every other amount in this system.
+  amount      Int
+
+  /// AES-256-GCM ciphertext of the full card number, base64, with its iv and
+  /// auth tag. Never logged, never exported, never returned by a list endpoint.
+  cardNumberCipher String
+  /// The last four digits, stored separately so the masked form needs no key.
+  cardLast4        String
+  /// "MM/YY" as the staff entered it. Not sensitive authentication data.
+  cardExpiry       String
+  /// Which key version encrypted this row, so a future key rotation is a
+  /// re-encryption job rather than a schema change.
+  cardKeyVersion   Int    @default(1)
+
+  checkIn  DateTime
+  checkOut DateTime
+
+  /// Why the guest was charged. REQUIRED — the point of the module is that this
+  /// is never blank. Free text, not an enum: the situations vary.
+  reason String
+
+  status ChargeStatus @default(CHUA_XU_LY)
+  /// When the charge actually succeeded. The ONLY date the monthly report uses
+  /// — never createdAt, checkIn or checkOut. Null unless status is DA_BI_CHARGE.
+  chargedAt DateTime?
+
+  createdByUserId Int?
+  updatedByUserId Int?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  branch      Branch                     @relation(fields: [branchId], references: [id])
+  booking     Booking?                   @relation(fields: [bookingId], references: [id])
+  createdBy   User?                      @relation("ChargeCreatedBy", fields: [createdByUserId], references: [id])
+  updatedBy   User?                      @relation("ChargeUpdatedBy", fields: [updatedByUserId], references: [id])
+  attachments ChargeDocumentAttachment[]
+  auditEvents ChargeDocumentAudit[]
+
+  @@index([branchId])
+  @@index([status])
+  @@index([chargedAt])
+  @@index([bookingCode])
+  @@index([checkIn])
+  @@index([createdAt])
+}
+
+/// One uploaded file belonging to a charge document. A child table rather than
+/// columns on the parent, because all three categories accept MANY files.
+///
+/// Only metadata and a server-generated file name live here — never the bytes,
+/// and never a client-supplied path.
+model ChargeDocumentAttachment {
+  id               String                   @id @default(cuid())
+  chargeDocumentId String
+  category         ChargeAttachmentCategory
+  /// Server-generated name on disk (never the client's original name).
+  storedFileName   String
+  /// The client's original name, kept for display only — never trusted.
+  originalFileName String
+  mimeType         String
+  fileSize         Int
+  uploadedByUserId Int?
+  uploadedAt       DateTime                 @default(now())
+
+  chargeDocument ChargeDocument @relation(fields: [chargeDocumentId], references: [id], onDelete: Cascade)
+  uploadedBy     User?          @relation(fields: [uploadedByUserId], references: [id])
+
+  @@index([chargeDocumentId])
+  @@index([chargeDocumentId, category])
+}
+
+/// Charge-document audit trail.
+///
+/// Separate from BookingAuditEvent, which is bound to a booking by a non-null
+/// FK and a closed action enum — a charge document frequently has no booking at
+/// all, so it could not have lived there.
+///
+/// NO ROW EVER CARRIES CARD DATA. A CARD_REVEALED row records that the number
+/// was shown, by whom and when; the number itself appears nowhere.
+model ChargeDocumentAudit {
+  id               String            @id @default(cuid())
+  chargeDocumentId String
+  action           ChargeAuditAction
+  /// Which field changed, for an UPDATED row.
+  field            String?
+  /// Safe before/after values. Card fields are recorded as "••••1234" only.
+  oldValue         String?
+  newValue         String?
+  actorUserId      Int?
+  actorRole        UserRole?
+  createdAt        DateTime          @default(now())
+
+  chargeDocument ChargeDocument @relation(fields: [chargeDocumentId], references: [id], onDelete: Cascade)
+  actor          User?          @relation(fields: [actorUserId], references: [id])
+
+  @@index([chargeDocumentId, createdAt])
+  @@index([action])
 }
 
 /// One immutable-once-activated version of a branch's room-class mapping.
@@ -968,6 +1136,7 @@ model Booking {
   corrections      BookingCorrection[]
   proofs           BookingCreationProof[]
   proofComparisons BookingProofComparison[]
+  chargeDocuments  ChargeDocument[]
 
   @@index([bookingCode])
   @@index([branchId, status])

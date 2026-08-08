@@ -1,4 +1,4 @@
-import type { BookingAuditAction, Prisma, ProofReviewReason } from '@prisma/client';
+import type { BookingAuditAction, Prisma, ProofReviewReason, UserRole } from '@prisma/client';
 import { prisma } from '../db/prisma';
 import { ApiError } from '../lib/errors';
 import { getClock, type Clock } from '../lib/clock';
@@ -8,7 +8,7 @@ import type { BookingDetail } from './bookingView';
 
 type Actor = {
   id: number;
-  role: 'ADMIN' | 'RECEPTIONIST';
+  role: UserRole;
   branchId: number | null;
   fullName: string;
   /** Request correlation id, when the caller supplied one. Audit metadata only. */

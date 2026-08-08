@@ -82,7 +82,11 @@ describe('POST /api/admin/users', () => {
     expect(res.body.error.code).toBe('VALIDATION_ERROR');
   });
 
-  it('always creates the RECEPTIONIST role even if the client asks for ADMIN', async () => {
+  it('refuses to create an ADMIN, rather than silently downgrading the request', async () => {
+    // `role` is a real field since Bộ phận đặt phòng exists, so an ADMIN
+    // request is now REJECTED instead of quietly producing a receptionist —
+    // the caller learns their request was refused. Either way no admin is
+    // ever minted here; an administrator is bootstrapped.
     const res = await adminAgent
       .post('/api/admin/users')
       .send({
@@ -92,8 +96,42 @@ describe('POST /api/admin/users', () => {
         branchId: branchA,
         role: 'ADMIN',
       });
+    expect(res.status).toBe(422);
+    expect(await testPrisma.user.count({ where: { username: 'sneaky' } })).toBe(0);
+  });
+
+  it('creates a BOOKING_DEPARTMENT account, which is global and has no branch', async () => {
+    const res = await adminAgent.post('/api/admin/users').send({
+      username: 'datphong',
+      fullName: 'Bộ phận đặt phòng',
+      temporaryPassword: TEMP_PASSWORD,
+      role: 'BOOKING_DEPARTMENT',
+    });
     expect(res.status).toBe(201);
-    expect(res.body.user.role).toBe('RECEPTIONIST');
+    expect(res.body.user.role).toBe('BOOKING_DEPARTMENT');
+    expect(res.body.user.branch).toBeNull();
+  });
+
+  it('refuses a branch on a BOOKING_DEPARTMENT account', async () => {
+    // A branch would imply a scope this role does not have.
+    const res = await adminAgent.post('/api/admin/users').send({
+      username: 'datphong2',
+      fullName: 'Bộ phận đặt phòng',
+      temporaryPassword: TEMP_PASSWORD,
+      role: 'BOOKING_DEPARTMENT',
+      branchId: branchA,
+    });
+    expect(res.status).toBe(422);
+  });
+
+  it('still requires a branch for a receptionist', async () => {
+    const res = await adminAgent.post('/api/admin/users').send({
+      username: 'nobranch',
+      fullName: 'No Branch',
+      temporaryPassword: TEMP_PASSWORD,
+      role: 'RECEPTIONIST',
+    });
+    expect(res.status).toBe(422);
   });
 });
 

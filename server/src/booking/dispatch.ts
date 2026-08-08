@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import type { Prisma, UserRole } from '@prisma/client';
 import { prisma } from '../db/prisma';
 import { ApiError } from '../lib/errors';
 import { getClock, isLastMinute, type Clock } from '../lib/clock';
@@ -14,7 +14,9 @@ import type { BookingDetail } from './bookingView';
  * status-history row, and creates the right persistent notifications.
  */
 
-type Actor = { id: number; role: 'ADMIN' | 'RECEPTIONIST'; branchId: number | null; fullName: string };
+// The full role enum — a new role must not silently fail to compile here.
+// Which roles may act is enforced at runtime, never by narrowing this type.
+type Actor = { id: number; role: UserRole; branchId: number | null; fullName: string };
 
 function isoDate(date: Date | null): string {
   return date ? date.toISOString().slice(0, 10) : '—';

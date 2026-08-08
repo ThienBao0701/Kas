@@ -121,8 +121,40 @@ export function OtaReviewPanel({ source, rawText, onDispatch, onBack }: OtaRevie
 
   const review = data?.review;
   const validCodes = data?.validPmsCodes ?? [];
+
+  /**
+   * The note as edited on screen. `null` means "whatever the server generated".
+   *
+   * Reset whenever the server regenerates the note, so a correction to the
+   * branch, the rooms or the payment mode is never hidden behind a stale hand
+   * edit. The Admin's own edit survives until one of those actually changes it.
+   */
+  const [noteEdit, setNoteEdit] = useState<string | null>(null);
+  const serverNote = review?.note ?? null;
+  useEffect(() => {
+    setNoteEdit(null);
+  }, [serverNote]);
+  const noteText = noteEdit ?? serverNote ?? '';
   /** The rooms currently on screen — the Admin's if edited, else the server's. */
   const rooms: OtaReviewRoomLine[] = overrides.rooms ?? review?.rooms ?? [];
+
+  /**
+   * Internal codes split by whether THIS OTA source already maps to them.
+   *
+   * `knownOtaRoomNames` is the branch's mapping table for this platform alone,
+   * so the codes in it are the ones an Agoda / Booking.com / CTrip reservation
+   * actually resolves to — those are offered first, under the source's name.
+   *
+   * The branch's remaining active codes stay listed below rather than being
+   * filtered away. This selector exists precisely for the case where automatic
+   * mapping FAILED, and a room class with no mapping yet is the likeliest thing
+   * an Admin needs to pick; hiding it would leave the booking undispatchable
+   * with no way forward on this screen.
+   */
+  const sourceCodes = Array.from(
+    new Set((data?.knownOtaRoomNames ?? []).map((m) => m.pmsCode)),
+  ).filter((code) => validCodes.includes(code));
+  const otherCodes = validCodes.filter((code) => !sourceCodes.includes(code));
 
   const patchRooms = (next: OtaReviewRoomLine[]) => patch({ rooms: next });
 
@@ -151,9 +183,10 @@ export function OtaReviewPanel({ source, rawText, onDispatch, onBack }: OtaRevie
     }
   };
 
+  /** Copies what is ON SCREEN, so a hand-edited note copies as edited. */
   const onCopy = async () => {
-    if (!review?.note) return;
-    const ok = await copyText(review.note);
+    if (!noteText.trim()) return;
+    const ok = await copyText(noteText);
     setCopyState(ok ? 'ok' : 'fail');
     window.setTimeout(() => setCopyState('idle'), 2500);
   };
@@ -326,17 +359,48 @@ export function OtaReviewPanel({ source, rawText, onDispatch, onBack }: OtaRevie
                   />
                 </label>
 
+                {/*
+                  THE OTA'S OWN ROOM NAME, exactly as the platform printed it —
+                  "Deluxe Queen Room With City View", not the internal code it
+                  resolves to. The internal code is chosen in the select beside
+                  this field and never replaces the name here.
+
+                  `rawOtaRoomName` is the untouched original; `otaRoomName` is
+                  the normalised key the branch mappings are looked up by (Agoda
+                  strips a trailing style marker such as "(2)"). The Admin reads
+                  the original, and a blur that changed nothing commits nothing
+                  — so merely tabbing through the field cannot quietly swap the
+                  mapping key for the display name.
+                */}
                 <label className="block text-xs font-medium text-slate-500">
                   Tên hạng phòng trên {OTA_SOURCE_LABEL[review.source]}
                   <input
                     aria-label={`Tên hạng phòng dòng ${index + 1}`}
                     className={`${inputClass} mt-1`}
-                    value={shown(`room-${index}-name`, room.otaRoomName ?? '')}
+                    value={shown(
+                      `room-${index}-name`,
+                      room.rawOtaRoomName ?? room.otaRoomName ?? '',
+                    )}
                     onChange={(e) => setDraftValue(`room-${index}-name`, e.target.value)}
                     onBlur={(e) => {
+                      const original = room.rawOtaRoomName ?? room.otaRoomName ?? '';
+                      if (e.target.value === original) {
+                        // Untouched: drop the draft, leave the review alone.
+                        setDraft((d) => {
+                          const next = { ...d };
+                          delete next[`room-${index}-name`];
+                          return next;
+                        });
+                        return;
+                      }
                       const next = [...rooms];
                       // Clearing the manual code lets the server re-resolve.
-                      next[index] = { ...room, otaRoomName: e.target.value, pmsCode: null };
+                      next[index] = {
+                        ...room,
+                        otaRoomName: e.target.value,
+                        rawOtaRoomName: e.target.value,
+                        pmsCode: null,
+                      };
                       commit(`room-${index}-name`, { rooms: next });
                     }}
                   />
@@ -362,10 +426,30 @@ export function OtaReviewPanel({ source, rawText, onDispatch, onBack }: OtaRevie
                     }}
                   >
                     <option value="">— Chưa gán —</option>
-                    {/* Only codes the server said are valid for this branch. */}
-                    {validCodes.map((code) => (
-                      <option key={code} value={code}>{code}</option>
-                    ))}
+                    {/*
+                      Only codes the server said are valid for this branch, with
+                      the ones this OTA source already maps to offered first.
+                    */}
+                    {sourceCodes.length > 0 ? (
+                      <>
+                        <optgroup label={`Mã dùng cho ${OTA_SOURCE_LABEL[review.source]}`}>
+                          {sourceCodes.map((code) => (
+                            <option key={code} value={code}>{code}</option>
+                          ))}
+                        </optgroup>
+                        {otherCodes.length > 0 ? (
+                          <optgroup label="Mã khác của chi nhánh">
+                            {otherCodes.map((code) => (
+                              <option key={code} value={code}>{code}</option>
+                            ))}
+                          </optgroup>
+                        ) : null}
+                      </>
+                    ) : (
+                      validCodes.map((code) => (
+                        <option key={code} value={code}>{code}</option>
+                      ))
+                    )}
                   </select>
                 </label>
 
@@ -394,27 +478,38 @@ export function OtaReviewPanel({ source, rawText, onDispatch, onBack }: OtaRevie
 
       {/* 10–14. Prices, breakfast, payment -------------------------------- */}
       <Card className="p-5">
+        {/*
+          CTrip calls the branch's figure "Công nợ" and no longer shows a
+          guest-booked price at all: its note prints the creation date where
+          that price used to sit, so the field had nothing left to feed. The
+          server matches — it stops requiring the figure for a CTrip note.
+
+          Agoda is unchanged. Its CN note still prints GIÁ KHÁCH ĐẶT, so the
+          field stays and is still required there.
+        */}
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="block text-sm font-medium text-slate-600">
-            Giá chi nhánh {review.source === 'AGODA' ? '(Net rate)' : '(Your payout)'}
+            {review.source === 'AGODA' ? 'Giá chi nhánh (Net rate)' : 'Công nợ'}
             <input
-              aria-label="Giá chi nhánh"
+              aria-label={review.source === 'AGODA' ? 'Giá chi nhánh' : 'Công nợ'}
               className={`${inputClass} mt-1`}
               value={shown('branchPrice', formatAmount(review.branchPrice))}
               onChange={(e) => setDraftValue('branchPrice', e.target.value)}
               onBlur={(e) => commit('branchPrice', { branchPrice: parseAmount(e.target.value) })}
             />
           </label>
-          <label className="block text-sm font-medium text-slate-600">
-            Giá khách đặt {review.source === 'AGODA' ? '(Reference sell rate)' : '(Original room rate)'}
-            <input
-              aria-label="Giá khách đặt"
-              className={`${inputClass} mt-1`}
-              value={shown('guestBookedPrice', formatAmount(review.guestBookedPrice))}
-              onChange={(e) => setDraftValue('guestBookedPrice', e.target.value)}
-              onBlur={(e) => commit('guestBookedPrice', { guestBookedPrice: parseAmount(e.target.value) })}
-            />
-          </label>
+          {review.source === 'AGODA' ? (
+            <label className="block text-sm font-medium text-slate-600">
+              Giá khách đặt (Reference sell rate)
+              <input
+                aria-label="Giá khách đặt"
+                className={`${inputClass} mt-1`}
+                value={shown('guestBookedPrice', formatAmount(review.guestBookedPrice))}
+                onChange={(e) => setDraftValue('guestBookedPrice', e.target.value)}
+                onBlur={(e) => commit('guestBookedPrice', { guestBookedPrice: parseAmount(e.target.value) })}
+              />
+            </label>
+          ) : null}
         </div>
 
         {/* 10. Nightly prices — shown only when the platform stated them. */}
@@ -490,20 +585,42 @@ export function OtaReviewPanel({ source, rawText, onDispatch, onBack }: OtaRevie
             {copyState === 'fail' ? (
               <span className="text-xs text-red-700">Không sao chép được. Vui lòng chọn và sao chép thủ công.</span>
             ) : null}
-            <Button variant="secondary" onClick={onCopy} disabled={!review.note}>
+            <Button variant="secondary" onClick={onCopy} disabled={!noteText.trim()}>
               <Copy className="h-4 w-4" aria-hidden="true" />
               Sao chép note
             </Button>
           </div>
         </div>
 
-        {review.note ? (
-          <pre
-            data-testid="ota-note"
-            className="whitespace-pre-wrap rounded-xl bg-slate-900 px-3 py-3 font-mono text-sm text-slate-50"
-          >
-            {review.note}
-          </pre>
+        {/*
+          EDITABLE. It was a read-only dark block, which is why nobody could fix
+          a wording the generator got slightly wrong without going back to the
+          fields. It is now an ordinary light textarea in the app's own input
+          style: no readOnly, no disabled, monospaced so the string contract
+          stays legible.
+        */}
+        {serverNote !== null ? (
+          <>
+            <textarea
+              data-testid="ota-note"
+              aria-label="Ghi chú PMS"
+              rows={3}
+              value={noteText}
+              onChange={(e) => setNoteEdit(e.target.value)}
+              className={`${inputClass} whitespace-pre-wrap font-mono`}
+            />
+            {/*
+              The dispatched note is regenerated by the server from the fields
+              above — a hand edit is for copying, not for sending. Saying so is
+              the difference between a useful scratch pad and an Admin who
+              believes the branch received text it never got.
+            */}
+            {noteEdit !== null && noteEdit !== serverNote ? (
+              <p className="mt-1 text-xs text-amber-700" data-testid="ota-note-edited">
+                Đã sửa tay. Bản sửa dùng để sao chép; đơn gửi chi nhánh vẫn dùng ghi chú hệ thống tạo.
+              </p>
+            ) : null}
+          </>
         ) : (
           <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
             {review.noteError ?? 'Chưa đủ dữ liệu để tạo ghi chú.'}

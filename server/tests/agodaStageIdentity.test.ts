@@ -161,10 +161,10 @@ describe('the PMS note matches the values on screen', () => {
     ).body.review;
 
     // The first line's booking/room/night/price segment is identical.
-    const segment = (note: string) => note.split('\n')[0]!.replace(/ (CN|THANH TOÁN KHÁCH SẠN)$/, '');
+    const segment = (note: string) => note.split('\n')[0]!.replace(/ (CN|THANH TOÁN TẠI KHÁCH SẠN)$/, '');
     expect(segment(hotel.note)).toBe(segment(cn.note));
     expect(cn.note.split('\n')[0]).toMatch(/ CN$/);
-    expect(hotel.note).toMatch(/ THANH TOÁN KHÁCH SẠN$/);
+    expect(hotel.note).toMatch(/ THANH TOÁN TẠI KHÁCH SẠN$/);
     // Everything else the review reports is unchanged by the payment mode.
     expect(hotel.branchPrice).toBe(cn.branchPrice);
     expect(hotel.guestName).toBe(cn.guestName);

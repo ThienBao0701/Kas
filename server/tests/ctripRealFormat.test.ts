@@ -26,6 +26,15 @@ import { parseCtripBooking } from '../src/booking/ctrip';
 import { ctripParsedFields } from '../src/booking/otaReviewService';
 import { buildOtaReview, type OtaReviewBranch } from '../src/booking/otaReview';
 import { normalizeText } from '../src/booking/text';
+import { hcmDayMonthDots } from '../src/booking/otaPmsNote';
+
+/**
+ * CTrip's second line prints the day the booking is CREATED, so for a review
+ * built now that is today in Ho Chi Minh City. The DD.MM formatting itself is
+ * pinned against fixed dates in otaPmsNote.test.ts; here it only has to make
+ * the whole-string comparison stable whatever day the suite runs.
+ */
+const CREATED = hcmDayMonthDots(new Date());
 
 const REAL = readFileSync(
   path.join(__dirname, 'fixtures', 'ctrip', '05-real-page-with-list.txt'),
@@ -336,14 +345,16 @@ describe('confirmed CTrip reservation 1658113703317875', () => {
   it('produces the exact CN note', () => {
     const r = review(REAL, CN5, { paymentMode: 'CN' });
     expect(r.note).toBe(
-      'CTRIP_1658113703317875_1STAN_7DEM 4.645.956 CN\nGIÁ KHÁCH ĐẶT 6.637.080 KHONG AN SANG',
+      `CTRIP_1658113703317875_1STAN_7DEM 4.645.956 CN\n${CREATED} KHONG AN SANG`,
     );
     expect(r.canDispatch).toBe(true);
   });
 
   it('produces the exact hotel-payment note', () => {
     const r = review(REAL, CN5, { paymentMode: 'HOTEL_PAYMENT' });
-    expect(r.note).toBe('CTRIP_1658113703317875_1STAN_7DEM 4.645.956 THANH TOÁN KHÁCH SẠN');
+    expect(r.note).toBe(
+      `CTRIP_1658113703317875_1STAN_7DEM 4.645.956 THANH TOÁN TẠI KHÁCH SẠN\n${CREATED} KHONG AN SANG`,
+    );
     expect(r.canDispatch).toBe(true);
   });
 

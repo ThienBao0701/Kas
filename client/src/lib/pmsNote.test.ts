@@ -5,6 +5,7 @@ import {
   arrivalNote,
   buildPmsNote,
   contactLabel,
+  contactSegment,
   noteNights,
   roomsAbbreviation,
 } from './pmsNote';
@@ -183,6 +184,31 @@ describe('contactLabel', () => {
   });
 });
 
+describe('contactSegment', () => {
+  it('prints the label then the number', () => {
+    expect(contactSegment('+966598331083')).toBe('CÓ WA +966598331083');
+    expect(contactSegment('+84912345678')).toBe('CÓ ZL +84912345678');
+  });
+
+  it('preserves a leading + and never reformats the number', () => {
+    // Whatever the guest gave is what the receptionist dials. Spacing,
+    // grouping and the country prefix are all left exactly as received.
+    expect(contactSegment('+966 598 331 083')).toBe('CÓ WA +966 598 331 083');
+    expect(contactSegment('0901.234.567')).toBe('CÓ ZL 0901.234.567');
+    expect(contactSegment('0064 21 555 000')).toBe('CÓ WA 0064 21 555 000');
+  });
+
+  it('trims only the surrounding whitespace', () => {
+    expect(contactSegment('  +84912345678  ')).toBe('CÓ ZL +84912345678');
+  });
+
+  it('stands alone as NO CONTACT when there is no number', () => {
+    expect(contactSegment(null)).toBe('NO CONTACT');
+    expect(contactSegment('')).toBe('NO CONTACT');
+    expect(contactSegment('   ')).toBe('NO CONTACT');
+  });
+});
+
 describe('arrivalNote', () => {
   it('extracts a concise arrival time', () => {
     expect(arrivalNote('Khách dự kiến đến khoảng 13:00.')).toBe('KHÁCH ĐẾN KHOẢNG 13:00');
@@ -212,7 +238,9 @@ describe('buildPmsNote — exact output', () => {
       }),
       NOW,
     );
-    expect(res.text).toBe('BK 6339476198_STAN_1 ĐÊM 510.138 PAY BEFORE CHECK-IN CI\nĂN SÁNG 22/07 CÓ ZL');
+    expect(res.text).toBe(
+      'BK 6339476198_STAN_1 ĐÊM 510.138 PAY BEFORE CHECK-IN CI\nĂN SÁNG 22/07 CÓ ZL +84 901 234 567',
+    );
   });
 
   it('C — breakfast branch, foreign phone and arrival note', () => {
@@ -228,7 +256,8 @@ describe('buildPmsNote — exact output', () => {
       NOW,
     );
     expect(res.text).toBe(
-      'BK 6339476198_STAN_1 ĐÊM 510.138 PAY BEFORE CHECK-IN CI\nĂN SÁNG 22/07 CÓ WA KHÁCH ĐẾN KHOẢNG 13:00',
+      'BK 6339476198_STAN_1 ĐÊM 510.138 PAY BEFORE CHECK-IN CI\n' +
+        'ĂN SÁNG 22/07 CÓ WA +64 210 812 1300 KHÁCH ĐẾN KHOẢNG 13:00',
     );
   });
 
@@ -244,7 +273,9 @@ describe('buildPmsNote — exact output', () => {
       }),
       NOW,
     );
-    expect(res.text).toBe('BK 6339476198_DLX_2 ĐÊM 1.200.000 PAY AFTER CHECK-IN CI\n22/07 CÓ WA');
+    expect(res.text).toBe(
+      'BK 6339476198_DLX_2 ĐÊM 1.200.000 PAY AFTER CHECK-IN CI\n22/07 CÓ WA +64 210 812 1300',
+    );
   });
 
   it('E — PARTNER booking replaces the contact label with ĐƠN ĐỐI TÁC (breakfast kept)', () => {

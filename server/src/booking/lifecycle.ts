@@ -20,7 +20,7 @@
  * update matches no row and is reported as a conflict rather than silently
  * overwriting the first one's timestamp and actor.
  */
-import type { BookingStatus, PrismaClient } from '@prisma/client';
+import type { BookingStatus, PrismaClient, UserRole } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db/prisma';
 import { ApiError } from '../lib/errors';
 import { getClock, type Clock } from '../lib/clock';
@@ -29,7 +29,7 @@ import { recordRequestOrigin, type RequestOrigin } from './requestAudit';
 /** Who is performing the transition. */
 export interface LifecycleActor {
   id: number;
-  role: 'ADMIN' | 'RECEPTIONIST';
+  role: UserRole;
   branchId: number | null;
   /** Where the request came from, recorded beside the transition. */
   origin?: RequestOrigin;

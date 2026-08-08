@@ -1,4 +1,16 @@
-export type UserRole = 'ADMIN' | 'RECEPTIONIST';
+/**
+ * BOOKING_DEPARTMENT ("Bộ phận đặt phòng") is GLOBAL like an admin — it has no
+ * branch and picks one per charge document — but it is not an admin: it reaches
+ * the Chứng từ module and nothing else that is admin-only.
+ */
+export type UserRole = 'ADMIN' | 'RECEPTIONIST' | 'BOOKING_DEPARTMENT';
+
+/** How each role is named to a person. */
+export const ROLE_LABEL: Record<UserRole, string> = {
+  ADMIN: 'Quản trị viên',
+  RECEPTIONIST: 'Lễ tân',
+  BOOKING_DEPARTMENT: 'Bộ phận đặt phòng',
+};
 
 export interface Branch {
   id: number;

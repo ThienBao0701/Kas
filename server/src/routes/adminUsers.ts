@@ -9,13 +9,33 @@ import { serializeManagedUser } from '../auth/serialize';
 import { sessionStore } from '../auth/session';
 import { requireAuth, requireAdmin, requirePasswordChanged } from '../middleware/auth';
 
-const createUserSchema = z.object({
-  username: z.string().trim().min(1, 'Tên đăng nhập là bắt buộc.').max(50),
-  fullName: z.string().trim().min(1, 'Họ tên là bắt buộc.').max(100),
-  temporaryPassword: passwordSchema,
-  branchId: z.number().int().positive(),
-  active: z.boolean().optional(),
-});
+/**
+ * The roles this endpoint may create. ADMIN is deliberately absent: an
+ * administrator is bootstrapped, never minted through the user-management API.
+ */
+const MANAGEABLE_ROLES = ['RECEPTIONIST', 'BOOKING_DEPARTMENT'] as const;
+
+const createUserSchema = z
+  .object({
+    username: z.string().trim().min(1, 'Tên đăng nhập là bắt buộc.').max(50),
+    fullName: z.string().trim().min(1, 'Họ tên là bắt buộc.').max(100),
+    temporaryPassword: passwordSchema,
+    // Defaulted so every existing caller that omits it still creates a
+    // receptionist exactly as before.
+    role: z.enum(MANAGEABLE_ROLES).default('RECEPTIONIST'),
+    branchId: z.number().int().positive().optional(),
+    active: z.boolean().optional(),
+  })
+  // A receptionist IS a branch; Bộ phận đặt phòng is global and must not carry
+  // one, or it would silently inherit branch-scoped access somewhere later.
+  .refine((v) => v.role !== 'RECEPTIONIST' || v.branchId !== undefined, {
+    message: 'Tài khoản lễ tân phải thuộc một chi nhánh.',
+    path: ['branchId'],
+  })
+  .refine((v) => v.role !== 'BOOKING_DEPARTMENT' || v.branchId === undefined, {
+    message: 'Tài khoản bộ phận đặt phòng không thuộc chi nhánh nào.',
+    path: ['branchId'],
+  });
 
 const updateUserSchema = z
   .object({
@@ -49,10 +69,10 @@ async function loadReceptionist(id: number) {
   if (!user) {
     throw ApiError.notFound('Không tìm thấy tài khoản.');
   }
-  // These endpoints manage receptionists only; admin accounts are off-limits so
-  // the administrator can never lock itself out or demote itself here.
-  if (user.role !== 'RECEPTIONIST') {
-    throw ApiError.forbidden('Chỉ có thể quản lý tài khoản lễ tân.');
+  // Admin accounts are off-limits here, so the administrator can never lock
+  // itself out or demote itself through this API.
+  if (!(MANAGEABLE_ROLES as readonly string[]).includes(user.role)) {
+    throw ApiError.forbidden('Chỉ có thể quản lý tài khoản lễ tân và bộ phận đặt phòng.');
   }
   return user;
 }
@@ -76,7 +96,9 @@ export function createAdminUsersRouter(): Router {
     (async () => {
       const query = listQuerySchema.parse(req.query);
 
-      const where: Prisma.UserWhereInput = { role: 'RECEPTIONIST' };
+      // Both manageable roles, so a Bộ phận đặt phòng account is visible and
+      // editable in the same screen rather than existing only in the database.
+      const where: Prisma.UserWhereInput = { role: { in: [...MANAGEABLE_ROLES] } };
       if (query.branchId !== undefined) where.branchId = query.branchId;
       if (query.active !== undefined) where.active = query.active === 'true';
       if (query.search) {
@@ -101,7 +123,9 @@ export function createAdminUsersRouter(): Router {
       const body = createUserSchema.parse(req.body);
       const username = normalizeUsername(body.username);
 
-      await assertBranchUsable(body.branchId);
+      // Only a receptionist has a branch to validate; the schema has already
+      // refused a branch on a Bộ phận đặt phòng account.
+      if (body.branchId !== undefined) await assertBranchUsable(body.branchId);
 
       const existing = await prisma.user.findUnique({ where: { username } });
       if (existing) {
@@ -113,8 +137,8 @@ export function createAdminUsersRouter(): Router {
           username,
           passwordHash: await hashPassword(body.temporaryPassword),
           fullName: body.fullName,
-          role: 'RECEPTIONIST',
-          branchId: body.branchId,
+          role: body.role,
+          branchId: body.branchId ?? null,
           active: body.active ?? true,
           mustChangePassword: true,
         },

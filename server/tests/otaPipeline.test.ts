@@ -21,6 +21,10 @@ import { createApp } from '../src/app';
 import { seedBranches } from '../src/db/seed';
 import { resetAll, testPrisma } from './helpers/db';
 import { ADMIN_PASSWORD, createAdmin, loginAgent } from './helpers/auth';
+import { hcmDayMonthDots } from '../src/booking/otaPmsNote';
+
+/** CTrip's second line is the creation day — today for a review built now. */
+const CREATED = hcmDayMonthDots(new Date());
 
 const AGODA_RAW = fs.readFileSync(
   path.join(__dirname, 'fixtures', 'agoda', '08-real-bilingual-inline.txt'),
@@ -141,14 +145,16 @@ describe('CTrip sample through the real route', () => {
     const cn = (await review({ source: 'CTRIP', rawText: CTRIP_RAW, overrides: { paymentMode: 'CN' } }))
       .body.review;
     expect(cn.note).toBe(
-      'CTRIP_1658113703317875_1STAN_7DEM 4.645.956 CN\nGIÁ KHÁCH ĐẶT 6.637.080 KHONG AN SANG',
+      `CTRIP_1658113703317875_1STAN_7DEM 4.645.956 CN\n${CREATED} KHONG AN SANG`,
     );
     expect(cn.canDispatch).toBe(true);
 
     const hotel = (
       await review({ source: 'CTRIP', rawText: CTRIP_RAW, overrides: { paymentMode: 'HOTEL_PAYMENT' } })
     ).body.review;
-    expect(hotel.note).toBe('CTRIP_1658113703317875_1STAN_7DEM 4.645.956 THANH TOÁN KHÁCH SẠN');
+    expect(hotel.note).toBe(
+      `CTRIP_1658113703317875_1STAN_7DEM 4.645.956 THANH TOÁN TẠI KHÁCH SẠN\n${CREATED} KHONG AN SANG`,
+    );
   });
 });
 
@@ -238,7 +244,7 @@ describe('Agoda sample through the real route', () => {
     const hotel = (
       await review({ source: 'AGODA', rawText: AGODA_RAW, overrides: { paymentMode: 'HOTEL_PAYMENT' } })
     ).body.review;
-    expect(hotel.note).toBe('AGD 1756224954_1SUP_1DEM 529.537 THANH TOÁN KHÁCH SẠN');
+    expect(hotel.note).toBe('AGD 1756224954_1SUP_1DEM 529.537 THANH TOÁN TẠI KHÁCH SẠN');
   });
 });
 

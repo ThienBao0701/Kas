@@ -248,7 +248,7 @@ describe('the amended booking reaches a dispatchable review', () => {
       'AGD 1753732591_1STAN_3DEM 3.688.138 CN\nGIÁ KHÁCH ĐẶT 5.156.900 KHONG AN SANG',
     );
     expect(review({ paymentMode: 'HOTEL_PAYMENT' }).note).toBe(
-      'AGD 1753732591_1STAN_3DEM 3.688.138 THANH TOÁN KHÁCH SẠN',
+      'AGD 1753732591_1STAN_3DEM 3.688.138 THANH TOÁN TẠI KHÁCH SẠN',
     );
   });
 });

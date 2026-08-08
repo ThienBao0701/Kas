@@ -27,16 +27,24 @@ const AGODA: OtaNoteInput = {
   breakfastIncluded: false,
 };
 
-/** The confirmed CTrip sample: reservation 1658113703317875, CN5, 1x Standard. */
+/**
+ * The confirmed CTrip sample: reservation 1658113703317875, CN5, 1x Standard.
+ *
+ * `createdAt` is pinned so the second line's date is deterministic: 07:00 UTC
+ * on 7 August is 14:00 the same day in Asia/Ho_Chi_Minh, so the note reads
+ * "07.08". It is the CREATION day, and no field of this reservation is that
+ * date — the check-in is not even in the fixture.
+ */
 const CTRIP: OtaNoteInput = {
   source: 'CTRIP',
   bookingCode: '1658113703317875',
   rooms: [{ quantity: 1, pmsCode: 'STAN' }],
   nights: 7,
   branchPrice: 4_645_956, // Your payout
-  guestBookedPrice: 6_637_080, // Original room rate (never Final room rate)
+  guestBookedPrice: 6_637_080, // Original room rate — no longer on the note
   paymentMode: 'CN',
   breakfastIncluded: false,
+  createdAt: new Date('2026-08-07T07:00:00.000Z'),
 };
 
 function text(input: OtaNoteInput): string {
@@ -58,19 +66,63 @@ describe('confirmed note strings', () => {
 
   it('2. Agoda + hotel payment', () => {
     expect(text({ ...AGODA, paymentMode: 'HOTEL_PAYMENT' })).toBe(
-      'AGD 1756162808_1SUP_4DEM 2.728.024 THANH TOÁN KHÁCH SẠN',
+      'AGD 1756162808_1SUP_4DEM 2.728.024 THANH TOÁN TẠI KHÁCH SẠN',
     );
   });
 
   it('3. CTrip + CN', () => {
     expect(text(CTRIP)).toBe(
-      'CTRIP_1658113703317875_1STAN_7DEM 4.645.956 CN\nGIÁ KHÁCH ĐẶT 6.637.080 KHONG AN SANG',
+      'CTRIP_1658113703317875_1STAN_7DEM 4.645.956 CN\n07.08 KHONG AN SANG',
     );
   });
 
   it('4. CTrip + hotel payment', () => {
     expect(text({ ...CTRIP, paymentMode: 'HOTEL_PAYMENT' })).toBe(
-      'CTRIP_1658113703317875_1STAN_7DEM 4.645.956 THANH TOÁN KHÁCH SẠN',
+      'CTRIP_1658113703317875_1STAN_7DEM 4.645.956 THANH TOÁN TẠI KHÁCH SẠN\n07.08 KHONG AN SANG',
+    );
+  });
+});
+
+/* ================================================================== */
+/* CTrip's second line: the creation date, never a price               */
+/* ================================================================== */
+
+describe("CTrip's second line", () => {
+  it('carries the creation day as DD.MM and no guest-booked price', () => {
+    const note = text(CTRIP);
+    const line2 = note.split('\n')[1]!;
+    expect(line2).toBe('07.08 KHONG AN SANG');
+    expect(note).not.toContain('GIÁ KHÁCH ĐẶT');
+    expect(note).not.toContain('6.637.080');
+  });
+
+  it('follows line 1 immediately — never a blank line between them', () => {
+    for (const mode of ['CN', 'HOTEL_PAYMENT'] as const) {
+      const lines = text({ ...CTRIP, paymentMode: mode }).split('\n');
+      expect(lines, mode).toHaveLength(2);
+      expect(lines[1]!.trim().length, mode).toBeGreaterThan(0);
+    }
+  });
+
+  it('reads the CREATION date, not the stay', () => {
+    // A different creation day moves the line; nothing about the stay does.
+    expect(text({ ...CTRIP, createdAt: new Date('2026-12-25T07:00:00.000Z') })).toContain(
+      '\n25.12 KHONG AN SANG',
+    );
+  });
+
+  it('uses Asia/Ho_Chi_Minh, so a late-evening UTC time is already tomorrow', () => {
+    // 18:30 UTC on the 6th is 01:30 on the 7th in Ho Chi Minh City.
+    expect(text({ ...CTRIP, createdAt: new Date('2026-08-06T18:30:00.000Z') })).toContain(
+      '\n07.08 ',
+    );
+  });
+
+  it('is built without a guest-booked price at all', () => {
+    const result = buildOtaPmsNote({ ...CTRIP, guestBookedPrice: null });
+    expect(result.ok).toBe(true);
+    expect(result.ok === true && result.text).toBe(
+      'CTRIP_1658113703317875_1STAN_7DEM 4.645.956 CN\n07.08 KHONG AN SANG',
     );
   });
 });
@@ -102,11 +154,12 @@ describe('hotel-payment notes', () => {
   const agodaHotel = text({ ...AGODA, paymentMode: 'HOTEL_PAYMENT' });
   const ctripHotel = text({ ...CTRIP, paymentMode: 'HOTEL_PAYMENT' });
 
-  it('are exactly one line', () => {
+  it('are exactly one line for AGODA', () => {
+    // CTrip is the exception: its second line is the creation date and is
+    // printed whichever way the guest pays.
     expect(agodaHotel.split('\n')).toHaveLength(1);
-    expect(ctripHotel.split('\n')).toHaveLength(1);
     expect(agodaHotel).not.toContain('\n');
-    expect(ctripHotel).not.toContain('\n');
+    expect(ctripHotel.split('\n')).toHaveLength(2);
   });
 
   it('never carry the guest-booked price', () => {
@@ -116,16 +169,15 @@ describe('hotel-payment notes', () => {
     expect(ctripHotel).not.toContain('6.637.080');
   });
 
-  it('never carry a breakfast suffix', () => {
+  it('never carry a breakfast suffix on AGODA', () => {
     expect(agodaHotel).not.toContain(NO_BREAKFAST_TEXT);
-    expect(ctripHotel).not.toContain(NO_BREAKFAST_TEXT);
   });
 
-  it('use the exact wording THANH TOÁN KHÁCH SẠN, never "TẠI KHÁCH SẠN"', () => {
-    expect(OTA_PAYMENT_LABEL.HOTEL_PAYMENT).toBe('THANH TOÁN KHÁCH SẠN');
-    expect(agodaHotel).toContain('THANH TOÁN KHÁCH SẠN');
-    expect(agodaHotel).not.toContain('THANH TOÁN TẠI KHÁCH SẠN');
-    expect(ctripHotel).not.toContain('THANH TOÁN TẠI KHÁCH SẠN');
+  it('use the exact wording THANH TOÁN TẠI KHÁCH SẠN', () => {
+    // The operator confirmed "TẠI" belongs in this phrase.
+    expect(OTA_PAYMENT_LABEL.HOTEL_PAYMENT).toBe('THANH TOÁN TẠI KHÁCH SẠN');
+    expect(agodaHotel).toContain('THANH TOÁN TẠI KHÁCH SẠN');
+    expect(ctripHotel).toContain('THANH TOÁN TẠI KHÁCH SẠN');
   });
 
   it('are generated even when the guest-booked price is unknown', () => {
@@ -209,12 +261,19 @@ describe('refusals', () => {
     expect(ctrip.ok === false && ctrip.error).toContain('Your payout');
   });
 
-  it('refuses a CN note without the guest-booked price', () => {
+  it('refuses an AGODA CN note without the guest-booked price', () => {
+    // Agoda's CN note prints GIÁ KHÁCH ĐẶT, so the figure is required.
     const agoda = refusal({ guestBookedPrice: null });
     expect(agoda.ok === false && agoda.error).toContain('Reference sell rate');
+  });
 
-    const ctrip = buildOtaPmsNote({ ...CTRIP, guestBookedPrice: null });
-    expect(ctrip.ok === false && ctrip.error).toContain('Original room rate');
+  it('does NOT refuse a CTrip note without the guest-booked price', () => {
+    // CTrip prints the creation date in that position and never reads the
+    // price, so requiring it would block a dispatch over an unused figure.
+    expect(buildOtaPmsNote({ ...CTRIP, guestBookedPrice: null }).ok).toBe(true);
+    expect(
+      buildOtaPmsNote({ ...CTRIP, paymentMode: 'HOTEL_PAYMENT', guestBookedPrice: null }).ok,
+    ).toBe(true);
   });
 
   it('refuses missing booking code, nights, rooms and bad quantities', () => {
@@ -231,6 +290,14 @@ describe('refusals', () => {
     const r = refusal({ breakfastIncluded: true });
     expect(r.ok).toBe(false);
     expect(r.ok === false && r.error).toContain('ăn sáng');
+  });
+
+  it('refuses a breakfast-included CTrip note in either payment mode', () => {
+    // CTrip now prints the breakfast wording on both, so both must refuse.
+    for (const mode of ['CN', 'HOTEL_PAYMENT'] as const) {
+      const r = buildOtaPmsNote({ ...CTRIP, paymentMode: mode, breakfastIncluded: true });
+      expect(r.ok, mode).toBe(false);
+    }
   });
 });
 

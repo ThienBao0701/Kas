@@ -3,7 +3,14 @@ import { LoginPage } from '../auth/LoginPage';
 import { ChangePasswordPage } from '../auth/ChangePasswordPage';
 import { PublicOnly, RequireAuth, RequirePasswordChange, RequireRole } from '../auth/ProtectedRoute';
 import { useAuth } from '../auth/AuthProvider';
+import type { UserRole } from '../auth/types';
 import { AppShell } from '../layout/AppShell';
+import { ChargeDocumentsPage } from '../pages/ChargeDocumentsPage';
+import { ChargeDocumentDetailPage } from '../pages/ChargeDocumentDetailPage';
+import { ChargeReportPage } from '../pages/ChargeReportPage';
+
+/** The two roles Chứng từ is for. Mirrors the server's route gate. */
+const CHARGE_ROLES: readonly UserRole[] = ['ADMIN', 'BOOKING_DEPARTMENT'];
 import { DashboardPage } from '../pages/DashboardPage';
 import { DispatchPage } from '../pages/DispatchPage';
 import { NewBookingsPage } from '../pages/NewBookingsPage';
@@ -55,6 +62,34 @@ export function AppRoutes() {
           <Route path="history" element={<HistoryPage />} />
           <Route path="issues" element={<IssuesPage />} />
           <Route path="booking/:id" element={<BookingDetailPage />} />
+          {/*
+            Chứng từ. Reception is refused here AND by the API — this gate only
+            renders a forbidden page; the server is the security boundary.
+          */}
+          <Route
+            path="charge-documents"
+            element={
+              <RequireRole role={CHARGE_ROLES}>
+                <ChargeDocumentsPage />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="charge-documents/report"
+            element={
+              <RequireRole role={CHARGE_ROLES}>
+                <ChargeReportPage />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="charge-documents/:id"
+            element={
+              <RequireRole role={CHARGE_ROLES}>
+                <ChargeDocumentDetailPage />
+              </RequireRole>
+            }
+          />
           <Route path="branches" element={<RequireRole role="ADMIN"><BranchesPage /></RequireRole>} />
           <Route path="settings" element={<RequireRole role="ADMIN"><SettingsPage /></RequireRole>} />
         </Route>
