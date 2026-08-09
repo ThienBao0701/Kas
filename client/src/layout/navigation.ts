@@ -6,6 +6,7 @@ import {
   History,
   Inbox,
   LayoutDashboard,
+  MessagesSquare,
   RotateCcw,
   ScanSearch,
   Users,
@@ -31,6 +32,7 @@ export const ADMIN_NAV: NavItem[] = [
   { to: '/app/history', label: 'Lịch sử', icon: History },
   { to: '/app/issues', label: 'Sự cố khách sạn', icon: Wrench },
   { to: '/app/charge-documents', label: 'Chứng từ', icon: FileText },
+  { to: '/app/chat', label: 'Chat box', icon: MessagesSquare },
   { to: '/app/branches', label: 'Khách sạn & chi nhánh', icon: Building2 },
   { to: '/app/settings', label: 'Quản lý tài khoản', icon: Users },
 ];
@@ -40,6 +42,11 @@ export const ADMIN_NAV: NavItem[] = [
  *
  * A short menu on purpose: this role is global (no branch), so every other
  * screen either belongs to a branch it does not have or is admin-only.
+ *
+ * CHAT BOX IS DELIBERATELY ABSENT. Chat box is reception↔Admin correspondence;
+ * no requirement gives this role a part in it, and adding the menu item "because
+ * it seems useful" would grant an access nobody asked for. The API refuses the
+ * role outright, so this list and that gate agree.
  */
 export const BOOKING_DEPARTMENT_NAV: NavItem[] = [
   { to: '/app/charge-documents', label: 'Chứng từ', icon: FileText },
@@ -53,6 +60,7 @@ export const RECEPTIONIST_NAV: NavItem[] = [
   { to: '/app/completed', label: 'Đã xác nhận đúng', icon: CheckCircle2 },
   { to: '/app/history', label: 'Lịch sử', icon: History },
   { to: '/app/issues', label: 'Báo cáo sự cố', icon: Wrench },
+  { to: '/app/chat', label: 'Chat box', icon: MessagesSquare },
 ];
 
 export function navForRole(role: UserRole | undefined): NavItem[] {
@@ -66,6 +74,7 @@ export function navForRole(role: UserRole | undefined): NavItem[] {
 export function titleForPath(pathname: string): string {
   if (pathname.startsWith('/app/booking/')) return 'Chi tiết đơn';
   if (pathname.startsWith('/app/charge-documents/')) return 'Chi tiết chứng từ';
+  if (pathname.startsWith('/app/chat/')) return 'Chat box';
   const all = [...ADMIN_NAV, ...RECEPTIONIST_NAV, ...BOOKING_DEPARTMENT_NAV];
   const match = all
     .slice()

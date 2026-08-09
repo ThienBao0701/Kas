@@ -17,6 +17,8 @@ const testDatabaseUrl = resolveTestDatabaseUrl();
 // real server/uploads tree.
 const testProofDir = path.join(__dirname, '.tmp', 'proof-uploads');
 const testIssueDir = path.join(__dirname, '.tmp', 'issue-photos');
+const testChargeDir = path.join(__dirname, '.tmp', 'charge-documents');
+const testChatDir = path.join(__dirname, '.tmp', 'chat-attachments');
 
 export default defineConfig({
   test: {
@@ -46,6 +48,8 @@ export default defineConfig({
       BCRYPT_COST: '4',
       PROOF_UPLOAD_DIR: testProofDir,
       ISSUE_UPLOAD_DIR: testIssueDir,
+      CHARGE_UPLOAD_DIR: testChargeDir,
+      CHAT_UPLOAD_DIR: testChatDir,
       // Developer test tools are exercised by the dev-test suites; the disabled
       // gate is verified via setDevToolsOverride(false) within those tests.
       ENABLE_DEV_TEST_TOOLS: 'true',

@@ -7,6 +7,11 @@ import {
   MAX_CHARGE_FILES_PER_REQUEST,
   MAX_CHARGE_FILE_BYTES,
 } from '../charge/chargeDocStorage';
+import {
+  CHAT_IMAGE_MIME,
+  MAX_CHAT_FILES_PER_MESSAGE,
+  MAX_CHAT_FILE_BYTES,
+} from '../chat/chatStorage';
 
 // Buffer the upload in memory (max 10 MB) so we can sniff its magic bytes and
 // write it ourselves under a server-generated name. The client's declared MIME
@@ -70,6 +75,52 @@ const chargeUploader = multer({
     }
   },
 });
+
+/**
+ * Multi-image handler for Chat box messages.
+ *
+ * Narrower than `chargeUpload` on purpose: images only, no PDF. A chat message
+ * has no need for one, and the charge module's wider list must not leak into a
+ * surface a receptionist can be sent anything on. As everywhere else, the
+ * declared MIME is only a first-pass filter — `chatStorage` sniffs every
+ * buffer's magic bytes before anything is written, and that is what decides.
+ */
+const chatUploader = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_CHAT_FILE_BYTES, files: MAX_CHAT_FILES_PER_MESSAGE },
+  fileFilter: (_req, file, cb) => {
+    if ((CHAT_IMAGE_MIME as readonly string[]).includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new ApiError('UNSUPPORTED_MEDIA', 'Chỉ chấp nhận ảnh PNG, JPEG hoặc WebP.'));
+    }
+  },
+});
+
+export function chatUpload(): RequestHandler {
+  const many = chatUploader.array('images', MAX_CHAT_FILES_PER_MESSAGE);
+  return (req: Request, res: Response, next: NextFunction) => {
+    many(req, res, (err: unknown) => {
+      if (!err) {
+        next();
+        return;
+      }
+      if (err instanceof MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          next(ApiError.fileTooLarge());
+          return;
+        }
+        if (err.code === 'LIMIT_FILE_COUNT') {
+          next(ApiError.badRequest(`Tối đa ${MAX_CHAT_FILES_PER_MESSAGE} ảnh mỗi tin nhắn.`));
+          return;
+        }
+        next(ApiError.badRequest('Tải ảnh không hợp lệ.'));
+        return;
+      }
+      next(err);
+    });
+  };
+}
 
 export function chargeUpload(): RequestHandler {
   const many = chargeUploader.array('files', MAX_CHARGE_FILES_PER_REQUEST);

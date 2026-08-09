@@ -185,6 +185,8 @@ const envSchema = z
     // Where Chứng từ attachments are stored (same rules again: private disk,
     // server-generated names, never served as static content).
     CHARGE_UPLOAD_DIR: z.string().min(1).default('server/uploads/charge-documents'),
+    // Where Chat box message images are stored (same rules once more).
+    CHAT_UPLOAD_DIR: z.string().min(1).default('server/uploads/chat-attachments'),
 
     // --- Developer test tools (demo data + branch switch + reset) ---
     // Gates every /api/dev-test endpoint and the demo/reset UI. MUST stay false in
@@ -278,6 +280,7 @@ const envSchema = z
       'PROOF_UPLOAD_DIR',
       'ISSUE_UPLOAD_DIR',
       'CHARGE_UPLOAD_DIR',
+      'CHAT_UPLOAD_DIR',
       'BACKUP_DIR',
     ] as const) {
       if (!path.isAbsolute(value[key])) {
@@ -368,6 +371,8 @@ export const PROOF_UPLOAD_DIR = absolute(env.PROOF_UPLOAD_DIR);
 export const ISSUE_UPLOAD_DIR = absolute(env.ISSUE_UPLOAD_DIR);
 /** Where Chứng từ attachments are stored. Same rules as proofs: private disk. */
 export const CHARGE_UPLOAD_DIR = absolute(env.CHARGE_UPLOAD_DIR);
+/** Where Chat box images are stored. Same rules again: private disk, never served. */
+export const CHAT_UPLOAD_DIR = absolute(env.CHAT_UPLOAD_DIR);
 export const BACKUP_DIR = absolute(env.BACKUP_DIR);
 export const CLIENT_DIST_DIR = absolute(env.CLIENT_DIST_DIR);
 

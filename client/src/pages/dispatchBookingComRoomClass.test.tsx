@@ -284,7 +284,7 @@ describe('choosing an internal code', () => {
     await user.selectOptions(select, 'rc-defam');
 
     await waitFor(() =>
-      expect((screen.getByTestId('bcom-pms-note') as HTMLTextAreaElement).value).toContain('_DEFAM_'),
+      expect((screen.getByTestId('bcom-pms-note') as HTMLTextAreaElement).value).toContain('_1DEFAM_'),
     );
   });
 });
@@ -302,7 +302,7 @@ describe('the Ghi chú PMS section', () => {
 
     const note = (await screen.findByTestId('bcom-pms-note')) as HTMLTextAreaElement;
     // The Booking.com builder's own layout: BK <code>_<ROOM>_<n> ĐÊM … CI
-    expect(note.value).toContain('BK 6312474567_STAN_2 ĐÊM');
+    expect(note.value).toContain('BK 6312474567_1STAN_2 ĐÊM');
     expect(note.value).toContain('PAY AFTER CHECK-IN CI');
     // The reference screenshots for this screen were Agoda notes. Never here.
     expect(note.value).not.toContain('AGD ');
@@ -317,7 +317,7 @@ describe('the Ghi chú PMS section', () => {
     await extract(user);
 
     const note = (await screen.findByTestId('bcom-pms-note')) as HTMLTextAreaElement;
-    expect(note.value).toContain('CÓ ZL +84964934713');
+    expect(note.value).toContain('CÓ SĐT +84964934713');
   });
 
   it('is editable', async () => {
@@ -350,7 +350,7 @@ describe('the Ghi chú PMS section', () => {
     await user.click(screen.getByRole('button', { name: /Sao chép note/ }));
 
     await waitFor(() => expect(writeText).toHaveBeenCalled());
-    expect(String(writeText.mock.calls[0]![0])).toContain('BK 6312474567_STAN_2 ĐÊM');
+    expect(String(writeText.mock.calls[0]![0])).toContain('BK 6312474567_1STAN_2 ĐÊM');
   });
 
   it('explains itself instead of printing a note it cannot build', async () => {

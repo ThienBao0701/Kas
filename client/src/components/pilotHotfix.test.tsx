@@ -297,7 +297,7 @@ describe('Booking.com is unchanged by every hotfix', () => {
     // the builder that produces this line predates the OTA path entirely.
     mount(booking({ rooms: [ROOM], adminPmsNote: null }));
     expect(screen.getByTestId('pms-note-text')).toHaveTextContent(
-      'BK A-1_DLX_2 ĐÊM 1.000.000 PAY BEFORE CHECK-IN CI',
+      'BK A-1_1DLX_2 ĐÊM 1.000.000 PAY BEFORE CHECK-IN CI',
     );
   });
 });

@@ -79,9 +79,20 @@ export function roomAbbreviation(room: RoomView): string {
 
 /**
  * The room-abbreviation segment for a whole booking.
- * - one type → "STAN" (or "STANx2" for 2 rooms of that type)
- * - mixed types → each group joined with "+", e.g. "STAN+DLX" / "STANx2+DLX".
- * No room type is ever silently dropped.
+ *
+ * QUANTITY ALWAYS COMES FIRST, and always appears — "1DLX", never "DLX". The
+ * operator reads the leading digit as the room count, so a code printed without
+ * one has to be counted by eye, and a lone "DLX" is exactly the case that gets
+ * misread as an unknown quantity.
+ *
+ * Groups are joined by a SINGLE SPACE, not "+":
+ *   - one type       → "2STAN"
+ *   - mixed types    → "1DLX 1STAN" / "2DLX 1STAN"
+ *   - repeated types → aggregated, so STAN+STAN+DLX becomes "2STAN 1DLX"
+ *
+ * First-seen order is preserved deliberately: the fragments are the booking's
+ * own room list, and alphabetising them would reorder what the receptionist
+ * checks against the reservation. No room type is ever silently dropped.
  */
 export function roomsAbbreviation(rooms: RoomView[]): string {
   if (rooms.length === 0) return 'PHONG';
@@ -93,7 +104,7 @@ export function roomsAbbreviation(rooms: RoomView[]): string {
     if (!counts.has(abbr)) order.push(abbr);
     counts.set(abbr, (counts.get(abbr) ?? 0) + 1);
   }
-  return order.map((abbr) => (counts.get(abbr)! > 1 ? `${abbr}x${counts.get(abbr)}` : abbr)).join('+');
+  return order.map((abbr) => `${counts.get(abbr)!}${abbr}`).join(' ');
 }
 
 /**
@@ -111,27 +122,37 @@ export function paymentCode(status: PaymentStatus): string {
   return status === 'PAY_BEFORE' ? 'PAY BEFORE CHECK-IN' : 'PAY AFTER CHECK-IN';
 }
 
+/** The note prints a phone number, never a messaging channel. */
+export const CONTACT_LABEL = 'CÓ SĐT';
+/** Said plainly, in the same words as the positive case. */
+export const NO_CONTACT_LABEL = 'KHÔNG CÓ SĐT';
+
 /**
- * The contact label from an optional phone. Vietnamese numbers → "CÓ ZL",
- * other international numbers → "CÓ WA", missing → "NO CONTACT".
+ * The contact label from an optional phone: "CÓ SĐT", or "KHÔNG CÓ SĐT".
+ *
+ * THE MESSAGING CHANNEL IS NO LONGER GUESSED. This used to print "CÓ ZL" for
+ * Vietnamese numbers and "CÓ WA" for everything else, inferred purely from the
+ * dialling prefix — which is not evidence of anything: plenty of +84 guests use
+ * WhatsApp and plenty of foreign guests use Zalo. The note told the receptionist
+ * which app to open, and was wrong whenever the guess was wrong. It now carries
+ * the number and lets the receptionist choose.
+ *
+ * The normalisation below is kept solely to decide PRESENT vs ABSENT: a string
+ * of punctuation with no digits is not a phone number, and must not produce a
+ * note that says there is one.
  */
 export function contactLabel(phone: string | null | undefined): string {
-  if (!phone) return 'NO CONTACT';
+  if (!phone) return NO_CONTACT_LABEL;
   // Keep digits and a single leading '+'.
   let norm = phone.trim().replace(/[^\d+]/g, '');
   norm = norm.replace(/(?!^)\+/g, '');
-  if (norm === '') return 'NO CONTACT';
-
-  if (norm.startsWith('+84') || norm.startsWith('0084')) return 'CÓ ZL';
-  if (norm.startsWith('+') || norm.startsWith('00')) return 'CÓ WA';
-  if (norm.startsWith('0')) return 'CÓ ZL';
-  if (norm.startsWith('84')) return 'CÓ ZL';
-  return 'CÓ WA';
+  if (norm.replace(/\+/g, '') === '') return NO_CONTACT_LABEL;
+  return CONTACT_LABEL;
 }
 
 /**
  * The contact segment: the label followed by the number itself, e.g.
- * "CÓ WA +966598331083" or "CÓ ZL 0901234567".
+ * "CÓ SĐT +31 345 678 912" or "CÓ SĐT 0901234567".
  *
  * THE NUMBER IS PRINTED VERBATIM — trimmed and nothing else. A leading "+" is
  * part of an international number and is kept; no spacing, grouping or country
@@ -139,11 +160,12 @@ export function contactLabel(phone: string | null | undefined): string {
  * is on the note, so a number this screen "tidied" is a number that no longer
  * connects.
  *
- * "NO CONTACT" stands alone: there is no number to append.
+ * "KHÔNG CÓ SĐT" stands alone: there is no number to append, and printing an
+ * empty label would leave a dangling "CÓ SĐT" with nothing after it.
  */
 export function contactSegment(phone: string | null | undefined): string {
   const label = contactLabel(phone);
-  if (label === 'NO CONTACT') return label;
+  if (label === NO_CONTACT_LABEL) return label;
   return `${label} ${(phone ?? '').trim()}`;
 }
 
@@ -188,7 +210,7 @@ export function buildPmsNote(b: BookingDetail, now: Date = new Date()): PmsNoteR
   // branch alike. It is never inferred from a branch code, id or list position.
   const breakfast = b.branch?.breakfastIncluded === true;
   const arrival = arrivalNote(b.specialRequest);
-  // For a partner booking the contact label (CÓ ZL / CÓ WA / NO CONTACT) is
+  // For a partner booking the contact segment (CÓ SĐT / KHÔNG CÓ SĐT) is
   // replaced by "ĐƠN ĐỐI TÁC"; breakfast, date, arrival and requests are kept.
   const contact = b.businessType === 'PARTNER' ? 'ĐƠN ĐỐI TÁC' : contactSegment(b.phone);
   const line2 = `${breakfast ? 'ĂN SÁNG ' : ''}${hcmDayMonth(now)} ${contact}${

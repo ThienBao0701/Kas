@@ -39,6 +39,27 @@ export function assertChargeAccess(actor: ChargeActor): void {
   }
 }
 
+/**
+ * Only an Admin may CHANGE the charge reason.
+ *
+ * Bộ phận đặt phòng keeps full read access and keeps every other edit it
+ * already had — this narrows one field, not the role. The reason is what the
+ * monthly report is read against and what an operator justifies a charge with,
+ * so it is the Admin's word.
+ *
+ * ENFORCED HERE, IN THE DOMAIN, not in the router and not by hiding a textarea:
+ * the UI hint is a courtesy, this is the control. It is deliberately called
+ * only when the trimmed reason actually DIFFERS from the stored one — a PUT
+ * that echoes the existing reason back while changing the status is not an
+ * edit of the reason, and failing it would break status transitions that Bộ
+ * phận đặt phòng is entitled to make.
+ */
+export function assertReasonEditable(actor: ChargeActor): void {
+  if (actor.role !== 'ADMIN') {
+    throw ApiError.forbidden('Chỉ Admin mới được sửa lý do charge.');
+  }
+}
+
 const DOCUMENT_INCLUDE = {
   branch: { select: { id: true, code: true, branchNumber: true, hotelName: true, address: true } },
   createdBy: { select: { id: true, fullName: true } },
@@ -265,6 +286,7 @@ export async function updateChargeDocument(
   if (patch.reason !== undefined) {
     const reason = assertReason(patch.reason);
     if (reason !== existing.reason) {
+      assertReasonEditable(actor);
       data.reason = reason;
       changes.push({ field: 'reason', oldValue: existing.reason, newValue: reason });
     }

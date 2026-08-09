@@ -175,7 +175,7 @@ describe('B the PMS note', () => {
     // Nights come from the dates (10th → 12th), not from the nightly rows.
     mount(booking({ rooms: [ROOM], adminPmsNote: null }));
     expect(screen.getByTestId('pms-note-text').textContent).toContain(
-      'BK A-1_DLX_2 ĐÊM 1.000.000 PAY BEFORE CHECK-IN CI',
+      'BK A-1_1DLX_2 ĐÊM 1.000.000 PAY BEFORE CHECK-IN CI',
     );
   });
 });

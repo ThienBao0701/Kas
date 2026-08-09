@@ -6,11 +6,19 @@ import { useAuth } from '../auth/AuthProvider';
 import type { UserRole } from '../auth/types';
 import { AppShell } from '../layout/AppShell';
 import { ChargeDocumentsPage } from '../pages/ChargeDocumentsPage';
+import { ChatBoxPage } from '../pages/ChatBoxPage';
+import { ChatConversationPage } from '../pages/ChatConversationPage';
 import { ChargeDocumentDetailPage } from '../pages/ChargeDocumentDetailPage';
 import { ChargeReportPage } from '../pages/ChargeReportPage';
 
 /** The two roles Chứng từ is for. Mirrors the server's route gate. */
 const CHARGE_ROLES: readonly UserRole[] = ['ADMIN', 'BOOKING_DEPARTMENT'];
+/**
+ * Chat box is reception↔Admin correspondence. Bộ phận đặt phòng has no stated
+ * part in it, so it is excluded here as it is on the API — this gate only
+ * renders a forbidden page; the server is the security boundary.
+ */
+const CHAT_ROLES: readonly UserRole[] = ['ADMIN', 'RECEPTIONIST'];
 import { DashboardPage } from '../pages/DashboardPage';
 import { DispatchPage } from '../pages/DispatchPage';
 import { NewBookingsPage } from '../pages/NewBookingsPage';
@@ -87,6 +95,22 @@ export function AppRoutes() {
             element={
               <RequireRole role={CHARGE_ROLES}>
                 <ChargeDocumentDetailPage />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="chat"
+            element={
+              <RequireRole role={CHAT_ROLES}>
+                <ChatBoxPage />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="chat/:id"
+            element={
+              <RequireRole role={CHAT_ROLES}>
+                <ChatConversationPage />
               </RequireRole>
             }
           />

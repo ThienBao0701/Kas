@@ -414,6 +414,8 @@ model User {
   chargeDocumentsUpdated ChargeDocument[]           @relation("ChargeUpdatedBy")
   chargeAttachments      ChargeDocumentAttachment[]
   chargeAuditEvents      ChargeDocumentAudit[]
+  chatConversations      ChatConversation[]         @relation("ChatConversationCreatedBy")
+  chatMessages           ChatMessage[]              @relation("ChatMessageSender")
 
   @@index([branchId])
   @@index([role])
@@ -501,6 +503,7 @@ model Branch {
   roomMappingVersions BranchRoomMappingVersion[]
   roomClasses         BranchRoomClass[]
   chargeDocuments     ChargeDocument[]
+  chatConversations   ChatConversation[]
 }
 
 /// A charge document ("Chứng từ"): evidence that a guest was, or was not,
@@ -1508,4 +1511,101 @@ model HotelIssue {
   @@index([reportedByUserId])
   @@index([isDemo])
   @@index([demoBatchId])
+}
+
+/// Where a Chat box conversation stands, from the ADMIN's point of view.
+///
+/// Derived from real events, never claimed by a client: a receptionist message
+/// sets WAITING_ADMIN, an Admin reply sets ANSWERED. That is what makes "which
+/// threads has nobody answered?" a cheap indexed query instead of a scan that
+/// re-reads every message to work out who spoke last.
+enum ChatConversationStatus {
+  /// A receptionist has spoken more recently than any Admin.
+  WAITING_ADMIN
+  /// An Admin has replied since the last receptionist message.
+  ANSWERED
+  /// Closed by an Admin; kept for the record, no longer awaiting anyone.
+  CLOSED
+}
+
+/// One question thread between a receptionist and the Admins.
+///
+/// HUMAN TO HUMAN. Nothing in this module generates, suggests or answers a
+/// message; it is internal correspondence and the only writers are the two
+/// people at either end.
+///
+/// VISIBILITY IS OWNERSHIP, NOT BRANCH. `createdByUserId` is the authority on
+/// who may read a thread: an Admin reads every conversation, and a receptionist
+/// reads only their own. `branchId` is a SNAPSHOT taken at creation, carried so
+/// the Admin list can show where a question came from — it is display context
+/// and is deliberately not used as an access rule, because two receptionists at
+/// one branch asking the Admin separate questions must not read each other's.
+model ChatConversation {
+  id      String @id @default(cuid())
+  /// Short title the receptionist gives the thread, so a long list stays usable.
+  subject String
+
+  /// The asker's branch AT CREATION. Null for a user with no branch.
+  branchId        Int?
+  createdByUserId Int
+
+  status ChatConversationStatus @default(WAITING_ADMIN)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  /// Denormalised so the list sorts and pages without touching ChatMessage.
+  lastMessageAt DateTime @default(now())
+
+  branch    Branch?       @relation(fields: [branchId], references: [id])
+  createdBy User          @relation("ChatConversationCreatedBy", fields: [createdByUserId], references: [id])
+  messages  ChatMessage[]
+
+  @@index([createdByUserId, lastMessageAt])
+  @@index([status, lastMessageAt])
+  @@index([lastMessageAt])
+  @@index([branchId])
+}
+
+/// One message in a thread.
+///
+/// `senderRole` is a SNAPSHOT of the sender's role at the moment of writing.
+/// Reading it back off the User row would rewrite history the day an account is
+/// promoted or moved — a message sent as a receptionist must still read as one.
+model ChatMessage {
+  id             String   @id @default(cuid())
+  conversationId String
+  senderUserId   Int
+  senderRole     UserRole
+  /// The text. May be empty ONLY when the message carries attachments.
+  body           String
+  createdAt      DateTime @default(now())
+
+  conversation ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User             @relation("ChatMessageSender", fields: [senderUserId], references: [id])
+  attachments  ChatAttachment[]
+
+  @@index([conversationId, createdAt])
+  @@index([senderUserId])
+}
+
+/// An image attached to a chat message.
+///
+/// Same shape and same rules as ChargeDocumentAttachment: only metadata and a
+/// server-generated name live here, never the bytes, and the stored name is
+/// meaningless without this row — which is what authorises the download. There
+/// is no public URL for any of these files.
+model ChatAttachment {
+  id        String @id @default(cuid())
+  messageId String
+  /// Server-generated name on disk (never the client's original name).
+  storedFileName   String
+  /// The client's original name, kept for display only — never trusted.
+  originalFileName String
+  mimeType         String
+  fileSize         Int
+  createdAt        DateTime @default(now())
+
+  message ChatMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
 }
