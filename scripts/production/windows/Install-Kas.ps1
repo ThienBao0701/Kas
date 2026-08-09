@@ -22,7 +22,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'Kas'),
+    [String]$InstallDir = 'C:\Kas',
     [switch]$NoLaunch
 )
 
