@@ -170,7 +170,21 @@ describe('resolveTestBaseUrl', () => {
 
   it('rejects a database that is merely unreserved but not the approved one', () => {
     process.env[TEST_DATABASE_ENV_VAR] = urlFor('some_other_db');
-    expect(() => resolveTestBaseUrl()).toThrow(/kas_dev_cn1/);
+    expect(() => resolveTestBaseUrl()).toThrow(/kas_test/);
+  });
+
+  it('rejects kas_dev_cn1 — it is production, and was once wrongly the target', () => {
+    // The regression this whole file exists for: kas_dev_cn1 was the approved
+    // test database while it was serving kasbookingapp.com, so `npm test`
+    // dropped and recreated a schema inside production. It must now be refused
+    // like any other non-approved database.
+    process.env[TEST_DATABASE_ENV_VAR] = urlFor('kas_dev_cn1');
+    expect(() => resolveTestBaseUrl()).toThrow(UnsafeTestDatabaseError);
+  });
+
+  it('rejects the development database — dev data is not a test target either', () => {
+    process.env[TEST_DATABASE_ENV_VAR] = urlFor('kas_dev');
+    expect(() => resolveTestBaseUrl()).toThrow(UnsafeTestDatabaseError);
   });
 
   it('rejects a non-postgresql URL', () => {
@@ -183,7 +197,7 @@ describe('resolveTestBaseUrl', () => {
     expect(() => resolveTestBaseUrl()).toThrow(UnsafeTestDatabaseError);
   });
 
-  it('accepts kas_dev_cn1 when explicitly provided', () => {
+  it('accepts kas_test when explicitly provided', () => {
     const url = urlFor(APPROVED_TEST_DATABASE);
     process.env[TEST_DATABASE_ENV_VAR] = url;
     expect(resolveTestBaseUrl()).toBe(url);

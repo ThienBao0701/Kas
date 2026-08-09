@@ -3,9 +3,13 @@ import { defineConfig } from 'vitest/config';
 import { resolveTestDatabaseUrl } from './src/d1/testDatabase';
 
 // The suite runs against REAL PostgreSQL, in its own schema inside the
-// disposable kas_dev_cn1 database — production runs on PostgreSQL, and enum
-// handling, concurrent writes, partial unique indexes and sequence allocation
-// all behave differently on SQLite.
+// dedicated, disposable kas_test database — production runs on PostgreSQL, and
+// enum handling, concurrent writes, partial unique indexes and sequence
+// allocation all behave differently on SQLite.
+//
+// kas_test exists for nothing but this suite. It replaced kas_dev_cn1, which
+// was named here while it was in fact the live production database — so the
+// documented `npm test` dropped and recreated a schema inside production.
 //
 // The URL comes from KAS_TEST_DATABASE_URL and from nowhere else: resolution
 // fails closed rather than falling back to a file, so an unset variable stops

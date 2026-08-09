@@ -64,18 +64,64 @@ if not errorlevel 1 (
 )
 
 rem --- Guard 2: never point development at a production database -------------
-rem  kas_dev_cn1 is the only database development may touch. kas_d1_test and
-rem  kas_production are both production, whatever their names suggest.
-findstr /C:"kas_dev_cn1" .env >nul 2>&1
-if errorlevel 1 (
+rem
+rem  THIS GUARD USED TO REQUIRE kas_dev_cn1, AND THAT WAS THE BUG. kas_dev_cn1
+rem  was designated the development database, then turned out to be the LIVE
+rem  database serving kasbookingapp.com - so the guard that was supposed to
+rem  protect production was the thing pinning development to it. A dev backend
+rem  on 3002 was reading and writing real guest data, and nothing looked wrong.
+rem
+rem  It is now a DENY-LIST, not an allow-list. Development gets its own
+rem  disposable database (kas_dev) and this script refuses to start if .env
+rem  names any database known to hold live data. Naming one database that is
+rem  permitted would repeat the original mistake the day that name changes
+rem  meaning; naming the ones that are forbidden does not.
+rem
+rem  kas_d1_test is production despite its name. kas_production is reserved.
+rem  Anything containing "production" is refused on sight.
+
+for %%D in (kas_dev_cn1 kas_d1_test kas_production) do (
+  findstr /C:"/%%D" .env >nul 2>&1
+  if not errorlevel 1 (
+    echo.
+    echo   DUNG LAI - DATABASE_URL TRO TOI CO SO DU LIEU PRODUCTION: %%D
+    echo.
+    echo   Moi truong phat trien KHONG duoc dung co so du lieu nay.
+    echo   Dat DATABASE_URL trong .env tro toi:  kas_dev
+    echo.
+    pause
+    exit /b 1
+  )
+)
+
+rem  Belt and braces: refuse any database name containing "production", so a
+rem  new name nobody thought to add above is still caught.
+findstr /R /C:"DATABASE_URL=.*production" .env >nul 2>&1
+if not errorlevel 1 (
   echo.
-  echo   DUNG LAI - DATABASE_URL KHONG TRO TOI kas_dev_cn1
+  echo   DUNG LAI - DATABASE_URL CO CHUA "production"
   echo.
-  echo   Moi truong phat trien chi duoc dung co so du lieu kas_dev_cn1.
-  echo   Kiem tra DATABASE_URL trong .env.
+  echo   Moi truong phat trien phai dung co so du lieu rieng:  kas_dev
   echo.
   pause
   exit /b 1
+)
+
+rem  And require the dedicated development database explicitly, so a .env that
+rem  points somewhere unexpected fails loudly instead of silently working.
+findstr /C:"/kas_dev?" .env >nul 2>&1
+if errorlevel 1 (
+  findstr /R /C:"/kas_dev$" .env >nul 2>&1
+  if errorlevel 1 (
+    echo.
+    echo   DUNG LAI - DATABASE_URL KHONG TRO TOI kas_dev
+    echo.
+    echo   Moi truong phat trien dung co so du lieu rieng:  kas_dev
+    echo   Vi du:  DATABASE_URL=postgresql://kas_app:MAT_KHAU@127.0.0.1:5432/kas_dev?schema=public
+    echo.
+    pause
+    exit /b 1
+  )
 )
 
 echo.
@@ -83,7 +129,7 @@ echo   Moi truong PHAT TRIEN
 echo   ---------------------
 echo   Backend   http://localhost:3002
 echo   Frontend  http://localhost:5173     ^<-- mo trang nay
-echo   Database  kas_dev_cn1
+echo   Database  kas_dev
 echo.
 echo   Production (C:\Kas, cong 3001) khong bi anh huong.
 echo   Dong cua so nay de tat.

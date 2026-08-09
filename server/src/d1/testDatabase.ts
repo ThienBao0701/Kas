@@ -39,8 +39,19 @@ export const TEST_SCHEMA: string = 'kas_vitest';
 /**
  * The only database the automated suite may ever run against. Typed as
  * `string` for the same reason as {@link TEST_SCHEMA}.
+ *
+ * `kas_test` is a DEDICATED, DISPOSABLE database that exists for nothing else.
+ * It replaced `kas_dev_cn1`, which was named as the approved target back when
+ * that database was believed to be development — and which is in fact the live
+ * database serving kasbookingapp.com. The suite drops and recreates a schema on
+ * every run, so pointing it at a database that also holds real data was one
+ * mistaken constant away from destroying production.
+ *
+ * Development now uses `kas_dev` and the suite uses `kas_test`; neither shares a
+ * database with production, and the schema isolation below is kept on top of
+ * that as a second layer rather than as the only one.
  */
-export const APPROVED_TEST_DATABASE: string = 'kas_dev_cn1';
+export const APPROVED_TEST_DATABASE: string = 'kas_test';
 
 /** The one environment variable that selects the suite's target. */
 export const TEST_DATABASE_ENV_VAR = 'KAS_TEST_DATABASE_URL';
