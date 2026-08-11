@@ -58,6 +58,16 @@ export interface TargetColumn {
   /** PostgreSQL type name, used to build the explicit cast. */
   udtName: string;
   nullable: boolean;
+  /**
+   * Whether the target column has a database DEFAULT.
+   *
+   * Read so the compatibility gate can distinguish "the source must supply this
+   * or the INSERT fails" from "PostgreSQL will fill this in". A NOT NULL column
+   * with a default is safe to omit from a legacy transfer — the same reason
+   * sequence-backed columns are already exempt — and without this flag every
+   * new NOT NULL DEFAULT column added to the schema would block the gate.
+   */
+  hasDefault: boolean;
   /** Enum members, when kind === 'enum'. */
   enumValues: string[];
   /** The sequence backing this column, when it is serial/identity. */
@@ -115,6 +125,7 @@ interface ColumnRow {
   data_type: string;
   udt_name: string;
   is_nullable: string;
+  column_default: string | null;
   sequence: string | null;
 }
 
@@ -148,6 +159,7 @@ export async function introspectTarget(
             c.data_type,
             c.udt_name,
             c.is_nullable,
+            c.column_default,
             pg_get_serial_sequence(
               quote_ident(c.table_schema) || '.' || quote_ident(c.table_name),
               c.column_name
@@ -173,6 +185,7 @@ export async function introspectTarget(
       kind,
       udtName: row.udt_name,
       nullable: row.is_nullable === 'YES',
+      hasDefault: row.column_default !== null,
       enumValues: kind === 'enum' ? (enums.get(row.udt_name) ?? []) : [],
       sequence: row.sequence,
     };

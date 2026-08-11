@@ -4,6 +4,7 @@ import { ApiError } from '../lib/errors';
 import { getClock, type Clock } from '../lib/clock';
 import { loadBookingDetail } from './bookingRepo';
 import { generateStoredFileName, saveProofFile, sniffImageMime } from './proofStorage';
+import { assertClaimAllowsSubmission } from './claim';
 import type { BookingDetail } from './bookingView';
 
 type Actor = {
@@ -116,6 +117,17 @@ export async function submitProof(
 
   const previousStatus = booking.verificationStatus;
 
+  // THE CLAIM DEADLINE IS ENFORCED HERE, not in the browser. A receptionist
+  // whose tab slept, whose network dropped, or whose polled list is stale will
+  // still be refused, because this reads the stored deadline at the moment of
+  // the write. Checked before the transaction so nothing is written, and
+  // re-asserted inside the conditional update below so it cannot be raced.
+  const claimRow = await prisma.booking.findUniqueOrThrow({
+    where: { id: bookingId },
+    select: { claimedByUserId: true, claimedAt: true, claimExpiresAt: true, claimCycle: true },
+  });
+  assertClaimAllowsSubmission(claimRow, { id: actor.id, role: actor.role, branchId: actor.branchId }, clock.now());
+
   // ONE transaction, opening with a CONDITIONAL CLAIM of the booking.
   //
   // THE RACE THIS CLOSES: the attempt number used to be counted before the
@@ -135,6 +147,15 @@ export async function submitProof(
         id: bookingId,
         status: 'NEW',
         verificationStatus: { in: ['NOT_SUBMITTED', 'REJECTED'] },
+        // The claim conditions ride along in the SAME statement that takes the
+        // booking, so a deadline that lapses between the pre-check above and
+        // this update cannot slip through — and a resend that lands in that
+        // window clears `claimedByUserId`, which this WHERE then fails to match.
+        //
+        // A receptionist may submit ONLY under their own unexpired claim.
+        ...(actor.role === 'RECEPTIONIST'
+          ? { claimedByUserId: actor.id, claimExpiresAt: { gt: clock.now() } }
+          : {}),
       },
       // The receptionist's claim that they created the reservation externally.
       data: {

@@ -16,10 +16,15 @@ import {
   FIXTURE_CLASS_COUNTS,
   buildFixtureSqlite,
 } from '../src/d1/fixtureSqlite';
-import { runTransfer } from '../src/d1/transfer';
+import { planTable, runTransfer } from '../src/d1/transfer';
 import { runVerification } from '../src/d1/verify';
 import { checkSequences } from '../src/d1/sequences';
-import { introspectTarget, sequenceColumns } from '../src/d1/targetSchema';
+import {
+  introspectTarget,
+  sequenceColumns,
+  type TargetColumn,
+  type TargetSchema,
+} from '../src/d1/targetSchema';
 import { SqliteSource, checkSourceCompatibility } from '../src/d1/sqliteSource';
 import { DatabaseGuardError, isReservedDatabaseName } from '../src/d1/guard';
 import { describeDatabaseUrl } from '../src/config/databaseUrl';
@@ -215,6 +220,76 @@ describe('C. transfer', () => {
         }),
       ).rejects.toBeInstanceOf(DatabaseGuardError);
     }
+  });
+
+  /*
+    C10a-d. THE COLUMN-COMPATIBILITY RULE, asserted directly.
+
+    A target column the legacy source lacks is only a problem when the INSERT
+    would fail without it. The database can supply a value three ways —
+    nullable, sequence-backed, or DEFAULT — and the third was missing, so every
+    new `NOT NULL DEFAULT` column silently broke the gate against the frozen
+    pilot source. `Booking.claimCycle` was the one that surfaced it.
+
+    These use a synthetic schema so the rule is tested as a rule, rather than
+    through whichever columns today's schema happens to contain.
+  */
+  function column(over: Partial<TargetColumn> & { name: string }): TargetColumn {
+    return {
+      kind: 'integer',
+      udtName: 'int4',
+      nullable: false,
+      hasDefault: false,
+      enumValues: [],
+      sequence: null,
+      ...over,
+    };
+  }
+
+  /** A source that reports exactly the given column names for any table. */
+  function sourceWith(names: string[]): SqliteSource {
+    return {
+      columns: () => names.map((name) => ({ name })),
+      count: () => 0,
+    } as unknown as SqliteSource;
+  }
+
+  function planWith(columns: TargetColumn[], sourceNames: string[]) {
+    const schema: TargetSchema = new Map([
+      ['T', { name: 'T', columns, sequenceColumns: [] }],
+    ]);
+    return planTable('T', sourceWith(sourceNames), schema);
+  }
+
+  it('C10a. ALLOWS a NOT NULL column missing from the source when it has a DEFAULT', () => {
+    const plan = planWith(
+      [column({ name: 'id' }), column({ name: 'claimCycle', hasDefault: true })],
+      ['id'],
+    );
+    expect(plan.problems).toEqual([]);
+    // And it is not transferred — PostgreSQL fills it.
+    expect(plan.columns.map((c) => c.name)).toEqual(['id']);
+  });
+
+  it('C10b. still REJECTS a NOT NULL column missing from the source with NO default', () => {
+    const plan = planWith([column({ name: 'id' }), column({ name: 'mandatory' })], ['id']);
+    expect(plan.problems).toHaveLength(1);
+    expect(plan.problems[0]).toMatch(/mandatory/);
+  });
+
+  it('C10c. the sequence exemption still works', () => {
+    const plan = planWith(
+      [column({ name: 'id', sequence: 'public.T_id_seq' }), column({ name: 'keep' })],
+      ['keep'],
+    );
+    expect(plan.problems).toEqual([]);
+  });
+
+  it('C10d. a source column missing from the TARGET is still a data-loss refusal', () => {
+    // The opposite direction is unchanged: dropping data is never acceptable.
+    const plan = planWith([column({ name: 'id' })], ['id', 'goneFromTarget']);
+    expect(plan.problems).toHaveLength(1);
+    expect(plan.problems[0]).toMatch(/goneFromTarget/);
   });
 
   it('C10. the compatibility gate accepts exactly the expected pilot schema', () => {

@@ -159,7 +159,17 @@ describe('end-to-end operational workflow', () => {
     // A receptionist never receives the raw OTA source text.
     expect(view.rawText).toBeUndefined();
 
-    /* -------- 6. Proof upload = submission for review ----------------- */
+    /* -------- 6. The receptionist takes the order (CUT) --------------- */
+    // Ownership before creation work: this is what stops two receptionists
+    // creating the same reservation in the hotel system, and it is a hard
+    // prerequisite for the upload that follows.
+    const claim = await receptionAgent.post(`/api/bookings/${draft.id}/claim`);
+    expect(claim.status).toBe(200);
+    expect(new Date(claim.body.claimExpiresAt).getTime()).toBeGreaterThan(
+      new Date(claim.body.claimedAt).getTime(),
+    );
+
+    /* -------- 7. Proof upload = submission for review ----------------- */
     const upload = await receptionAgent
       .post(`/api/bookings/${draft.id}/proofs`)
       .attach('image', pngBuffer(), { filename: 'proof.png', contentType: 'image/png' });
@@ -224,7 +234,13 @@ describe('end-to-end operational workflow', () => {
         orderBy: { createdAt: 'asc' },
       })
     ).map((e) => e.action);
-    expect(auditActions).toEqual(['BOOKING_PROOF_SUBMITTED', 'BOOKING_PROOF_APPROVED']);
+    // The full trail now opens with the receptionist taking ownership — the
+    // step that makes "who was creating this reservation?" answerable.
+    expect(auditActions).toEqual([
+      'BOOKING_CLAIMED',
+      'BOOKING_PROOF_SUBMITTED',
+      'BOOKING_PROOF_APPROVED',
+    ]);
 
     const approvedEvent = await testPrisma.bookingAuditEvent.findFirstOrThrow({
       where: { bookingId: draft.id, action: 'BOOKING_PROOF_APPROVED' },
@@ -249,6 +265,8 @@ describe('end-to-end operational workflow', () => {
       branchId,
       bookingCode: 'E2EREJECT1',
       verificationStatus: 'NOT_SUBMITTED',
+      // CUT is a hard prerequisite for submitting proof.
+      claimedByUserId: receptionistId,
     });
 
     await receptionAgent
@@ -322,6 +340,8 @@ describe('proof submission concurrency', () => {
       branchId,
       bookingCode: 'E2ECONC001',
       verificationStatus: 'NOT_SUBMITTED',
+      // CUT is a hard prerequisite for submitting proof.
+      claimedByUserId: receptionistId,
     });
 
     // Both requests start before either commits. Previously both counted zero
@@ -378,6 +398,8 @@ describe('proof submission concurrency', () => {
       branchId,
       bookingCode: 'E2ECLAIM01',
       verificationStatus: 'NOT_SUBMITTED',
+      // CUT is a hard prerequisite for submitting proof.
+      claimedByUserId: receptionistId,
     });
 
     const actor = {

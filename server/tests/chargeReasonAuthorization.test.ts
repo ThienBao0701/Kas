@@ -146,7 +146,7 @@ describe('a blank reason is refused', () => {
   it('rejects an empty string', async () => {
     const id = await createDoc();
     const res = await adminAgent.put(`/api/charge-documents/${id}`).send({ reason: '' });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(422); // KAS maps validation errors to 422
 
     const reread = await adminAgent.get(`/api/charge-documents/${id}`);
     expect(reread.body.document.reason).toBe(ORIGINAL_REASON);
@@ -155,7 +155,7 @@ describe('a blank reason is refused', () => {
   it('rejects whitespace-only', async () => {
     const id = await createDoc();
     const res = await adminAgent.put(`/api/charge-documents/${id}`).send({ reason: '     ' });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(422); // KAS maps validation errors to 422
 
     const reread = await adminAgent.get(`/api/charge-documents/${id}`);
     expect(reread.body.document.reason).toBe(ORIGINAL_REASON);

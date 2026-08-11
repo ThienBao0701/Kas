@@ -7,6 +7,7 @@ import { createAdminRoomMappingRouter } from './adminRoomMapping';
 import { createBookingGuestsRouter } from './bookingGuests';
 import { createChargeDocumentsRouter } from './chargeDocuments';
 import { createChatRouter } from './chat';
+import { createRemindersRouter } from './reminders';
 import { createAdminUsersRouter } from './adminUsers';
 import { createBookingsRouter } from './bookings';
 import { createBookingLifecycleRouter } from './bookingLifecycle';
@@ -42,6 +43,7 @@ export function createApiRouter(): Router {
   // Chứng từ. Self-contained: it mounts its own auth + role gate on its prefix.
   router.use(createChargeDocumentsRouter());
   router.use(createChatRouter());
+  router.use(createRemindersRouter());
   router.use(createBookingLifecycleRouter());
   router.use(createBookingsRouter());
   router.use(createNotificationsRouter());

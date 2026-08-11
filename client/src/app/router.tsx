@@ -8,6 +8,8 @@ import { AppShell } from '../layout/AppShell';
 import { ChargeDocumentsPage } from '../pages/ChargeDocumentsPage';
 import { ChatBoxPage } from '../pages/ChatBoxPage';
 import { ChatConversationPage } from '../pages/ChatConversationPage';
+import { ResendOrdersPage } from '../pages/ResendOrdersPage';
+import { RemindersPage } from '../pages/RemindersPage';
 import { ChargeDocumentDetailPage } from '../pages/ChargeDocumentDetailPage';
 import { ChargeReportPage } from '../pages/ChargeReportPage';
 
@@ -111,6 +113,24 @@ export function AppRoutes() {
             element={
               <RequireRole role={CHAT_ROLES}>
                 <ChatConversationPage />
+              </RequireRole>
+            }
+          />
+          {/* Admin recovery for orders whose 3-minute claim ran out. */}
+          <Route
+            path="resend-orders"
+            element={
+              <RequireRole role="ADMIN">
+                <ResendOrdersPage />
+              </RequireRole>
+            }
+          />
+          {/* Nhắc nhở: Admin composes, receptionist reads their own. */}
+          <Route
+            path="reminders"
+            element={
+              <RequireRole role={CHAT_ROLES}>
+                <RemindersPage />
               </RequireRole>
             }
           />

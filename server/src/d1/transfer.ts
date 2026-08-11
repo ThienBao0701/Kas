@@ -184,7 +184,12 @@ interface TablePlan {
  *     NULL without a default, since otherwise the target's own default (or
  *     NULL) is the correct value for a column the pilot never had.
  */
-function planTable(
+/**
+ * Exported for tests: the column-compatibility rule is the safety gate, and it
+ * deserves direct assertions rather than only being exercised through a full
+ * transfer against one fixed fixture.
+ */
+export function planTable(
   table: string,
   source: SqliteSource,
   schema: TargetSchema,
@@ -204,13 +209,35 @@ function planTable(
     }
   }
 
+  /*
+    A target column the source does not have is only a problem when the INSERT
+    would actually fail without it.
+
+    THREE WAYS THE DATABASE CAN SUPPLY THE VALUE ITSELF, and all three are safe
+    to omit from a legacy transfer:
+      - the column is NULLABLE           → NULL is a legitimate value;
+      - the column is SEQUENCE-backed    → serial/identity fills it (already
+        exempt, because the transfer assigns explicit ids and resynchronises);
+      - the column has a DEFAULT         → PostgreSQL fills it.
+
+    The default case is the one added here, and it is deliberately GENERIC: any
+    NOT NULL column carrying a default is fine, not a named list of them. Before
+    this, every new `NOT NULL DEFAULT` column added to the schema silently broke
+    the compatibility gate against the frozen pilot source, and the failure
+    named the newest column rather than the real cause.
+
+    NOTHING ELSE IS RELAXED. A NOT NULL column with no default and no sequence
+    is still refused, which is the check that actually protects the transfer:
+    without a value the INSERT would abort mid-run.
+  */
   for (const column of targetTable.columns) {
     if (sourceColumns.has(column.name)) continue;
-    if (!column.nullable && column.sequence === null) {
-      problems.push(
-        `${table}.${column.name}: cột NOT NULL của đích không có trong nguồn.`,
-      );
-    }
+    if (column.nullable) continue;
+    if (column.sequence !== null) continue;
+    if (column.hasDefault) continue;
+    problems.push(
+      `${table}.${column.name}: cột NOT NULL của đích không có trong nguồn và không có giá trị mặc định.`,
+    );
   }
 
   return { table, columns, sourceRows: source.count(table), problems };

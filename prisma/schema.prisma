@@ -336,6 +336,13 @@ enum BookingAuditAction {
   BOOKING_PROOF_SUBMITTED
   BOOKING_PROOF_APPROVED
   BOOKING_PROOF_REJECTED
+  /// A receptionist took ownership of a dispatched order ("CUT").
+  BOOKING_CLAIMED
+  /// An Admin released an expired claim so the order can be taken again.
+  BOOKING_RESENT
+  /// Recorded when an expired claim is OBSERVED, not when it elapses — there is
+  /// no scheduler, and expiry is derived from claimExpiresAt.
+  BOOKING_CLAIM_EXPIRED
 }
 
 /// Severity of an extraction warning surfaced to the admin during preview.
@@ -416,6 +423,9 @@ model User {
   chargeAuditEvents      ChargeDocumentAudit[]
   chatConversations      ChatConversation[]         @relation("ChatConversationCreatedBy")
   chatMessages           ChatMessage[]              @relation("ChatMessageSender")
+  bookingsClaimed        Booking[]                  @relation("BookingClaimedBy")
+  remindersSent          Reminder[]                 @relation("ReminderSender")
+  remindersReceived      Reminder[]                 @relation("ReminderRecipient")
 
   @@index([branchId])
   @@index([role])
@@ -1102,6 +1112,33 @@ model Booking {
   reviewedByUserId   Int?
   reviewedAt         DateTime?
 
+  /// ── DISPATCH CLAIM ("CUT") ────────────────────────────────────────────────
+  ///
+  /// Ownership of the CREATION work for a dispatched order. Deliberately on the
+  /// verification axis, NOT the BookingStatus axis: `RECEIVED` / `receivedAt`
+  /// belong to the guest-stay lifecycle (RECEIVED -> CHECKED_IN) and mean the
+  /// branch acknowledged the guest — a different question entirely.
+  ///
+  /// EXISTS TO PREVENT DUPLICATE BOOKINGS. Every receptionist at a branch sees
+  /// the same queue, so without an owner two of them can create the same
+  /// reservation in the hotel system. The claim is the lock; the countdown is
+  /// only a deadline on holding it.
+  ///
+  /// A claim is ACTIVE while `claimExpiresAt > now`. Expiry is DERIVED, never
+  /// swept: there is no domain scheduler in KAS and this feature does not
+  /// justify introducing one. Every read filters on the timestamp and every
+  /// write re-checks it, so an expired claim cannot be acted on even when a
+  /// polled screen still shows it.
+  claimedByUserId Int?
+  claimedAt       DateTime?
+  /// Absolute server deadline = claimedAt + CLAIM_WINDOW_MS. Stored, never
+  /// recomputed on read, so a refresh, a second tab or a wound-back client
+  /// clock cannot extend it.
+  claimExpiresAt  DateTime?
+  /// How many dispatch cycles this order has been through. 0 until the first
+  /// Admin resend; the Booking row is never duplicated for a resend.
+  claimCycle      Int       @default(0)
+
   /// Which extraction-engine version produced this draft.
   parserVersion   String?
   /// The admin who ran the extraction that created this booking.
@@ -1130,6 +1167,7 @@ model Booking {
   cancelledBy      User?                    @relation("BookingCancelledBy", fields: [cancelledByUserId], references: [id])
   reviewedBy       User?                    @relation("BookingReviewedBy", fields: [reviewedByUserId], references: [id])
   createdBy        User?                    @relation("BookingCreatedBy", fields: [createdByUserId], references: [id])
+  claimedBy        User?                    @relation("BookingClaimedBy", fields: [claimedByUserId], references: [id])
   rooms            BookingRoom[]
   guests           BookingGuest[]
   auditEvents      BookingAuditEvent[]
@@ -1151,6 +1189,10 @@ model Booking {
   @@index([sourcePlatform])
   @@index([businessType])
   @@index([sentAt])
+  /// The Admin "Gửi lại đơn" query is (claimedByUserId IS NOT NULL AND
+  /// claimExpiresAt < now); the receptionist queue filters on the same column.
+  @@index([claimExpiresAt])
+  @@index([claimedByUserId])
   @@index([checkInDate])
   @@index([isLastMinute])
   @@index([customerName])
@@ -1608,4 +1650,35 @@ model ChatAttachment {
   message ChatMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
 
   @@index([messageId])
+}
+
+/// An Admin's private message to ONE receptionist ("Nhắc nhở").
+///
+/// DELIBERATELY NOT A `Notification`. That model is system-generated and
+/// booking-centric: it has no sender, and every row in it is an event the
+/// application raised about a booking. A reminder is a person writing to
+/// another person, so it needs `senderUserId`, and mixing it into the
+/// notification stream would put Admin prose in the booking-event bell and
+/// distort the unread badge that reception uses to spot new work.
+///
+/// PRIVATE BY CONSTRUCTION: every read is filtered on `recipientUserId`, so a
+/// receptionist cannot see a reminder addressed to a colleague. There is no
+/// broadcast — an Admin picks exactly one recipient.
+model Reminder {
+  id              String    @id @default(cuid())
+  senderUserId    Int
+  recipientUserId Int
+  body            String
+  createdAt       DateTime  @default(now())
+  /// Null until the recipient opens it. Doubles as the read flag, so there is
+  /// no second boolean that can disagree with the timestamp.
+  readAt          DateTime?
+
+  sender    User @relation("ReminderSender", fields: [senderUserId], references: [id])
+  recipient User @relation("ReminderRecipient", fields: [recipientUserId], references: [id])
+
+  /// The recipient's inbox and unread count are the only queries that matter.
+  @@index([recipientUserId, readAt])
+  @@index([recipientUserId, createdAt])
+  @@index([senderUserId])
 }

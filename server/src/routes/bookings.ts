@@ -24,6 +24,7 @@ import {
 import { loadBookingDetail } from '../booking/bookingRepo';
 import { NOT_DELETED } from '../booking/deleteBooking';
 import { approveProof, rejectProof, submitProof, authorizeProofImage } from '../booking/proof';
+import { claimBooking, resendBooking } from '../booking/claim';
 import { readProofFile } from '../booking/proofStorage';
 import { analyzeAfterSubmit } from '../booking/ocr/analysisService';
 import { isTest } from '../config/env';
@@ -65,6 +66,7 @@ const paginationSchema = {
 
 const newListQuery = z.object({ branchId: z.coerce.number().int().positive().optional(), ...paginationSchema });
 const completedListQuery = z.object({ branchId: z.coerce.number().int().positive().optional(), ...paginationSchema });
+const expiredClaimsQuery = z.object({ branchId: z.coerce.number().int().positive().optional(), ...paginationSchema });
 
 const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
@@ -322,6 +324,95 @@ export function createBookingsRouter(): Router {
       })().catch(next);
     };
   }
+
+  /**
+   * POST /api/bookings/:id/claim — "CUT", the receptionist takes ownership.
+   *
+   * This is the duplicate-booking control. Two receptionists at a branch see
+   * the same queue; the atomic claim inside `claimBooking` decides which of
+   * them owns the creation work, and the loser is told who beat them.
+   */
+  router.post('/bookings/:id/claim', requireAuth, requirePasswordChanged, (req, res, next) => {
+    (async () => {
+      const user = req.currentUser!;
+      const id = req.params.id;
+      if (!id) throw ApiError.notFound('Không tìm thấy đơn.');
+      const result = await claimBooking(
+        id,
+        { id: user.id, role: user.role, branchId: user.branchId },
+        prisma,
+        getClock(),
+      );
+      res.json({
+        claimedAt: result.claimedAt.toISOString(),
+        claimExpiresAt: result.claimExpiresAt.toISOString(),
+        claimCycle: result.claimCycle,
+        // The client renders the countdown as (claimExpiresAt - serverNow), so
+        // a wrong or wound-back PC clock cannot lengthen the window.
+        serverNow: getClock().now().toISOString(),
+      });
+    })().catch(next);
+  });
+
+  /**
+   * GET /api/bookings/expired-claims — the Admin "Gửi lại đơn" list.
+   *
+   * Expiry is DERIVED here, not swept by a scheduler: an order qualifies when
+   * a claim is held and its stored deadline has passed, and it has not been
+   * completed (a submitted proof leaves NOT_SUBMITTED/REJECTED).
+   */
+  router.get('/bookings/expired-claims', requireAuth, requirePasswordChanged, requireAdmin, (req, res, next) => {
+    (async () => {
+      const query = expiredClaimsQuery.parse(req.query ?? {});
+      const now = getClock().now();
+      const where: Prisma.BookingWhereInput = {
+        ...NOT_DELETED,
+        status: 'NEW',
+        verificationStatus: { in: ['NOT_SUBMITTED', 'REJECTED'] },
+        claimedByUserId: { not: null },
+        claimExpiresAt: { lt: now },
+      };
+      if (query.branchId !== undefined) where.branchId = query.branchId;
+
+      const { skip, take } = paginate(query.page, query.pageSize);
+      const [total, rows] = await prisma.$transaction([
+        prisma.booking.count({ where }),
+        prisma.booking.findMany({
+          where,
+          include: BOOKING_LIST_INCLUDE,
+          orderBy: [{ claimExpiresAt: 'asc' }],
+          skip,
+          take,
+        }),
+      ]);
+      res.json({
+        bookings: rows.map(serializeNewListItem),
+        pagination: meta(query.page, query.pageSize, total),
+        serverNow: now.toISOString(),
+      });
+    })().catch(next);
+  });
+
+  /**
+   * POST /api/bookings/:id/resend — Admin returns an expired order to reception.
+   *
+   * Conditional on the claim still being expired, so a double-clicked button
+   * cannot increment the cycle twice.
+   */
+  router.post('/bookings/:id/resend', requireAuth, requirePasswordChanged, requireAdmin, (req, res, next) => {
+    (async () => {
+      const user = req.currentUser!;
+      const id = req.params.id;
+      if (!id) throw ApiError.notFound('Không tìm thấy đơn.');
+      const result = await resendBooking(
+        id,
+        { id: user.id, role: user.role, branchId: user.branchId },
+        prisma,
+        getClock(),
+      );
+      res.json({ success: true, claimCycle: result.claimCycle });
+    })().catch(next);
+  });
 
   // GET /api/bookings/new — dispatched work the BRANCH must act on: no proof
   // submitted yet, or a proof already approved and the stay still to be run.

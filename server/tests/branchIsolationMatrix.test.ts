@@ -66,7 +66,15 @@ beforeEach(async () => {
 
 afterAll(async () => testPrisma.$disconnect());
 
-/** Dispatches a fresh booking to one branch, resolved by stable code. */
+/**
+ * Dispatches a fresh booking to one branch, resolved by stable code, and lets
+ * that branch's receptionist CUT it.
+ *
+ * The claim is part of the setup because CUT is a hard prerequisite for proof
+ * submission — the real sequence is dispatch → CUT → create → submit, and a
+ * fixture that skipped the claim would be refused for the wrong reason and
+ * stop testing branch isolation at all.
+ */
 async function dispatchTo(code: string, bookingCode: string): Promise<string> {
   const branch = branchByCode.get(code)!;
   const draft = await createDraftBooking({ branchId: null, bookingCode });
@@ -74,6 +82,11 @@ async function dispatchTo(code: string, bookingCode: string): Promise<string> {
     .post(`/api/admin/bookings/${draft.id}/send`)
     .send({ branchId: branch.id });
   expect(res.status).toBe(200);
+
+  const own = agentByCode.get(code)!;
+  const claim = await own.post(`/api/bookings/${draft.id}/claim`);
+  expect(claim.status).toBe(200);
+
   return draft.id;
 }
 
@@ -271,10 +284,18 @@ describe('Admin operates across all branches', () => {
         orderBy: { createdAt: 'asc' },
       });
       expect(events.map((e) => e.action)).toEqual([
+        // The receptionist takes ownership before creating the reservation.
+        'BOOKING_CLAIMED',
         'BOOKING_PROOF_SUBMITTED',
         'BOOKING_PROOF_APPROVED',
       ]);
-      expect(events.every((e) => e.correlationId !== null)).toBe(true);
+      // The claim is written outside the request-audit path that stamps a
+      // correlation id, so only the proof events carry one.
+      expect(
+        events
+          .filter((e) => e.action !== 'BOOKING_CLAIMED')
+          .every((e) => e.correlationId !== null),
+      ).toBe(true);
 
       await resetBookingData();
     }

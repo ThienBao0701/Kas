@@ -31,6 +31,7 @@ export const BOOKING_DETAIL_INCLUDE = {
   checkedInBy: true,
   checkedOutBy: true,
   cancelledBy: true,
+  claimedBy: true,
 } satisfies Prisma.BookingInclude;
 
 export type BookingDetail = Prisma.BookingGetPayload<{ include: typeof BOOKING_DETAIL_INCLUDE }>;
@@ -40,6 +41,7 @@ export const BOOKING_LIST_INCLUDE = {
   sentBy: true,
   completedBy: true,
   reviewedBy: true,
+  claimedBy: true,
   rooms: { include: { nights: true } },
   warnings: true,
   // Only the most recent proof attempt, for the list's status/reason display.
@@ -227,6 +229,7 @@ function auditRow(audit: NonNullable<BookingDetail['corrections'][number]['reque
 /** The full booking detail an Admin sees (includes rawText). */
 export function serializeAdminBookingDetail(booking: BookingDetail) {
   return {
+    ...claimView(booking),
     id: booking.id,
     status: booking.status,
     sourcePlatform: booking.sourcePlatform,
@@ -371,6 +374,32 @@ export function serializeNewListItem(booking: BookingListItem) {
     latestRejectionReason: proof?.status === 'REJECTED' ? proof.reviewReasonCode : null,
     submittedAt: iso(proof?.submittedAt ?? null),
     reviewedAt: iso(booking.reviewedAt),
+    ...claimView(booking),
+  };
+}
+
+/**
+ * The claim ("CUT") fields the client needs.
+ *
+ * `claimExpiresAt` is sent as the ABSOLUTE server instant and the client
+ * subtracts a server-supplied `now` from it. Sending "seconds remaining"
+ * instead would bake the latency of this response into the deadline and let a
+ * slow network quietly extend the window; sending the instant means a refresh,
+ * a second tab and a wound-back PC clock all render the same countdown.
+ */
+export function claimView(booking: {
+  claimedByUserId: number | null;
+  claimedAt: Date | null;
+  claimExpiresAt: Date | null;
+  claimCycle: number;
+  claimedBy?: ActorUser;
+}) {
+  return {
+    claimedBy: actor(booking.claimedBy ?? null),
+    claimedByUserId: booking.claimedByUserId,
+    claimedAt: iso(booking.claimedAt),
+    claimExpiresAt: iso(booking.claimExpiresAt),
+    claimCycle: booking.claimCycle,
   };
 }
 

@@ -14,6 +14,7 @@ import { LastMinuteBadge, StatusBadge, WorkflowBadge } from '../components/Badge
 import { Pagination } from '../components/Pagination';
 import { PageHeader, InlineSpinner, QueryState } from '../components/PageState';
 import { BookingDetailView } from '../components/BookingDetailView';
+import { ClaimPanel } from '../components/ClaimPanel';
 import { Toast } from '../components/Toast';
 import { formatDate, formatDateTime } from '../lib/format';
 
@@ -208,13 +209,20 @@ function SelectedBookingPanel({ id, onChanged }: { id: string; onChanged: (m?: s
   if (query.isLoading) return <InlineSpinner />;
   if (query.isError) return <ErrorAlert>{toUserMessage(query.error)}</ErrorAlert>;
   if (!query.data) return null;
+  const booking = query.data.booking;
+  // CUT sits ABOVE the booking detail: taking the order is the first decision,
+  // and the detail below (including "Sao chép PMS Note", untouched) is what the
+  // receptionist works from afterwards.
   return (
-    <BookingDetailView
-      booking={query.data.booking}
-      isAdmin={user?.role === 'ADMIN'}
-      onCompleted={onChanged}
-      suppressInternalToast
-    />
+    <div className="space-y-4">
+      <ClaimPanel booking={booking} bookingId={booking.id} onChanged={() => onChanged()} />
+      <BookingDetailView
+        booking={booking}
+        isAdmin={user?.role === 'ADMIN'}
+        onCompleted={onChanged}
+        suppressInternalToast
+      />
+    </div>
   );
 }
 

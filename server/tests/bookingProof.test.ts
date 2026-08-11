@@ -38,7 +38,18 @@ afterAll(async () => {
 });
 
 function newBooking(branchId = ownBranchId, code = 'PROOF00001') {
-  return createDraftBooking({ status: 'NEW', branchId, bookingCode: code, verificationStatus: 'NOT_SUBMITTED' });
+  // Arrives already claimed by the branch receptionist: CUT is a hard
+  // prerequisite for submitting proof, so a fixture exercising that workflow
+  // must be in the state a real order is in after the receptionist pressed it.
+  return createDraftBooking({
+    status: 'NEW',
+    branchId,
+    bookingCode: code,
+    verificationStatus: 'NOT_SUBMITTED',
+    // Only the own-branch fixture is claimed. An other-branch booking exists to
+    // be REFUSED, and claiming it would mask which rule did the refusing.
+    claimedByUserId: branchId === ownBranchId ? ownReceptionistId : null,
+  });
 }
 
 describe('POST /api/bookings/:id/proofs (submit)', () => {

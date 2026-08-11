@@ -1,4 +1,5 @@
 import {
+  BellRing,
   Building2,
   CheckCircle2,
   ClipboardPaste,
@@ -9,6 +10,7 @@ import {
   MessagesSquare,
   RotateCcw,
   ScanSearch,
+  Send,
   Users,
   Wrench,
   type LucideIcon,
@@ -31,8 +33,10 @@ export const ADMIN_NAV: NavItem[] = [
   { to: '/app/completed', label: 'Đã xác nhận đúng', icon: CheckCircle2 },
   { to: '/app/history', label: 'Lịch sử', icon: History },
   { to: '/app/issues', label: 'Sự cố khách sạn', icon: Wrench },
+  { to: '/app/resend-orders', label: 'Gửi lại đơn', icon: Send },
   { to: '/app/charge-documents', label: 'Chứng từ', icon: FileText },
   { to: '/app/chat', label: 'Chat box', icon: MessagesSquare },
+  { to: '/app/reminders', label: 'Nhắc nhở', icon: BellRing },
   { to: '/app/branches', label: 'Khách sạn & chi nhánh', icon: Building2 },
   { to: '/app/settings', label: 'Quản lý tài khoản', icon: Users },
 ];
@@ -61,6 +65,7 @@ export const RECEPTIONIST_NAV: NavItem[] = [
   { to: '/app/history', label: 'Lịch sử', icon: History },
   { to: '/app/issues', label: 'Báo cáo sự cố', icon: Wrench },
   { to: '/app/chat', label: 'Chat box', icon: MessagesSquare },
+  { to: '/app/reminders', label: 'Nhắc nhở', icon: BellRing },
 ];
 
 export function navForRole(role: UserRole | undefined): NavItem[] {
@@ -75,6 +80,8 @@ export function titleForPath(pathname: string): string {
   if (pathname.startsWith('/app/booking/')) return 'Chi tiết đơn';
   if (pathname.startsWith('/app/charge-documents/')) return 'Chi tiết chứng từ';
   if (pathname.startsWith('/app/chat/')) return 'Chat box';
+  if (pathname.startsWith('/app/reminders')) return 'Nhắc nhở';
+  if (pathname.startsWith('/app/resend-orders')) return 'Gửi lại đơn';
   const all = [...ADMIN_NAV, ...RECEPTIONIST_NAV, ...BOOKING_DEPARTMENT_NAV];
   const match = all
     .slice()

@@ -299,7 +299,7 @@ describe('creating a conversation', () => {
       .post('/api/chat/conversations')
       .field('subject', '   ')
       .field('body', BODY);
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(422); // KAS maps validation errors to 422
     expect(await testPrisma.chatConversation.count()).toBe(0);
   });
 
@@ -308,7 +308,7 @@ describe('creating a conversation', () => {
       .post('/api/chat/conversations')
       .field('subject', SUBJECT)
       .field('body', '   ');
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(422); // KAS maps validation errors to 422
     expect(await testPrisma.chatConversation.count()).toBe(0);
   });
 

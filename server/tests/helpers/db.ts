@@ -49,6 +49,19 @@ export async function resetAll(): Promise<void> {
   await testPrisma.chargeDocument.deleteMany();
   // HotelIssue holds RESTRICT FKs to User/Branch, so it must be cleared first.
   await testPrisma.hotelIssue.deleteMany();
+  // Chat box holds a RESTRICT FK from ChatConversation.createdByUserId and
+  // ChatMessage.senderUserId to User — a thread must not vanish because an
+  // account was removed. Children first, then the thread.
+  //
+  // ADDED LATE, AND THAT IS THE POINT: the chat tables shipped while the whole
+  // server suite was blocked on its database target, so `user.deleteMany()`
+  // began failing here the moment the suite could run again. Any future model
+  // holding a RESTRICT reference to User or Branch must be added to this list.
+  await testPrisma.chatAttachment.deleteMany();
+  await testPrisma.chatMessage.deleteMany();
+  await testPrisma.chatConversation.deleteMany();
+  // Reminder holds RESTRICT FKs to User for BOTH sender and recipient.
+  await testPrisma.reminder.deleteMany();
   // Room-mapping rows reference both Branch and User; clear them before either.
   await testPrisma.branchRoomClassAlias.deleteMany();
   await testPrisma.branchRoomClass.deleteMany();

@@ -25,7 +25,7 @@ function mockShell(user: unknown, extra: Record<string, () => { status: number; 
 }
 
 describe('role-based shell and routing', () => {
-  it('shows the full admin menu (12 items)', async () => {
+  it('shows the full admin menu (14 items)', async () => {
     mockShell(ADMIN_USER);
     renderApp('/app/new');
 
@@ -40,14 +40,16 @@ describe('role-based shell and routing', () => {
       'Đã xác nhận đúng',
       'Lịch sử',
       'Sự cố khách sạn',
+      'Gửi lại đơn',
       'Chứng từ',
       'Chat box',
+      'Nhắc nhở',
       'Khách sạn & chi nhánh',
       'Quản lý tài khoản',
     ]);
   });
 
-  it('shows only the seven receptionist items', async () => {
+  it('shows only the eight receptionist items', async () => {
     mockShell(RECEPTIONIST_USER);
     renderApp('/app/new');
 
@@ -61,6 +63,7 @@ describe('role-based shell and routing', () => {
       'Lịch sử',
       'Báo cáo sự cố',
       'Chat box',
+      'Nhắc nhở',
     ]);
     expect(within(nav).queryByRole('link', { name: 'Quản lý tài khoản' })).not.toBeInTheDocument();
     expect(within(nav).queryByRole('link', { name: 'Nhập đơn' })).not.toBeInTheDocument();

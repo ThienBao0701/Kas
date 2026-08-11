@@ -62,6 +62,7 @@ const PRODUCTION_ENV: NodeJS.ProcessEnv = {
   PROOF_UPLOAD_DIR: '/data/uploads/booking-proofs',
   ISSUE_UPLOAD_DIR: '/data/uploads/issue-photos',
   CHARGE_UPLOAD_DIR: '/data/uploads/charge-documents',
+  CHAT_UPLOAD_DIR: '/data/uploads/chat-attachments',
   BACKUP_DIR: '/data/backups',
   ENABLE_DEV_TEST_TOOLS: 'false',
 };
@@ -146,6 +147,7 @@ describe('production configuration', () => {
       'PROOF_UPLOAD_DIR',
       'ISSUE_UPLOAD_DIR',
       'CHARGE_UPLOAD_DIR',
+      'CHAT_UPLOAD_DIR',
       'BACKUP_DIR',
     ] as const) {
       const relative = parseEnvironment(prod({ [key]: 'server/uploads/somewhere' }));

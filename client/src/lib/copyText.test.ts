@@ -8,6 +8,12 @@ function booking(overrides: Partial<BookingDetail> = {}): BookingDetail {
     status: 'NEW',
     sourcePlatform: 'BOOKING_COM',
     verificationStatus: 'NOT_SUBMITTED',
+    // Unclaimed: these fixtures are about text formatting, not ownership.
+    claimedBy: null,
+    claimedByUserId: null,
+    claimedAt: null,
+    claimExpiresAt: null,
+    claimCycle: 0,
     businessType: 'DIRECT',
     businessTypeManuallyConfirmed: false,
     hotelName: 'Saigon Hotel & Ben Thanh',

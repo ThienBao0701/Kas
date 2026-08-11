@@ -13,6 +13,7 @@ import { SkeletonList } from '../components/Skeleton';
 import { LastMinuteBadge, SourceBadge } from '../components/Badges';
 import { InlineSpinner, PageHeader } from '../components/PageState';
 import { BookingDetailView } from '../components/BookingDetailView';
+import { ClaimPanel } from '../components/ClaimPanel';
 import { Toast } from '../components/Toast';
 import { formatDate, formatDateTime } from '../lib/format';
 
@@ -237,12 +238,22 @@ function SelectedPanel({ id, isAdmin, onChanged }: { id: string; isAdmin: boolea
   if (query.isLoading) return <InlineSpinner />;
   if (query.isError) return <ErrorAlert>{toUserMessage(query.error)}</ErrorAlert>;
   if (!query.data) return null;
+  const booking = query.data.booking;
+  // "Cần tạo lại" is the same creation work as a fresh dispatch — the
+  // receptionist recreates the reservation — so it carries the same duplicate
+  // risk and the same claim protection. The panel renders nothing for states
+  // that are not claimable, so "Chờ kiểm tra" is unaffected.
   return (
-    <BookingDetailView
-      booking={query.data.booking}
-      isAdmin={isAdmin}
-      onCompleted={(m) => onChanged(m ?? 'Đã cập nhật đơn.')}
-      suppressInternalToast
-    />
+    <div className="space-y-4">
+      {booking.verificationStatus === 'REJECTED' ? (
+        <ClaimPanel booking={booking} bookingId={booking.id} onChanged={() => onChanged('')} />
+      ) : null}
+      <BookingDetailView
+        booking={booking}
+        isAdmin={isAdmin}
+        onCompleted={(m) => onChanged(m ?? 'Đã cập nhật đơn.')}
+        suppressInternalToast
+      />
+    </div>
   );
 }

@@ -100,10 +100,32 @@ describe('assertSafeWriteTarget', () => {
     ).toThrow(/bảo lưu/);
   });
 
-  it('defaults its allow-list to the approved disposable database', () => {
-    expect(D1_APPROVED_DATABASE).toBe(APPROVED_TEST_DATABASE);
-    const target = assertSafeWriteTarget(urlFor(APPROVED_TEST_DATABASE));
-    expect(target.database).toBe(APPROVED_TEST_DATABASE);
+  /*
+    THESE TWO CONSTANTS USED TO BE THE SAME DATABASE, AND THAT WAS THE BUG.
+
+    `D1_APPROVED_DATABASE` is where the D.1 transfer/restore tooling may WRITE.
+    `APPROVED_TEST_DATABASE` is the disposable database the automated suite
+    drops and recreates a schema in. While both read `kas_dev_cn1` — which
+    turned out to be the live database serving kasbookingapp.com — running the
+    documented `npm test` dropped a schema inside production.
+
+    They are now deliberately DIFFERENT, and this test pins that apart rather
+    than asserting they match. The D.1 target is a separate decision: restoring
+    a production backup into production is a legitimate operation, so that
+    constant is not simply pointed at the test database.
+  */
+  it('defaults its allow-list to the D.1 write target, not the test database', () => {
+    const target = assertSafeWriteTarget(urlFor(D1_APPROVED_DATABASE));
+    expect(target.database).toBe(D1_APPROVED_DATABASE);
+  });
+
+  it('keeps the D.1 write target and the test database distinct', () => {
+    expect(D1_APPROVED_DATABASE).not.toBe(APPROVED_TEST_DATABASE);
+  });
+
+  it('refuses the test database as a D.1 write target by default', () => {
+    // The suite's database is not somewhere the transfer tooling may write.
+    expect(() => assertSafeWriteTarget(urlFor(APPROVED_TEST_DATABASE))).toThrow();
   });
 
   it('never puts the password in the error message', () => {

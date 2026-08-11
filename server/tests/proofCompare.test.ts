@@ -27,6 +27,7 @@ let adminAgent: Awaited<ReturnType<typeof loginAgent>>['agent'];
 let ownAgent: Awaited<ReturnType<typeof loginAgent>>['agent'];
 let otherAgent: Awaited<ReturnType<typeof loginAgent>>['agent'];
 let ownBranchId: number;
+let ownReceptionistId: number;
 let otherBranchId: number;
 
 beforeEach(async () => {
@@ -37,7 +38,7 @@ beforeEach(async () => {
   otherBranchId = (await testPrisma.branch.findUniqueOrThrow({ where: { code: 'LY_TU_TRONG_260' } })).id;
   await createAdmin({ mustChangePassword: false });
   adminAgent = (await loginAgent(app, 'admin', ADMIN_PASSWORD)).agent;
-  await createReceptionist(ownBranchId, { username: 'letan_own', mustChangePassword: false });
+  ownReceptionistId = (await createReceptionist(ownBranchId, { username: 'letan_own', mustChangePassword: false })).id;
   ownAgent = (await loginAgent(app, 'letan_own', RECEPTIONIST_PASSWORD)).agent;
   await createReceptionist(otherBranchId, { username: 'letan_other', mustChangePassword: false });
   otherAgent = (await loginAgent(app, 'letan_other', RECEPTIONIST_PASSWORD)).agent;
@@ -58,6 +59,8 @@ async function matchingBooking(over: Record<string, unknown> = {}) {
     totalAmount: 4_720_680,
     paymentStatus: 'PAY_AFTER',
     verificationStatus: 'NOT_SUBMITTED',
+    // Already claimed: CUT is a hard prerequisite for submitting proof.
+    claimedByUserId: ownReceptionistId,
     ...over,
   });
 }

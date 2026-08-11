@@ -170,7 +170,7 @@ export interface RequestAuditView {
 }
 
 /** The full operational booking (admin form also includes rawText). */
-export interface BookingDetail {
+export interface BookingDetail extends ClaimFields {
   id: string;
   status: BookingStatus;
   sourcePlatform: BookingSource;
@@ -223,7 +223,22 @@ export interface BookingDetail {
   requestAudit?: RequestAuditView;
 }
 
-export interface NewListItem {
+/**
+ * Claim ("CUT") state carried by every dispatched-order payload.
+ *
+ * `claimExpiresAt` is an ABSOLUTE server instant. The countdown is rendered as
+ * (claimExpiresAt - serverNow), never from a duration the server computed, so a
+ * refresh, a second tab or a wound-back PC clock all show the same deadline.
+ */
+export interface ClaimFields {
+  claimedBy: Actor | null;
+  claimedByUserId: number | null;
+  claimedAt: string | null;
+  claimExpiresAt: string | null;
+  claimCycle: number;
+}
+
+export interface NewListItem extends ClaimFields {
   id: string;
   bookingCode: string | null;
   customerName: string | null;
@@ -454,6 +469,21 @@ export const bookingsApi = {
     api.post<{ booking: BookingDetail }>(`/bookings/${id}/proofs/${proofId}/approve`, {}),
   rejectProof: (id: string, proofId: string, reasonCode: ProofReviewReason, reviewNote?: string) =>
     api.post<{ booking: BookingDetail }>(`/bookings/${id}/proofs/${proofId}/reject`, { reasonCode, reviewNote }),
+
+  // --- Dispatch claim ("CUT") ---------------------------------------------
+  /** Take ownership of a dispatched order. Server-atomic; 409 when already held. */
+  claim: (id: string) =>
+    api.post<{ claimedAt: string; claimExpiresAt: string; claimCycle: number; serverNow: string }>(
+      `/bookings/${id}/claim`,
+      {},
+    ),
+  /** Admin: orders whose claim ran out and which were never completed. */
+  listExpiredClaims: (params: { branchId?: number; page?: number; pageSize?: number } = {}) =>
+    api.get<ListResponse<NewListItem> & { serverNow: string }>(
+      `/bookings/expired-claims${query(params)}`,
+    ),
+  /** Admin: release an expired claim so reception can take it again. */
+  resend: (id: string) => api.post<{ success: true; claimCycle: number }>(`/bookings/${id}/resend`, {}),
 
   listNew: (params: { branchId?: number; page?: number; pageSize?: number } = {}) =>
     api.get<ListResponse<NewListItem>>(`/bookings/new${query(params)}`),

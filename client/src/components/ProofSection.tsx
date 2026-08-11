@@ -28,6 +28,7 @@ import { ImageUploadDropzone } from './ImageUploadDropzone';
 import { ProofOcrCard } from './ProofOcrCard';
 import { ProofComparisonCard } from './ProofComparisonCard';
 import { useProofComparison } from '../hooks/useProofComparison';
+import { DUPLICATE_WARNING } from '../lib/claim';
 
 /**
  * The proof-of-creation workflow surface. What it renders depends on the
@@ -162,6 +163,23 @@ function UploadCard({ booking: b, onChanged }: { booking: BookingDetail; onChang
           disabled={submit.isPending}
           placeholder="Ví dụ: Nguyễn Văn A"
         />
+      </div>
+
+      {/*
+        THE DUPLICATE WARNING, IMMEDIATELY ABOVE THE SUBMIT BUTTON.
+        Placed here rather than at the top of the card, and never in a tooltip:
+        the moment it has to influence is the click, and a notice scrolled off
+        screen influences nothing. This whole feature exists to stop two
+        receptionists creating the same reservation, and this is the last point
+        at which a person can still catch it.
+      */}
+      <div
+        data-testid="duplicate-warning"
+        role="note"
+        className="mt-4 flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-2.5 text-sm font-medium text-amber-900 ring-1 ring-inset ring-amber-200"
+      >
+        <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" aria-hidden="true" />
+        <span>{DUPLICATE_WARNING}</span>
       </div>
 
       <div className="mt-4">
