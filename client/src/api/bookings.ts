@@ -171,6 +171,14 @@ export interface RequestAuditView {
 
 /** The full operational booking (admin form also includes rawText). */
 export interface BookingDetail extends ClaimFields {
+  /**
+   * Fields this receptionist has already CẮT in the current claim cycle.
+   *
+   * Always empty for an Admin — the server never hides anything from them. The
+   * values themselves are still present on this payload either way; CẮT decides
+   * what reception is shown, not what the booking contains.
+   */
+  cutFields?: CutField[];
   id: string;
   status: BookingStatus;
   sourcePlatform: BookingSource;
@@ -237,6 +245,15 @@ export interface ClaimFields {
   claimExpiresAt: string | null;
   claimCycle: number;
 }
+
+/**
+ * The three values a receptionist takes off an order one at a time.
+ *
+ * Naming the fields rather than sending an index means the server validates
+ * what was cut, and a reordered UI cannot silently cut the wrong thing.
+ */
+export const CUT_FIELDS = ['CUSTOMER_NAME', 'TOTAL_AMOUNT', 'PMS_NOTE'] as const;
+export type CutField = (typeof CUT_FIELDS)[number];
 
 export interface NewListItem extends ClaimFields {
   id: string;
@@ -456,7 +473,8 @@ export const bookingsApi = {
       { roomClassId },
     ),
 
-  detail: (id: string) => api.get<{ booking: BookingDetail }>(`/bookings/${id}`),
+  detail: (id: string) =>
+    api.get<{ booking: BookingDetail; serverNow?: string }>(`/bookings/${id}`),
 
   // --- Proof verification -------------------------------------------------
   submitProof: (id: string, file: File, note?: string) => {
@@ -477,6 +495,21 @@ export const bookingsApi = {
       `/bookings/${id}/claim`,
       {},
     ),
+  /**
+   * CẮT one field off the order.
+   *
+   * The FIRST call also claims the booking and starts the three minutes; later
+   * calls in the same cycle return the same `claimExpiresAt` untouched, which is
+   * why three buttons never produce three timers.
+   */
+  cut: (id: string, field: CutField) =>
+    api.post<{
+      claimedAt: string;
+      claimExpiresAt: string;
+      claimCycle: number;
+      cutFields: CutField[];
+      serverNow: string;
+    }>(`/bookings/${id}/cut`, { field }),
   /** Admin: orders whose claim ran out and which were never completed. */
   listExpiredClaims: (params: { branchId?: number; page?: number; pageSize?: number } = {}) =>
     api.get<ListResponse<NewListItem> & { serverNow: string }>(

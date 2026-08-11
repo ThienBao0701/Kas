@@ -3,7 +3,13 @@ import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { RefreshCw, RotateCcw, ScanSearch } from 'lucide-react';
 import { useAuth } from '../auth/AuthProvider';
-import { bookingsApi, branchesApi, REVIEW_REASON_LABEL, type NewListItem } from '../api/bookings';
+import {
+  bookingsApi,
+  branchesApi,
+  REVIEW_REASON_LABEL,
+  type BookingDetail,
+  type NewListItem,
+} from '../api/bookings';
 import { toUserMessage } from '../api/errors';
 import { Card } from '../components/Card';
 import { EmptyState } from '../components/EmptyState';
@@ -13,8 +19,8 @@ import { SkeletonList } from '../components/Skeleton';
 import { LastMinuteBadge, SourceBadge } from '../components/Badges';
 import { InlineSpinner, PageHeader } from '../components/PageState';
 import { BookingDetailView } from '../components/BookingDetailView';
-import { ClaimPanel } from '../components/ClaimPanel';
 import { Toast } from '../components/Toast';
+import { useCut } from '../hooks/useCut';
 import { formatDate, formatDateTime } from '../lib/format';
 
 const POLL_MS = 20_000;
@@ -239,21 +245,47 @@ function SelectedPanel({ id, isAdmin, onChanged }: { id: string; isAdmin: boolea
   if (query.isError) return <ErrorAlert>{toUserMessage(query.error)}</ErrorAlert>;
   if (!query.data) return null;
   const booking = query.data.booking;
-  // "Cần tạo lại" is the same creation work as a fresh dispatch — the
-  // receptionist recreates the reservation — so it carries the same duplicate
-  // risk and the same claim protection. The panel renders nothing for states
-  // that are not claimable, so "Chờ kiểm tra" is unaffected.
   return (
-    <div className="space-y-4">
-      {booking.verificationStatus === 'REJECTED' ? (
-        <ClaimPanel booking={booking} bookingId={booking.id} onChanged={() => onChanged('')} />
-      ) : null}
-      <BookingDetailView
-        booking={booking}
-        isAdmin={isAdmin}
-        onCompleted={(m) => onChanged(m ?? 'Đã cập nhật đơn.')}
-        suppressInternalToast
-      />
-    </div>
+    <VerificationBookingBody
+      booking={booking}
+      isAdmin={isAdmin}
+      serverNow={query.data.serverNow ?? null}
+      onChanged={onChanged}
+    />
+  );
+}
+
+/**
+ * Separate component so the CẮT hook runs unconditionally, above the query's
+ * early returns.
+ *
+ * "Cần tạo lại" is the same creation work as a fresh dispatch — the receptionist
+ * recreates the reservation — so it carries the same duplicate risk and the same
+ * claim. "Chờ kiểm tra" carries neither: the work is already done and there is
+ * nothing left to take, so the CẮT controls are absent there and the fields keep
+ * their ordinary copy buttons.
+ */
+function VerificationBookingBody({
+  booking,
+  isAdmin,
+  serverNow,
+  onChanged,
+}: {
+  booking: BookingDetail;
+  isAdmin: boolean;
+  serverNow: string | null;
+  onChanged: (m: string) => void;
+}) {
+  const cut = useCut(booking.id, booking.cutFields, booking);
+  const claimable = !isAdmin && booking.verificationStatus === 'REJECTED';
+  return (
+    <BookingDetailView
+      booking={booking}
+      isAdmin={isAdmin}
+      onCompleted={(m) => onChanged(m ?? 'Đã cập nhật đơn.')}
+      suppressInternalToast
+      serverNow={serverNow}
+      {...(claimable ? { cut } : {})}
+    />
   );
 }

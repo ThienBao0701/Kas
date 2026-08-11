@@ -211,15 +211,22 @@ describe('CUT — claiming a dispatched order', () => {
 /* ================================================================== */
 
 describe('the three-minute window', () => {
-  it('an expired claim can be taken by another receptionist', async () => {
+  it('an expired claim can NOT be taken again by reception — it belongs to Admin now', async () => {
+    // The order does not fall back into the pool when the window runs out: it
+    // goes to the Admin resend list, and an Admin sending it back is the only
+    // thing that makes it takeable again. Letting the next receptionist grab it
+    // straight from here would route around the review of what just lapsed.
     const id = await dispatchOrder();
     at(0);
     await letanA.post(`/api/bookings/${id}/claim`);
 
     at(CLAIM_WINDOW_MS + 1);
     const res = await letanB.post(`/api/bookings/${id}/claim`);
-    expect(res.status).toBe(200);
-    expect((await testPrisma.booking.findUniqueOrThrow({ where: { id } })).claimedByUserId).toBe(letanBId);
+    expect(res.status).toBe(409);
+    expect(res.body.error.message).toMatch(/chờ Admin gửi lại/i);
+
+    // Still recorded against the receptionist who let it lapse.
+    expect((await testPrisma.booking.findUniqueOrThrow({ where: { id } })).claimedByUserId).toBe(letanAId);
   });
 
   it('refuses proof submission after the deadline', async () => {
@@ -279,20 +286,37 @@ describe('the three-minute window', () => {
     expect(await testPrisma.bookingCreationProof.count({ where: { bookingId: id } })).toBe(0);
   });
 
-  it('drops an expired order out of the receptionist active queue view', async () => {
-    // The order still exists and is still NEW; what changed is that it is no
-    // longer owned, so the queue shows it as takeable rather than in progress.
+  it('REMOVES an expired order from the receptionist queue the instant it lapses', async () => {
+    // §6. Not hidden by the client, not swept by a job — the list query itself
+    // stops returning it, so the disappearance is exact to the second and needs
+    // no scheduler. The row is untouched; it is now Admin's to resend.
+    const id = await dispatchOrder();
+    at(0);
+    await letanA.post(`/api/bookings/${id}/claim`);
+
+    // One millisecond before the deadline it is still theirs to work on.
+    at(CLAIM_WINDOW_MS - 1);
+    const before = await letanA.get('/api/bookings/new');
+    expect((before.body.bookings as { id: string }[]).map((b) => b.id)).toContain(id);
+
+    at(CLAIM_WINDOW_MS + 1);
+    const after = await letanA.get('/api/bookings/new');
+    expect((after.body.bookings as { id: string }[]).map((b) => b.id)).not.toContain(id);
+
+    // Gone from reception, present for Admin — the same row, not a copy.
+    const resend = await adminAgent.get('/api/bookings/expired-claims');
+    expect((resend.body.bookings as { id: string }[]).map((b) => b.id)).toContain(id);
+    expect(await testPrisma.booking.count({ where: { id } })).toBe(1);
+  });
+
+  it('keeps an elapsed order on the ADMIN overview — they must see the lapse', async () => {
     const id = await dispatchOrder();
     at(0);
     await letanA.post(`/api/bookings/${id}/claim`);
 
     at(CLAIM_WINDOW_MS + 1);
-    const list = await letanA.get('/api/bookings/new');
-    const found = (list.body.bookings as { id: string; claimExpiresAt: string | null }[]).find(
-      (b) => b.id === id,
-    );
-    expect(found).toBeDefined();
-    expect(new Date(found!.claimExpiresAt!).getTime()).toBeLessThanOrEqual(Date.now() + CLAIM_WINDOW_MS);
+    const adminList = await adminAgent.get('/api/bookings/new');
+    expect((adminList.body.bookings as { id: string }[]).map((b) => b.id)).toContain(id);
   });
 });
 

@@ -91,17 +91,40 @@ export function isClaimExpired(booking: ClaimFields, now: Date): boolean {
 }
 
 /**
- * The `where` fragment matching an order whose claim is free — never claimed,
- * or claimed and expired.
+ * The `where` fragment matching an order whose claim is free.
  *
- * Written as Prisma OR rather than fetched-then-compared so the check runs IN
- * THE DATABASE, inside the same statement that takes ownership. A read-then-
- * write version has a window between the two in which another receptionist can
- * claim, which is precisely the bug this module exists to prevent.
+ * FREE MEANS NEVER CLAIMED — an expired claim is NOT free. When a window
+ * elapses the order stops being reception's work and becomes Admin's: it
+ * leaves the receptionist queue entirely and waits in "Gửi lại đơn" until an
+ * Admin sends it back, which is the only thing that clears the claim. Letting
+ * a receptionist re-take it directly would route around that review, and the
+ * lapse — someone held an order for three minutes and did not create it —
+ * is exactly the event an Admin is meant to see.
+ *
+ * Written as a Prisma condition rather than fetched-then-compared so the check
+ * runs IN THE DATABASE, inside the same statement that takes ownership. A
+ * read-then-write version has a window between the two in which another
+ * receptionist can claim, which is precisely the bug this module exists to
+ * prevent.
+ *
+ * `now` is retained in the signature because expiry is still what the queue and
+ * the resend list filter on; only the takeable condition ignores it.
  */
-export function claimableWhere(now: Date): Prisma.BookingWhereInput {
+export function claimableWhere(_now: Date): Prisma.BookingWhereInput {
+  return { claimedByUserId: null };
+}
+
+/**
+ * The `where` fragment for an order still on reception's active queue.
+ *
+ * Either nobody holds it, or the holder's window has not run out. The excluded
+ * case — claimed AND elapsed — is the one that has moved to the Admin resend
+ * list, and it must vanish from "Đơn mới" the moment the deadline passes so a
+ * receptionist cannot keep working an order they no longer own.
+ */
+export function activeQueueWhere(now: Date): Prisma.BookingWhereInput {
   return {
-    OR: [{ claimedByUserId: null }, { claimExpiresAt: { lt: now } }],
+    OR: [{ claimedByUserId: null }, { claimExpiresAt: { gt: now } }],
   };
 }
 
@@ -219,18 +242,143 @@ async function explainClaimFailure(
       verificationStatus: booking.verificationStatus,
     });
   }
-  if (
-    booking.claimedByUserId !== null &&
-    booking.claimExpiresAt !== null &&
-    booking.claimExpiresAt.getTime() > now.getTime()
-  ) {
-    const who = booking.claimedBy?.fullName ?? 'một lễ tân khác';
-    throw ApiError.conflict(`Đơn này đã được ${who} nhận. Bạn không thể nhận đơn này.`, {
-      claimedByUserId: booking.claimedByUserId,
+  if (booking.claimedByUserId !== null && booking.claimExpiresAt !== null) {
+    const active = booking.claimExpiresAt.getTime() > now.getTime();
+    if (active) {
+      const who = booking.claimedBy?.fullName ?? 'một lễ tân khác';
+      throw ApiError.conflict(`Đơn này đã được ${who} nhận. Bạn không thể nhận đơn này.`, {
+        claimedByUserId: booking.claimedByUserId,
+        claimExpiresAt: booking.claimExpiresAt.toISOString(),
+      });
+    }
+    // Elapsed. Not takeable again from here — it is waiting on an Admin.
+    throw ApiError.conflict('Đơn này đã quá 3 phút và đang chờ Admin gửi lại.', {
       claimExpiresAt: booking.claimExpiresAt.toISOString(),
     });
   }
   throw ApiError.conflict('Không nhận được đơn. Vui lòng tải lại danh sách.');
+}
+
+/* ========================================================================== */
+/* Per-field CẮT                                                              */
+/* ========================================================================== */
+
+/**
+ * The three pieces of a dispatched order a receptionist takes one at a time.
+ *
+ * "CẮT" is the operator's word for lifting a value off the order and into the
+ * hotel system. Once taken, it stops being shown back to them — a field still
+ * on screen is one that still looks like work.
+ */
+export const CUT_FIELDS = ['CUSTOMER_NAME', 'TOTAL_AMOUNT', 'PMS_NOTE'] as const;
+export type CutField = (typeof CUT_FIELDS)[number];
+
+/**
+ * WHY THE AUDIT LOG AND NOT A COLUMN.
+ *
+ * Which fields have been taken is per-CYCLE state: a resend puts the order back
+ * out and all three become available again. A column would need clearing on
+ * every resend — a second place to remember something the cycle number already
+ * says. Recording each CẮT as an event keyed by the cycle it happened in means
+ * the reset is automatic: cycle 2 simply has no rows yet.
+ *
+ * It is also genuinely an audited act. "Who took the guest's name off this
+ * order, and when" is the same class of fact as "who claimed it", so it belongs
+ * in the same log rather than in a mutable field that forgets its own history.
+ *
+ * Encoded into `newValue` of a `BOOKING_CLAIMED` row rather than a new enum
+ * member, because a new `BookingAuditAction` value would mean a migration for
+ * something the existing schema already expresses.
+ */
+function cutMarker(cycle: number, field: CutField): string {
+  return `CYCLE_${cycle}:${field}`;
+}
+
+/** The fields already taken in a given cycle, in display order. */
+export async function cutFieldsFor(
+  bookingId: string,
+  cycle: number,
+  client: PrismaClient = defaultPrisma,
+): Promise<CutField[]> {
+  const prefix = `CYCLE_${cycle}:`;
+  const rows = await client.bookingAuditEvent.findMany({
+    where: { bookingId, action: 'BOOKING_CLAIMED', newValue: { startsWith: prefix } },
+    select: { newValue: true },
+  });
+  const taken = new Set(rows.map((row) => (row.newValue ?? '').slice(prefix.length)));
+  return CUT_FIELDS.filter((field) => taken.has(field));
+}
+
+export interface CutResult extends ClaimResult {
+  cutFields: CutField[];
+}
+
+/**
+ * Takes ONE field off a dispatched order, claiming the order if needed.
+ *
+ * THE FIRST CẮT IS THE CLAIM. There is no separate "take the order" step: the
+ * receptionist's first real action on the booking is what locks it, which is
+ * both fewer clicks and impossible to forget. Every later CẮT in the same cycle
+ * finds the claim already held and does not touch it — no new deadline, no
+ * `claimCycle` increment, no second claim. Three buttons, one claim, one timer.
+ *
+ * The claim itself is still taken by `claimBooking`'s conditional update, so
+ * two receptionists pressing two different CẮT buttons at the same instant
+ * still resolve to exactly one winner.
+ */
+export async function cutBookingField(
+  bookingId: string,
+  field: CutField,
+  actor: ClaimActor,
+  client: PrismaClient = defaultPrisma,
+  clock: Clock = getClock(),
+): Promise<CutResult> {
+  if (actor.role !== 'RECEPTIONIST') {
+    throw ApiError.forbidden('Chỉ lễ tân mới cắt được thông tin đơn.');
+  }
+
+  const now = clock.now();
+  const current = await client.booking.findFirst({
+    where: { id: bookingId, deletedAt: null },
+    select: { claimedByUserId: true, claimedAt: true, claimExpiresAt: true, claimCycle: true },
+  });
+  if (!current) throw ApiError.notFound('Không tìm thấy đơn.');
+
+  // Does this receptionist ALREADY hold a live claim? If so the window keeps
+  // running exactly as it was; this is the second or third CẮT.
+  const holdsLiveClaim =
+    current.claimedByUserId === actor.id &&
+    current.claimExpiresAt !== null &&
+    current.claimExpiresAt.getTime() > now.getTime();
+
+  const claim: ClaimResult = holdsLiveClaim
+    ? {
+        claimedAt: current.claimedAt!,
+        claimExpiresAt: current.claimExpiresAt!,
+        claimCycle: current.claimCycle,
+      }
+    : await claimBooking(bookingId, actor, client, clock);
+
+  // Idempotent: cutting the same field twice records it once, so a double-click
+  // cannot litter the audit log or change what the receptionist sees.
+  const marker = cutMarker(claim.claimCycle, field);
+  const existing = await client.bookingAuditEvent.findFirst({
+    where: { bookingId, action: 'BOOKING_CLAIMED', newValue: marker },
+    select: { id: true },
+  });
+  if (!existing) {
+    await client.bookingAuditEvent.create({
+      data: {
+        bookingId,
+        action: 'BOOKING_CLAIMED',
+        newValue: marker,
+        actorUserId: actor.id,
+        actorRole: actor.role,
+      },
+    });
+  }
+
+  return { ...claim, cutFields: await cutFieldsFor(bookingId, claim.claimCycle, client) };
 }
 
 /**

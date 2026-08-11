@@ -10,8 +10,11 @@ import {
 import { buildPmsNote } from '../lib/pmsNote';
 import { formatAmountCopy, formatDate, formatDateTime, formatMoney } from '../lib/format';
 import { Card } from './Card';
-import { CopyButton, CopyField } from './CopyButton';
+import { CopyButton, CopyField, CutButton, CutPlaceholder } from './CopyButton';
+import { ClaimCountdown } from './ClaimCountdown';
+import { CUT_PLACEHOLDER, type CutController } from '../lib/cut';
 import { LastMinuteBadge, PaymentBadge, SourceBadge, WorkflowBadge } from './Badges';
+import { ErrorAlert } from './ErrorAlert';
 import { Section } from './Section';
 import { DeleteBookingButton } from './DeleteBookingButton';
 import { ProofSection } from './ProofSection';
@@ -131,20 +134,47 @@ export function BookingDetailView({
   isAdmin,
   onCompleted,
   suppressInternalToast = false,
+  cut,
+  serverNow,
 }: {
   booking: BookingDetail;
   isAdmin: boolean;
   onCompleted?: (message?: string) => void;
   suppressInternalToast?: boolean;
+  /**
+   * Present only for a receptionist on a claimable dispatch screen. When it is
+   * absent this component renders exactly what it always did — which is how
+   * every Admin screen keeps its copy buttons untouched.
+   */
+  cut?: CutController;
+  /** Server clock at the time this payload was produced, for the countdown. */
+  serverNow?: string | null;
 }) {
   const queryClient = useQueryClient();
   const [toast, setToast] = useState<string | null>(null);
   const showPhone = hasPhoneSection(b);
 
+  // Only the holder of a live claim sees a countdown. Another receptionist's
+  // remaining time is not their business, and an elapsed one is not a deadline.
+  const claimIsMine = cut?.claimIsMine ?? false;
+
   function refetchAll() {
     void queryClient.invalidateQueries({ queryKey: ['booking', b.id] });
     void queryClient.invalidateQueries({ queryKey: ['bookings'] });
     void queryClient.invalidateQueries({ queryKey: ['notifications'] });
+    void queryClient.invalidateQueries({ queryKey: ['nav-badges'] });
+  }
+
+  /*
+    WHEN THE DISPLAY HITS 00:00, ASK THE SERVER — do not decide locally.
+
+    Refetching is what makes the order disappear: the list query no longer
+    returns it, because the server filters an elapsed claim out of reception's
+    queue. Nothing is removed from the cache by hand, so the screen can never
+    hide an order the server still considers live.
+  */
+  function onClaimExpired() {
+    refetchAll();
   }
 
   // After a proof action (submit / approve / reject) refresh data and surface a
@@ -157,7 +187,7 @@ export function BookingDetailView({
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5" data-testid="booking-detail">
       {/*
         Sticky summary. On a long detail page the operator scrolls into the
         nightly rates or the timeline and loses which guest they are looking at
@@ -182,10 +212,33 @@ export function BookingDetailView({
               {b.isLastMinute ? <LastMinuteBadge withSubtitle /> : null}
               <WorkflowBadge status={b.verificationStatus} />
               {isAdmin ? <SourceBadge source={b.sourcePlatform} /> : null}
+              {/*
+                THE COUNTDOWN LIVES HERE, on the booking being worked, and is
+                nothing but mm:ss. It appears the moment the first CẮT starts the
+                claim and is the only timer on the screen.
+              */}
+              {cut && claimIsMine ? (
+                <ClaimCountdown
+                  expiresAt={b.claimExpiresAt!}
+                  serverNow={serverNow ?? null}
+                  onExpired={onClaimExpired}
+                />
+              ) : null}
             </div>
-            <h1 className="mt-2 truncate text-xl font-semibold text-slate-900">
-              {b.customerName ?? 'Khách chưa rõ'}
-            </h1>
+            {/*
+              The heading repeats the guest's name, so CẮT has to take it from
+              here too — hiding the field below while the same string sits in
+              32px type above it would remove nothing at all.
+            */}
+            {cut?.isCut('CUSTOMER_NAME') ? (
+              <p className="mt-2 truncate text-xl font-semibold italic text-slate-400">
+                {CUT_PLACEHOLDER}
+              </p>
+            ) : (
+              <h1 className="mt-2 truncate text-xl font-semibold text-slate-900">
+                {b.customerName ?? 'Khách chưa rõ'}
+              </h1>
+            )}
             {/*
               Both ends of the stay, each with the hotel's fixed policy time.
               The booking code that used to sit here is gone: it is a value a
@@ -219,8 +272,22 @@ export function BookingDetailView({
 
           ADMIN keeps all four, unchanged.
         */}
+        {/*
+          A refused CẮT is shown here rather than as a toast: the reason is
+          almost always "someone else already took this order", and that is
+          something to read beside the buttons, not something to watch fade.
+        */}
+        {cut?.error ? (
+          <div className="mb-3">
+            <ErrorAlert>{cut.error}</ErrorAlert>
+          </div>
+        ) : null}
         <div className="grid gap-3 sm:grid-cols-2">
-          <CopyField label="Tên khách" value={b.customerName} />
+          <CopyField
+            label="Tên khách"
+            value={b.customerName}
+            {...(cut ? { cut: { field: 'CUSTOMER_NAME' as const, controller: cut } } : {})}
+          />
           {/*
             H2 — Agoda and CTrip rarely supply a guest phone. Showing an empty
             field or a placeholder invites a receptionist to hunt for a number
@@ -237,7 +304,12 @@ export function BookingDetailView({
             />
           ) : null}
           {isAdmin ? <CopyField label="Mã Booking" value={b.bookingCode} mono /> : null}
-          <CopyField label="Tổng tiền" value={formatMoney(b.totalAmount, b.currency)} copyValue={formatAmountCopy(b.totalAmount)} />
+          <CopyField
+            label="Tổng tiền"
+            value={formatMoney(b.totalAmount, b.currency)}
+            copyValue={formatAmountCopy(b.totalAmount)}
+            {...(cut ? { cut: { field: 'TOTAL_AMOUNT' as const, controller: cut } } : {})}
+          />
         </div>
 
         {/*
@@ -272,7 +344,7 @@ export function BookingDetailView({
         ) : null}
       </Card>
 
-      <PmsNoteCard booking={b} />
+      <PmsNoteCard booking={b} {...(cut ? { cut } : {})} />
 
       {/*
         H5/H10 — rooms and nightly rates are never collapsed. A receptionist
@@ -444,13 +516,15 @@ function RequestAuditBlock({ audit }: { audit: RequestAuditView }) {
  * Rendered in a `pre` so uppercase, spacing and line breaks survive intact:
  * the note is a string contract with the hotel system, not prose.
  */
-function PmsNoteCard({ booking }: { booking: BookingDetail }) {
+function PmsNoteCard({ booking, cut }: { booking: BookingDetail; cut?: CutController }) {
   const stored = booking.adminPmsNote?.trim();
   const generated = booking.sourcePlatform === 'BOOKING_COM' ? buildPmsNote(booking) : null;
   const text = stored && stored.length > 0 ? stored : generated?.ok ? generated.text ?? null : null;
   const error = text
     ? null
     : generated?.error ?? 'Đơn này được gửi trước khi hệ thống lưu ghi chú PMS.';
+
+  const isCut = cut ? cut.isCut('PMS_NOTE') : false;
 
   return (
     <Card className="p-5" data-testid="pms-note-card">
@@ -460,10 +534,21 @@ function PmsNoteCard({ booking }: { booking: BookingDetail }) {
           PMS NOTE
         </div>
         {/*
-          Copied whole rather than retyped — retyping is where a digit goes
-          missing, and every figure on this note is one a guest is charged for.
+          For reception this is CẮT: the note is the last thing they take, and
+          leaving a copy button beside an already-taken note invites pasting it
+          into the hotel system twice.
+
+          FOR ADMIN IT IS STILL "Sao chép", unchanged — copied whole rather than
+          retyped, because retyping is where a digit goes missing and every
+          figure on this note is one a guest is charged for.
         */}
-        {text ? (
+        {cut ? (
+          isCut || !text ? null : (
+            // `text` verbatim: the note is a string contract with the hotel
+            // system, and its line breaks are part of it.
+            <CutButton field="PMS_NOTE" value={text} controller={cut} />
+          )
+        ) : text ? (
           <CopyButton
             value={text}
             label="Sao chép PMS Note"
@@ -472,7 +557,9 @@ function PmsNoteCard({ booking }: { booking: BookingDetail }) {
           />
         ) : null}
       </div>
-      {text ? (
+      {isCut ? (
+        <CutPlaceholder />
+      ) : text ? (
         <pre
           data-testid="pms-note-text"
           className="whitespace-pre-wrap break-words rounded-xl bg-slate-50 px-3 py-3 font-mono text-sm text-slate-800"

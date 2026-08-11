@@ -2,9 +2,21 @@ import { NavLink } from 'react-router-dom';
 import { Building2 } from 'lucide-react';
 import { useAuth } from '../auth/AuthProvider';
 import { useIssueSummary } from '../hooks/useIssueSummary';
+import { useNavBadges } from '../hooks/useNavBadges';
 import { navForRole, type NavItem } from './navigation';
 
-function SidebarLink({ item, onNavigate, badge }: { item: NavItem; onNavigate?: () => void; badge?: number }) {
+function SidebarLink({
+  item,
+  onNavigate,
+  badge,
+  badgeLabel,
+}: {
+  item: NavItem;
+  onNavigate?: () => void;
+  badge?: number;
+  /** Accessible wording for the count; menus that have their own phrase pass it. */
+  badgeLabel?: string;
+}) {
   const Icon = item.icon;
   const showBadge = typeof badge === 'number' && badge > 0;
   return (
@@ -24,8 +36,9 @@ function SidebarLink({ item, onNavigate, badge }: { item: NavItem; onNavigate?: 
       <span className="flex-1">{item.label}</span>
       {showBadge ? (
         <span
+          data-testid={`nav-badge-${item.to.replace('/app/', '')}`}
           className="inline-flex min-w-[1.4rem] items-center justify-center rounded-full bg-red-600 px-1.5 py-0.5 text-xs font-bold leading-none text-white"
-          aria-label={`${badge} sự cố chưa xử lý`}
+          aria-label={badgeLabel ?? `${item.label}: ${badge} mục cần xử lý`}
         >
           {badge > 99 ? '99+' : badge}
         </span>
@@ -40,6 +53,42 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   // Unresolved-issue badge on the "Sự cố khách sạn" / "Báo cáo sự cố" menu item.
   const summary = useIssueSummary(!!user);
   const unresolved = summary.data?.summary.totalUnresolved ?? 0;
+
+  /*
+    OPERATIONAL COUNTS PER MENU ITEM, replacing reliance on the single global
+    notification total. One number in a bell said only "something happened";
+    these say WHICH queue has work in it, which is the question a receptionist
+    starting a shift is actually asking.
+
+    Every value comes from the server on each poll. Nothing below adds, subtracts
+    or remembers a count, so the badges cannot drift from the lists they label.
+  */
+  const badges = useNavBadges(!!user);
+  const counts = badges.data?.counts;
+
+  function badgeFor(item: NavItem): number | undefined {
+    if (item.to === '/app/issues') return unresolved;
+    if (!counts) return undefined;
+    switch (item.to) {
+      // Reception's "Đơn mới" and Admin's "Chờ chi nhánh tạo" are the same
+      // dispatched-not-yet-created queue seen from two sides.
+      case '/app/new':
+      case '/app/waiting':
+        return counts.new;
+      case '/app/pending-review':
+        return counts.pendingReview;
+      case '/app/rejected':
+        return counts.rejected;
+      case '/app/resend-orders':
+        return counts.resendOrders;
+      case '/app/chat':
+        return counts.chat;
+      case '/app/reminders':
+        return counts.reminders;
+      default:
+        return undefined;
+    }
+  }
 
   return (
     <aside className="flex h-full w-64 flex-col border-r border-slate-200 bg-white">
@@ -59,7 +108,12 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
             key={item.to}
             item={item}
             onNavigate={onNavigate}
-            badge={item.to === '/app/issues' ? unresolved : undefined}
+            badge={badgeFor(item)}
+            {...(item.to === '/app/issues'
+              ? // Kept verbatim: this badge predates the others and its wording
+                // is more specific than the generic phrasing would be.
+                { badgeLabel: `${unresolved} sự cố chưa xử lý` }
+              : {})}
           />
         ))}
       </nav>

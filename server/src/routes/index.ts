@@ -15,6 +15,7 @@ import { createAdminBookingsRouter } from './adminBookings';
 import { createOtaReviewRouter } from './otaReview';
 import { createAdminDashboardRouter } from './adminDashboard';
 import { createNotificationsRouter } from './notifications';
+import { createNavBadgesRouter } from './navBadges';
 import { createIssuesRouter } from './issues';
 import { createDevTestRouter } from './devTest';
 
@@ -47,6 +48,7 @@ export function createApiRouter(): Router {
   router.use(createBookingLifecycleRouter());
   router.use(createBookingsRouter());
   router.use(createNotificationsRouter());
+  router.use(createNavBadgesRouter());
   router.use(createIssuesRouter());
   router.use(createDevTestRouter());
 

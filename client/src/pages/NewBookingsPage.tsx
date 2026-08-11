@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Inbox, RefreshCw } from 'lucide-react';
 import { useAuth } from '../auth/AuthProvider';
-import { bookingsApi, branchesApi, type NewListItem } from '../api/bookings';
+import { bookingsApi, branchesApi, type BookingDetail, type NewListItem } from '../api/bookings';
 import { toUserMessage } from '../api/errors';
 import { Card } from '../components/Card';
 import { EmptyState } from '../components/EmptyState';
@@ -14,8 +14,8 @@ import { LastMinuteBadge, StatusBadge, WorkflowBadge } from '../components/Badge
 import { Pagination } from '../components/Pagination';
 import { PageHeader, InlineSpinner, QueryState } from '../components/PageState';
 import { BookingDetailView } from '../components/BookingDetailView';
-import { ClaimPanel } from '../components/ClaimPanel';
 import { Toast } from '../components/Toast';
+import { useCut } from '../hooks/useCut';
 import { formatDate, formatDateTime } from '../lib/format';
 
 const POLL_MS = 20_000;
@@ -210,19 +210,50 @@ function SelectedBookingPanel({ id, onChanged }: { id: string; onChanged: (m?: s
   if (query.isError) return <ErrorAlert>{toUserMessage(query.error)}</ErrorAlert>;
   if (!query.data) return null;
   const booking = query.data.booking;
-  // CUT sits ABOVE the booking detail: taking the order is the first decision,
-  // and the detail below (including "Sao chép PMS Note", untouched) is what the
-  // receptionist works from afterwards.
+  const isAdmin = user?.role === 'ADMIN';
+
+  /*
+    THERE IS NO SEPARATE "TAKE THIS ORDER" STEP ANY MORE.
+
+    The card that used to sit above this detail — "Nhận đơn để tạo trên hệ
+    thống", with its own CUT button — is gone. Taking the order is not a
+    decision a receptionist makes in the abstract; it is what happens the first
+    time they take a value off it. So the claim now starts from the CẮT controls
+    on the fields themselves, and there is no global CUT anywhere.
+  */
   return (
-    <div className="space-y-4">
-      <ClaimPanel booking={booking} bookingId={booking.id} onChanged={() => onChanged()} />
-      <BookingDetailView
-        booking={booking}
-        isAdmin={user?.role === 'ADMIN'}
-        onCompleted={onChanged}
-        suppressInternalToast
-      />
-    </div>
+    <SelectedBookingBody booking={booking} isAdmin={isAdmin} serverNow={query.data.serverNow ?? null} onChanged={onChanged} />
+  );
+}
+
+/**
+ * Split out so the CẮT hook is called unconditionally.
+ *
+ * `SelectedBookingPanel` returns early while the query is loading, and a hook
+ * after those returns would break the rules of hooks the first time a booking
+ * is selected.
+ */
+function SelectedBookingBody({
+  booking,
+  isAdmin,
+  serverNow,
+  onChanged,
+}: {
+  booking: BookingDetail;
+  isAdmin: boolean;
+  serverNow: string | null;
+  onChanged: (m?: string) => void;
+}) {
+  const cut = useCut(booking.id, booking.cutFields, booking);
+  return (
+    <BookingDetailView
+      booking={booking}
+      isAdmin={isAdmin}
+      onCompleted={onChanged}
+      suppressInternalToast
+      serverNow={serverNow}
+      {...(isAdmin ? {} : { cut })}
+    />
   );
 }
 

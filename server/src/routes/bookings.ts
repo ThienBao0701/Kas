@@ -24,7 +24,15 @@ import {
 import { loadBookingDetail } from '../booking/bookingRepo';
 import { NOT_DELETED } from '../booking/deleteBooking';
 import { approveProof, rejectProof, submitProof, authorizeProofImage } from '../booking/proof';
-import { claimBooking, resendBooking } from '../booking/claim';
+import {
+  CUT_FIELDS,
+  activeQueueWhere,
+  claimBooking,
+  cutBookingField,
+  cutFieldsFor,
+  resendBooking,
+  type CutField,
+} from '../booking/claim';
 import { readProofFile } from '../booking/proofStorage';
 import { analyzeAfterSubmit } from '../booking/ocr/analysisService';
 import { isTest } from '../config/env';
@@ -308,6 +316,28 @@ export function createBookingsRouter(): Router {
         };
         if (branchId !== undefined) where.branchId = branchId;
 
+        /*
+          AN ELAPSED ORDER LEAVES RECEPTION'S QUEUE THE MOMENT IT ELAPSES.
+
+          Not swept, not flagged — filtered, so the disappearance needs no
+          scheduler and cannot lag behind the deadline. The order is not gone:
+          it is in the Admin "Gửi lại đơn" list, and an Admin sending it back is
+          what returns it here.
+
+          ADMIN IS DELIBERATELY EXEMPT. Their "Chờ chi nhánh tạo" screen is an
+          overview of everything dispatched, and an order silently vanishing
+          from it would hide the very lapse they are being asked to act on.
+
+          PENDING_REVIEW carries no claim, so the filter is limited to the two
+          claimable stages rather than applied to every list.
+        */
+        const claimable = verificationStatuses.some(
+          (status) => status === 'NOT_SUBMITTED' || status === 'REJECTED',
+        );
+        if (user.role === 'RECEPTIONIST' && claimable) {
+          Object.assign(where, activeQueueWhere(getClock().now()));
+        }
+
         const { skip, take } = paginate(query.page, query.pageSize);
         const [total, rows] = await prisma.$transaction([
           prisma.booking.count({ where }),
@@ -349,6 +379,44 @@ export function createBookingsRouter(): Router {
         claimCycle: result.claimCycle,
         // The client renders the countdown as (claimExpiresAt - serverNow), so
         // a wrong or wound-back PC clock cannot lengthen the window.
+        serverNow: getClock().now().toISOString(),
+      });
+    })().catch(next);
+  });
+
+  /**
+   * POST /api/bookings/:id/cut — take ONE field off the order.
+   *
+   * This is the receptionist's only entry into the claim: there is no separate
+   * "take the order" button, so the first CẮT is what locks the booking and
+   * starts the three minutes. Later CẮTs in the same cycle return the SAME
+   * deadline untouched.
+   */
+  router.post('/bookings/:id/cut', requireAuth, requirePasswordChanged, (req, res, next) => {
+    (async () => {
+      const user = req.currentUser!;
+      const id = req.params.id;
+      if (!id) throw ApiError.notFound('Không tìm thấy đơn.');
+
+      const field = (req.body ?? {}).field as unknown;
+      if (typeof field !== 'string' || !(CUT_FIELDS as readonly string[]).includes(field)) {
+        throw ApiError.validation('Trường cần cắt không hợp lệ.', {
+          field: `Chỉ chấp nhận: ${CUT_FIELDS.join(', ')}.`,
+        });
+      }
+
+      const result = await cutBookingField(
+        id,
+        field as CutField,
+        { id: user.id, role: user.role, branchId: user.branchId },
+        prisma,
+        getClock(),
+      );
+      res.json({
+        claimedAt: result.claimedAt.toISOString(),
+        claimExpiresAt: result.claimExpiresAt.toISOString(),
+        claimCycle: result.claimCycle,
+        cutFields: result.cutFields,
         serverNow: getClock().now().toISOString(),
       });
     })().catch(next);
@@ -548,7 +616,25 @@ export function createBookingsRouter(): Router {
         }
       }
 
-      res.json({ booking: serializeOpsBookingDetail(booking, user.role === 'ADMIN') });
+      const isAdmin = user.role === 'ADMIN';
+      /*
+        WHICH FIELDS THIS RECEPTIONIST HAS ALREADY CẮT, this cycle.
+
+        ADMIN NEVER GETS ONE, and that is the point of §12: CẮT hides a value
+        from the person who has already taken it, and hides nothing from anyone
+        else. The Booking row is untouched either way — the guest's name, the
+        amount and the note are all still there, and this list only says which
+        of them reception has finished with.
+      */
+      const cutFields = isAdmin ? [] : await cutFieldsFor(booking.id, booking.claimCycle, prisma);
+
+      res.json({
+        booking: { ...serializeOpsBookingDetail(booking, isAdmin), cutFields },
+        // So a countdown rendered straight after a page load is measured against
+        // the SERVER's clock, not the machine's. Without it a wound-back PC clock
+        // would display a longer window than the one the server will enforce.
+        serverNow: getClock().now().toISOString(),
+      });
     })().catch(next);
   });
 

@@ -14,7 +14,7 @@ import type { ClaimFields } from '../api/bookings';
  * paraphrase of it.
  */
 export const DUPLICATE_WARNING =
-  'Nhớ kiểm tra đơn xem có trùng không rồi gửi nè, nếu gửi mà không kiểm tra sẽ bị đánh 1 lỗi';
+  'Vui lòng kiểm tra đơn trước khi gửi để đảm bảo không bị trùng nhé.';
 
 /** mm:ss, floored at 00:00. Lives here so the countdown file exports only a component. */
 export function formatRemaining(ms: number): string {
