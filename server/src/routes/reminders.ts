@@ -16,6 +16,7 @@ import {
   createReminder,
   listReminders,
   markReminderRead,
+  createRemindersForAllBranches,
   unreadReminderCount,
   type ReminderActor,
 } from '../reminder/reminderService';
@@ -26,9 +27,23 @@ function actorOf(req: Request): ReminderActor {
   return { id: user.id, role: user.role };
 }
 
+const reminderBody = z.string().trim().min(1, 'Vui lòng nhập nội dung nhắc nhở.').max(2000);
+
 const createSchema = z.object({
   recipientUserId: z.coerce.number().int().positive('Vui lòng chọn lễ tân nhận nhắc nhở.'),
-  body: z.string().trim().min(1, 'Vui lòng nhập nội dung nhắc nhở.').max(2000),
+  body: reminderBody,
+});
+
+/**
+ * The same endpoint, addressed to everyone instead of one person.
+ *
+ * A discriminated body rather than a second route: "send a reminder" is one
+ * operation and one permission, and splitting it would duplicate the ADMIN gate
+ * and the body validation for the sake of the recipient field.
+ */
+const broadcastSchema = z.object({
+  recipientScope: z.literal('ALL_BRANCHES'),
+  body: reminderBody,
 });
 
 export function createRemindersRouter(): Router {
@@ -54,7 +69,14 @@ export function createRemindersRouter(): Router {
   // POST /api/reminders — ADMIN only (re-checked in the service).
   router.post('/reminders', requireRole('ADMIN'), (req, res, next) => {
     (async () => {
-      const input = createSchema.parse(req.body ?? {});
+      const raw = req.body ?? {};
+      if (raw.recipientScope !== undefined) {
+        const input = broadcastSchema.parse(raw);
+        const result = await createRemindersForAllBranches(input, actorOf(req));
+        res.status(201).json(result);
+        return;
+      }
+      const input = createSchema.parse(raw);
       res.status(201).json({ reminder: await createReminder(input, actorOf(req)) });
     })().catch(next);
   });

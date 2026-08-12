@@ -45,14 +45,23 @@ function mount(onRequest?: (path: string, init: RequestInit) => void) {
 }
 
 describe('DispatchPage — intake source tabs', () => {
-  it('offers exactly the three platforms that have a parser', async () => {
+  it('offers the three parsers plus the two platforms that are announced but not built', async () => {
     mount();
     const tablist = await screen.findByRole('tablist', { name: 'Nguồn đặt phòng' });
     const tabs = within(tablist).getAllByRole('tab');
 
-    expect(tabs.map((t) => t.textContent)).toEqual(['Booking.com', 'Agoda', 'CTrip']);
-    // The identity-only platforms are not offered for intake.
-    expect(within(tablist).queryByText('Tripadvisor')).not.toBeInTheDocument();
+    // Booking.com is shown as "Booking" — the enum value is unchanged, only the
+    // label. Tripadvisor and G2J are listed but carry no extraction; selecting
+    // one says so rather than accepting text it cannot parse.
+    expect(tabs.map((t) => t.textContent)).toEqual([
+      'Booking',
+      'Agoda',
+      'CTrip',
+      'Tripadvisor',
+      'G2J',
+    ]);
+    expect(within(tablist).queryByText('Booking.com')).not.toBeInTheDocument();
+    // Traveloka is an identity-only platform and is still not offered here.
     expect(within(tablist).queryByText('Traveloka')).not.toBeInTheDocument();
   });
 
@@ -85,7 +94,7 @@ describe('DispatchPage — intake source tabs', () => {
     const user = userEvent.setup();
     const tablist = await screen.findByRole('tablist', { name: 'Nguồn đặt phòng' });
 
-    expect(await screen.findByText('Nội dung Booking.com')).toBeInTheDocument();
+    expect(await screen.findByText('Nội dung Booking')).toBeInTheDocument();
     expect(screen.getByText(/Extranet/)).toBeInTheDocument();
 
     await user.click(within(tablist).getByRole('tab', { name: 'CTrip' }));

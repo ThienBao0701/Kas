@@ -360,6 +360,94 @@ describe('E. draft and activation workflow', () => {
     expect((await resolveIn('CN3', 'Standard')).pmsCode).toBe('STAN');
   });
 
+  /*
+    E3a-d. RENAMING A ROOM CLASS.
+
+    `updateRoomClass` has always accepted `displayName`; what was missing was an
+    input in the Admin modal, so a typo in a name could only be fixed by deleting
+    the class and recreating it — which threw away its aliases. These pin the
+    server half end to end: the rename persists, keeps the normalised form in
+    step so lookups still match, and reaches live resolution once activated.
+  */
+  /** The draft's classes, picked by position so no case depends on another. */
+  async function freshDraft(): Promise<{ id: string; classes: { id: string; displayName: string; pmsCode: string }[] }> {
+    const draft = (await adminAgent.post(`${base()}/drafts`).send({})).body.draft;
+    return { id: draft.id, classes: draft.roomClasses };
+  }
+
+  it('E3a. renaming a class in a draft persists the new name', async () => {
+    const draft = await freshDraft();
+    const target = draft.classes[0]!;
+
+    const res = await adminAgent
+      .patch(`${base()}/drafts/${draft.id}/room-classes/${target.id}`)
+      .send({ displayName: 'Deluxe Đôi' });
+    expect(res.status).toBe(200);
+
+    const row = await testPrisma.branchRoomClass.findUniqueOrThrow({ where: { id: target.id } });
+    expect(row.displayName).toBe('Deluxe Đôi');
+    // The normalised form follows, or the new name would not resolve.
+    expect(row.normalizedName).toBe(normalizeRoomClassName('Deluxe Đôi'));
+    // The code is untouched by a rename.
+    expect(row.pmsCode).toBe(target.pmsCode);
+  });
+
+  it('E3b. the name and the PMS code can be changed together and both survive a reload', async () => {
+    const draft = await freshDraft();
+    const target = draft.classes[0]!;
+
+    await adminAgent
+      .patch(`${base()}/drafts/${draft.id}/room-classes/${target.id}`)
+      .send({ displayName: 'Deluxe Plus', pmsCode: 'DLXP' });
+
+    // Re-read through the API, as the modal does after saving.
+    const reloaded = (await adminAgent.get(`${base()}/draft`)).body.draft;
+    const updated = reloaded.roomClasses.find((c: { id: string }) => c.id === target.id);
+    expect(updated.displayName).toBe('Deluxe Plus');
+    expect(updated.pmsCode).toBe('DLXP');
+  });
+
+  it('E3c. a rename cannot collide with another class in the same draft', async () => {
+    const draft = await freshDraft();
+    const [first, second] = [draft.classes[0]!, draft.classes[1]!];
+
+    const res = await adminAgent
+      .patch(`${base()}/drafts/${draft.id}/room-classes/${first.id}`)
+      .send({ displayName: second.displayName });
+    expect(res.status).toBe(409);
+
+    // Unchanged after the refusal.
+    const row = await testPrisma.branchRoomClass.findUniqueOrThrow({ where: { id: first.id } });
+    expect(row.displayName).toBe(first.displayName);
+  });
+
+  it('E3d. a renamed class resolves under its new name once activated', async () => {
+    /*
+      CN4, not CN3. Activating permanently replaces a branch's live mapping, and
+      the cases above (and E4 below) read CN3's seeded classes — a test that
+      rewrites shared state is a test that breaks whichever case happens to run
+      after it.
+    */
+    const cn4 = await branchIdOf('CN4');
+    const cn4Base = `/api/admin/branches/${cn4}/room-mapping`;
+    await testPrisma.branchRoomMappingVersion.deleteMany({ where: { branchId: cn4, status: 'DRAFT' } });
+
+    const activeBefore = await loadActiveMapping(cn4, testPrisma);
+    const draft = (await adminAgent.post(`${cn4Base}/drafts`).send({})).body.draft;
+    const target = draft.roomClasses[0]!;
+
+    await adminAgent
+      .patch(`${cn4Base}/drafts/${draft.id}/room-classes/${target.id}`)
+      .send({ displayName: 'Deluxe Premium', pmsCode: 'DLXPR' });
+    const activated = await adminAgent
+      .post(`${cn4Base}/drafts/${draft.id}/activate`)
+      .send({ expectedActiveVersionId: activeBefore!.versionId });
+    expect(activated.status).toBe(200);
+
+    // This is the link the booking/send flow reads: the ACTIVE version.
+    expect((await resolveIn('CN4', 'Deluxe Premium')).pmsCode).toBe('DLXPR');
+  });
+
   it('E4. an invalid draft cannot be activated', async () => {
     const draft = (await adminAgent.post(`${base()}/drafts`).send({})).body.draft;
     // Deactivate every class → an empty mapping.

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { CalendarClock, CheckCircle2, Clock, Flame, Wrench } from 'lucide-react';
@@ -5,9 +6,19 @@ import { dashboardApi } from '../api/bookings';
 import { Card } from '../components/Card';
 import { StatCard } from '../components/StatCard';
 import { PageHeader, QueryState } from '../components/PageState';
-import { useIssueSummary } from '../hooks/useIssueSummary';
 
 const POLL_MS = 30_000;
+
+/**
+ * Today in the property's timezone, as YYYY-MM-DD.
+ *
+ * Asia/Ho_Chi_Minh, not the browser's zone: the server decides the day boundary
+ * in Vietnam time, and a machine set to another zone must not open the dashboard
+ * on a date the server would call yesterday.
+ */
+function todayInHcm(): string {
+  return new Date(Date.now() + 7 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
 
 /**
  * Admin dashboard. Numbers come from the single backend summary endpoint
@@ -15,16 +26,26 @@ const POLL_MS = 30_000;
  * the UI links each count through to the matching filtered list.
  */
 export function DashboardPage() {
+  /*
+    THE SELECTED DAY IS SENT TO THE SERVER, not applied to a loaded payload.
+
+    Every figure on this page is a `count(*)` the database runs for that date, so
+    picking the 9th shows the 9th — a client-side filter over a "today" response
+    could only ever show today with rows hidden.
+  */
+  const [date, setDate] = useState(todayInHcm);
+  const isToday = date === todayInHcm();
+
   const query = useQuery({
-    queryKey: ['dashboard', 'summary'],
-    queryFn: () => dashboardApi.summary(),
-    refetchInterval: POLL_MS,
+    queryKey: ['dashboard', 'summary', date],
+    queryFn: () => dashboardApi.summary({ date }),
+    // Only today's view is live. Polling a fixed past date re-fetches numbers
+    // that cannot change.
+    refetchInterval: isToday ? POLL_MS : false,
   });
 
-  const issues = useIssueSummary();
-  const issueSummary = issues.data?.summary;
-
   const totals = query.data?.totals;
+  const issues = query.data?.issues;
   const branches = [...(query.data?.branches ?? [])].sort(
     (a, b) =>
       b.lastMinute - a.lastMinute ||
@@ -34,7 +55,33 @@ export function DashboardPage() {
 
   return (
     <div>
-      <PageHeader title="Tổng quan" description="Tình hình điều phối hôm nay (giờ Việt Nam)." />
+      <PageHeader
+        title="Tổng quan"
+        description="Tình hình điều phối theo ngày (giờ Việt Nam)."
+        actions={
+          <label className="flex items-center gap-2 text-sm text-slate-600">
+            <span className="whitespace-nowrap">Ngày xem</span>
+            <input
+              type="date"
+              value={date}
+              max={todayInHcm()}
+              onChange={(e) => setDate(e.target.value || todayInHcm())}
+              aria-label="Ngày xem"
+              data-testid="dashboard-date"
+              className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+            />
+            {!isToday ? (
+              <button
+                type="button"
+                onClick={() => setDate(todayInHcm())}
+                className="rounded-lg px-2 py-1 text-xs font-medium text-brand-700 hover:bg-brand-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+              >
+                Hôm nay
+              </button>
+            ) : null}
+          </label>
+        }
+      />
 
       <QueryState
         isLoading={query.isLoading}
@@ -47,27 +94,29 @@ export function DashboardPage() {
             <StatCard label="Chờ chi nhánh tạo" value={totals?.waiting ?? 0} icon={Clock} tone="amber" />
           </Link>
           <Link to="/app/completed" className="focus-visible:outline-none">
-            <StatCard label="Đã xác nhận hôm nay" value={totals?.confirmedToday ?? 0} icon={CheckCircle2} tone="green" />
+            <StatCard label="Đã xác nhận" value={totals?.confirmedToday ?? 0} icon={CheckCircle2} tone="green" />
           </Link>
           <StatCard label="LAST MINUTE" value={totals?.lastMinute ?? 0} icon={Flame} tone="red" />
-          <StatCard label="Tổng đơn gửi hôm nay" value={totals?.sentToday ?? 0} icon={CalendarClock} />
+          <StatCard label="Tổng đơn gửi" value={totals?.sentToday ?? 0} icon={CalendarClock} />
 
-          {/* Unresolved hotel-issue counter — links straight to the Issues page. */}
+          {/*
+            Issues REPORTED on the selected day. Date-scoped like every other
+            figure here; the sidebar badge still carries the running open total,
+            so the backlog signal is not lost from the application.
+          */}
           <Link
             to="/app/issues"
             className="focus-visible:outline-none"
-            aria-label={`Sự cố đang mở: ${issueSummary?.totalUnresolved ?? 0} chưa xử lý`}
+            aria-label={`Sự cố trong ngày: ${issues?.reported ?? 0}`}
           >
-            <Card className={`flex items-center gap-4 p-5 ${(issueSummary?.totalUnresolved ?? 0) > 0 ? 'border-red-200' : ''}`}>
+            <Card className={`flex items-center gap-4 p-5 ${(issues?.stillOpen ?? 0) > 0 ? 'border-red-200' : ''}`}>
               <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl bg-red-50 text-red-600">
                 <Wrench className="h-5 w-5" aria-hidden="true" />
               </div>
               <div className="min-w-0">
-                <p className="text-2xl font-semibold text-slate-900">{issueSummary?.totalUnresolved ?? 0}</p>
-                <p className="truncate text-sm text-slate-500">Sự cố đang mở</p>
-                <p className="truncate text-xs text-slate-400">
-                  {issueSummary?.newCount ?? 0} mới · {issueSummary?.inProgressCount ?? 0} đang xử lý
-                </p>
+                <p className="text-2xl font-semibold text-slate-900">{issues?.reported ?? 0}</p>
+                <p className="truncate text-sm text-slate-500">Sự cố trong ngày</p>
+                <p className="truncate text-xs text-slate-400">{issues?.stillOpen ?? 0} chưa xử lý</p>
               </div>
             </Card>
           </Link>

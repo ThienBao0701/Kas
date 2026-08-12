@@ -26,7 +26,12 @@ const BY_BRANCH = [
 
 const ADMIN_SUMMARY = { totalUnresolved: 3, newCount: 2, inProgressCount: 1, byBranch: BY_BRANCH };
 
-const DASHBOARD_SUMMARY = { totals: { waiting: 0, confirmedToday: 0, lastMinute: 0, sentToday: 0 }, branches: [] };
+const DASHBOARD_SUMMARY = {
+  date: '2026-08-11',
+  totals: { waiting: 0, confirmedToday: 0, lastMinute: 0, sentToday: 0 },
+  branches: [],
+  issues: { reported: 0, stillOpen: 0 },
+};
 
 function issue(over: Record<string, unknown> = {}) {
   return {
@@ -79,17 +84,27 @@ describe('Issue counters — sidebar badge', () => {
 });
 
 describe('Issue counters — dashboard card', () => {
-  it('shows the "Sự cố đang mở" card with a breakdown, linking to Issues', async () => {
+  it('shows the day\'s issue card, linking to Issues', async () => {
+    /*
+      The dashboard card is now DATE-SCOPED like every other figure on that
+      page: issues reported on the selected day, and how many of those are still
+      open. It reads them from the dashboard summary rather than the running
+      unresolved total, which the sidebar badge below still carries.
+    */
+    const today = new Date(Date.now() + 7 * 60 * 60 * 1000).toISOString().slice(0, 10);
     installApiMock({
       'GET /api/auth/me': () => ({ status: 200, body: { user: ADMIN_USER } }),
       'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
-      'GET /api/issues/summary': () => ({ status: 200, body: { summary: { ...ADMIN_SUMMARY, totalUnresolved: 8, newCount: 5, inProgressCount: 3 } } }),
-      'GET /api/admin/dashboard/summary': () => ({ status: 200, body: DASHBOARD_SUMMARY }),
+      'GET /api/issues/summary': () => ({ status: 200, body: { summary: ADMIN_SUMMARY } }),
+      [`GET /api/admin/dashboard/summary?date=${today}`]: () => ({
+        status: 200,
+        body: { ...DASHBOARD_SUMMARY, date: today, issues: { reported: 8, stillOpen: 3 } },
+      }),
     });
     renderApp('/app/dashboard');
-    const card = await screen.findByLabelText('Sự cố đang mở: 8 chưa xử lý');
+    const card = await screen.findByLabelText('Sự cố trong ngày: 8');
     expect(within(card).getByText('8')).toBeInTheDocument();
-    expect(within(card).getByText('5 mới · 3 đang xử lý')).toBeInTheDocument();
+    expect(within(card).getByText('3 chưa xử lý')).toBeInTheDocument();
     expect(card.closest('a')).toHaveAttribute('href', '/app/issues');
   });
 });

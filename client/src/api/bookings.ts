@@ -50,8 +50,15 @@ export const REVIEW_REASON_LABEL: Record<ProofReviewReason, string> = Object.fro
   REVIEW_REASONS.map((r) => [r.code, r.label]),
 ) as Record<ProofReviewReason, string>;
 
+/**
+ * How each platform is named to an operator.
+ *
+ * The enum value stays `BOOKING_COM` — it is stored on every existing booking
+ * and renaming it would be a migration for a label. Only the display text
+ * changes, so history, badges and the source filter all follow automatically.
+ */
 export const SOURCE_LABEL: Record<BookingSource, string> = {
-  BOOKING_COM: 'Booking.com',
+  BOOKING_COM: 'Booking',
   AGODA: 'Agoda',
   CTRIP: 'CTrip',
 };
@@ -590,8 +597,12 @@ export const branchesApi = {
 };
 
 export interface DashboardSummary {
+  /** The day these figures describe (YYYY-MM-DD), resolved by the server. */
+  date: string;
   totals: { waiting: number; confirmedToday: number; lastMinute: number; sentToday: number };
   branches: { branch: Branch; waiting: number; confirmedToday: number; lastMinute: number }[];
+  /** Issues REPORTED that day, and how many of those are still open. */
+  issues: { reported: number; stillOpen: number };
 }
 
 /** A metric the server refuses to compute, with the reason it gives. */
@@ -632,7 +643,9 @@ export interface BookingStatistics {
 }
 
 export const dashboardApi = {
-  summary: () => api.get<DashboardSummary>('/admin/dashboard/summary'),
+  /** `date` is YYYY-MM-DD; omitted means today, exactly as before. */
+  summary: (params: { date?: string } = {}) =>
+    api.get<DashboardSummary>(`/admin/dashboard/summary${query(params)}`),
   statistics: (params: { from?: string; to?: string; branchId?: number } = {}) =>
     api.get<BookingStatistics>(`/admin/dashboard/statistics${query(params)}`),
 };

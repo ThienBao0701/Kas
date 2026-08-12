@@ -109,9 +109,37 @@ const SOURCE_HELP: Record<BookingSource, string> = {
     'Dán trang xác nhận đặt phòng CTrip / Trip.com. Một số trường có thể cần bạn kiểm tra và bổ sung thủ công — hệ thống sẽ báo rõ trường nào.',
 };
 
+/*
+  PLATFORMS THAT ARE LISTED BUT NOT YET BUILT.
+
+  Deliberately NOT `BookingSource` values. That enum is a database type written
+  onto every booking, and adding a member would be a migration for two tabs that
+  cannot yet produce a booking. They exist here only as tabs, they never reach
+  the extractor, and nothing can be dispatched under them.
+*/
+const PLACEHOLDER_SOURCES = ['TRIPADVISOR', 'G2J'] as const;
+type PlaceholderSource = (typeof PLACEHOLDER_SOURCES)[number];
+type SourceTab = BookingSource | PlaceholderSource;
+
+const PLACEHOLDER_LABEL: Record<PlaceholderSource, string> = {
+  TRIPADVISOR: 'Tripadvisor',
+  G2J: 'G2J',
+};
+
+/** The exact wording the operator asked for. */
+export const COMING_SOON = 'Ứng dụng sẽ phát triển phần này sớm nhất';
+
+function isPlaceholder(tab: SourceTab): tab is PlaceholderSource {
+  return (PLACEHOLDER_SOURCES as readonly string[]).includes(tab);
+}
+
+function tabLabel(tab: SourceTab): string {
+  return isPlaceholder(tab) ? PLACEHOLDER_LABEL[tab] : SOURCE_LABEL[tab];
+}
+
 export function DispatchPage() {
   const navigate = useNavigate();
-  const [source, setSource] = useState<BookingSource>('BOOKING_COM');
+  const [source, setSource] = useState<SourceTab>('BOOKING_COM');
   const [rawText, setRawText] = useState('');
   // Agoda and CTrip go through the server-authoritative review panel; the
   // Booking.com flow below is untouched.
@@ -143,7 +171,13 @@ export function DispatchPage() {
   const branches = useQuery({ queryKey: ['branches'], queryFn: () => branchesApi.list(), staleTime: 5 * 60_000 });
 
   const extractMut = useMutation({
-    mutationFn: (text: string) => bookingsApi.extract(text, source),
+    mutationFn: (text: string) => {
+      // Unreachable: a placeholder tab renders no textarea and no extract
+      // button. Refusing here rather than coercing to another platform means a
+      // future caller cannot quietly send Tripadvisor text to the Booking parser.
+      if (isPlaceholder(source)) throw new Error(COMING_SOON);
+      return bookingsApi.extract(text, source);
+    },
     onSuccess: (res) => {
       setDraftId(res.booking.id);
       setBranchId(res.branchConfident && res.suggestedBranch ? res.suggestedBranch.id : undefined);
@@ -325,10 +359,10 @@ export function DispatchPage() {
 
   // --- Stage 1: paste + extract ---
   if (!draftId) {
-    // Only the platforms with a real intake parser. Tripadvisor and Traveloka
-    // are configurable identities but have no extraction yet, so offering them
-    // here would promise something the system cannot do.
-    const sources: BookingSource[] = ['BOOKING_COM', 'AGODA', 'CTRIP'];
+    // The three platforms with a real intake parser, then the two that are
+    // listed but not built. Selecting one of the latter says so plainly rather
+    // than handing its text to an extractor written for a different format.
+    const sources: SourceTab[] = ['BOOKING_COM', 'AGODA', 'CTRIP', ...PLACEHOLDER_SOURCES];
     return (
       <div>
         <PageHeader title="Nhập đơn" description="Chọn nguồn, dán nội dung đặt phòng để trích xuất thông tin." />
@@ -354,39 +388,56 @@ export function DispatchPage() {
                   source === s ? 'bg-white text-brand-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
                 }`}
               >
-                {SOURCE_LABEL[s]}
+                {tabLabel(s)}
               </button>
             ))}
           </div>
 
-          {extractMut.isError ? (
-            <div className="mb-3">
-              <ErrorAlert>{toUserMessage(extractMut.error)}</ErrorAlert>
-            </div>
-          ) : null}
-          <label className="mb-1 block text-sm font-medium text-slate-600">Nội dung {SOURCE_LABEL[source]}</label>
-          <textarea
-            value={rawText}
-            onChange={(e) => setRawText(e.target.value)}
-            rows={14}
-            placeholder={`Dán toàn bộ nội dung (Ctrl+A, Ctrl+C) từ trang chi tiết đặt phòng ${SOURCE_LABEL[source]}…`}
-            className={`${inputClass} font-mono`}
-          />
-          <p className="mt-1 text-xs text-slate-500">{SOURCE_HELP[source]}</p>
-          <div className="mt-4">
-            <Button
-              onClick={() => {
-                // Booking.com keeps its existing extract-to-draft flow.
-                if (source === 'BOOKING_COM') extractMut.mutate(rawText);
-                else setOtaRawText(rawText);
-              }}
-              disabled={rawText.trim().length === 0}
-              loading={extractMut.isPending}
+          {isPlaceholder(source) ? (
+            /*
+              No textarea and no extract button on purpose. An input that accepts
+              text and then does nothing with it is worse than no input: the
+              operator would reasonably believe the order had been taken.
+            */
+            <p
+              data-testid="source-coming-soon"
+              role="status"
+              className="rounded-xl bg-amber-50 px-4 py-6 text-center text-sm font-medium text-amber-900 ring-1 ring-inset ring-amber-200"
             >
-              <Sparkles className="h-4 w-4" aria-hidden="true" />
-              Trích xuất thông tin
-            </Button>
-          </div>
+              {COMING_SOON}
+            </p>
+          ) : (
+            <>
+              {extractMut.isError ? (
+                <div className="mb-3">
+                  <ErrorAlert>{toUserMessage(extractMut.error)}</ErrorAlert>
+                </div>
+              ) : null}
+              <label className="mb-1 block text-sm font-medium text-slate-600">Nội dung {SOURCE_LABEL[source]}</label>
+              <textarea
+                value={rawText}
+                onChange={(e) => setRawText(e.target.value)}
+                rows={14}
+                placeholder={`Dán toàn bộ nội dung (Ctrl+A, Ctrl+C) từ trang chi tiết đặt phòng ${SOURCE_LABEL[source]}…`}
+                className={`${inputClass} font-mono`}
+              />
+              <p className="mt-1 text-xs text-slate-500">{SOURCE_HELP[source]}</p>
+              <div className="mt-4">
+                <Button
+                  onClick={() => {
+                    // Booking keeps its existing extract-to-draft flow.
+                    if (source === 'BOOKING_COM') extractMut.mutate(rawText);
+                    else setOtaRawText(rawText);
+                  }}
+                  disabled={rawText.trim().length === 0}
+                  loading={extractMut.isPending}
+                >
+                  <Sparkles className="h-4 w-4" aria-hidden="true" />
+                  Trích xuất thông tin
+                </Button>
+              </div>
+            </>
+          )}
         </Card>
       </div>
     );

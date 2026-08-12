@@ -109,6 +109,44 @@ export async function createReminder(
 }
 
 /**
+ * Admin sends the SAME reminder to every active receptionist, at every branch.
+ *
+ * WHY THIS IS A FAN-OUT AND NOT A NEW KIND OF REMINDER. One row per recipient
+ * keeps every existing behaviour intact for free: each receptionist sees it in
+ * their own inbox, marks their own copy read, and their unread badge counts it —
+ * all through the same `recipientUserId` filter that already exists. A single
+ * "broadcast" row would have needed its own visibility rule, its own read model
+ * and its own badge query, which is the second reminder system nobody wants.
+ *
+ * `createMany` in ONE statement, so a failure halfway through cannot leave some
+ * branches told and others not. Recipients are resolved inside the same call
+ * that writes, so an account disabled a moment ago is not sent to.
+ */
+export async function createRemindersForAllBranches(
+  input: { body: string },
+  actor: ReminderActor,
+  client: PrismaClient = defaultPrisma,
+): Promise<{ recipients: number }> {
+  if (actor.role !== 'ADMIN') {
+    throw ApiError.forbidden('Chỉ Admin mới gửi được nhắc nhở.');
+  }
+  const body = assertReminderBody(input.body);
+
+  const recipients = await client.user.findMany({
+    where: { role: 'RECEPTIONIST', active: true },
+    select: { id: true },
+  });
+  if (recipients.length === 0) {
+    throw ApiError.validation('Chưa có tài khoản lễ tân nào đang hoạt động.');
+  }
+
+  const created = await client.reminder.createMany({
+    data: recipients.map((r) => ({ senderUserId: actor.id, recipientUserId: r.id, body })),
+  });
+  return { recipients: created.count };
+}
+
+/**
  * The reminders the actor may see.
  *
  * A receptionist sees ONLY their own — the filter is `recipientUserId`, in the

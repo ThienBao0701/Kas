@@ -1,9 +1,12 @@
 /**
  * The search experience on the history page.
  *
- * The behaviour under test is what the page ASKS THE SERVER FOR, because that
- * is where the 7a work was going unused: ten sort keys, six date ranges and
- * multi-valued filters that the old submit-button form never sent.
+ * The behaviour under test is what the page ASKS THE SERVER FOR.
+ *
+ * The Admin revision narrowed this screen to the four stay outcomes and a single
+ * dispatch-date range, and removed the sorting controls. The API still accepts
+ * every parameter it ever did — these cases pin what the UI now sends, including
+ * what it deliberately no longer sends.
  *
  * The debounce is tested by counting requests, not by timing them. "One request
  * per pause instead of one per keystroke" is the property that matters and it
@@ -42,6 +45,17 @@ function mountHistory(bookings: unknown[] = []) {
 }
 
 const lastUrl = () => requested[requested.length - 1] ?? '';
+
+/** The saved-filter shape this page writes, for the restore cases below. */
+const EMPTY_SAVED = {
+  search: '',
+  status: [] as string[],
+  paymentStatus: '',
+  isLastMinute: false,
+  sentFrom: '',
+  sentTo: '',
+  branchId: '',
+};
 
 beforeEach(() => {
   requested = [];
@@ -84,40 +98,44 @@ describe('the search box settles before it queries', () => {
 describe('multi-select filters', () => {
   it('sends one status as a single value', async () => {
     mountHistory();
-    await userEvent.click(await screen.findByTestId('filter-status-RECEIVED'));
-    await waitFor(() => expect(lastUrl()).toContain('status=RECEIVED'));
+    await userEvent.click(await screen.findByTestId('filter-status-CHECKED_IN'));
+    await waitFor(() => expect(lastUrl()).toContain('status=CHECKED_IN'));
   });
 
   it('sends several statuses comma-separated', async () => {
     mountHistory();
-    await userEvent.click(await screen.findByTestId('filter-status-RECEIVED'));
-    await userEvent.click(screen.getByTestId('filter-status-CHECKED_IN'));
-    await waitFor(() => expect(lastUrl()).toContain('status=RECEIVED,CHECKED_IN'));
+    await userEvent.click(await screen.findByTestId('filter-status-CHECKED_IN'));
+    await userEvent.click(screen.getByTestId('filter-status-CHECKED_OUT'));
+    await waitFor(() => expect(lastUrl()).toContain('status=CHECKED_IN,CHECKED_OUT'));
   });
 
-  it('sends both OTA sources when both are picked', async () => {
+  it('offers only the four stay outcomes', async () => {
+    // The dispatch-stage statuses have their own screens; History is about how
+    // a stay ended. The API still accepts all of them — this page stops offering
+    // the ones it is not about.
     mountHistory();
-    await userEvent.click(await screen.findByTestId('filter-source-AGODA'));
-    await userEvent.click(screen.getByTestId('filter-source-CTRIP'));
-    await waitFor(() => expect(lastUrl()).toContain('source=AGODA,CTRIP'));
+    await screen.findByTestId('filter-status-CHECKED_IN');
+    for (const gone of ['NEW', 'RECEIVED', 'COMPLETED', 'ARCHIVED']) {
+      expect(screen.queryByTestId(`filter-status-${gone}`)).toBeNull();
+    }
   });
 
   it('deselects on a second click', async () => {
     mountHistory();
-    const agoda = await screen.findByTestId('filter-source-AGODA');
-    await userEvent.click(agoda);
-    await waitFor(() => expect(lastUrl()).toContain('source=AGODA'));
+    const checkedIn = await screen.findByTestId('filter-status-CHECKED_IN');
+    await userEvent.click(checkedIn);
+    await waitFor(() => expect(lastUrl()).toContain('status=CHECKED_IN'));
 
-    await userEvent.click(agoda);
+    await userEvent.click(checkedIn);
     // Back to the unfiltered query, which is already cached — so the assertion
     // is on the state, not on a fresh request that correctly never happens.
-    await waitFor(() => expect(agoda).toHaveAttribute('aria-pressed', 'false'));
+    await waitFor(() => expect(checkedIn).toHaveAttribute('aria-pressed', 'false'));
     expect(screen.queryByTestId('filter-chip')).toBeNull();
   });
 
   it('announces its pressed state to assistive tech', async () => {
     mountHistory();
-    const button = await screen.findByTestId('filter-source-AGODA');
+    const button = await screen.findByTestId('filter-status-CANCELLED');
     expect(button).toHaveAttribute('aria-pressed', 'false');
     await userEvent.click(button);
     await waitFor(() => expect(button).toHaveAttribute('aria-pressed', 'true'));
@@ -127,26 +145,35 @@ describe('multi-select filters', () => {
 /* ================================================================== */
 /* Sorting and the wider query                                         */
 /* ================================================================== */
-describe('the rest of the 7a query', () => {
-  it('sends the chosen sort key', async () => {
+describe('the rest of the query', () => {
+  it('never sends a sort key or order, leaving the API default in force', async () => {
+    // The sorting controls are gone from this screen. The list is still newest
+    // dispatch first, because that is what the API does when asked for nothing.
     mountHistory();
-    await userEvent.selectOptions(await screen.findByLabelText('Sắp xếp'), 'totalAmount');
-    await waitFor(() => expect(lastUrl()).toContain('sort=totalAmount'));
+    await screen.findByTestId('filter-status-CHECKED_IN');
+    await waitFor(() => expect(requested.length).toBeGreaterThan(0));
+    for (const url of requested) {
+      expect(url).not.toContain('sort=');
+      expect(url).not.toContain('order=');
+    }
   });
 
-  it('sends an ascending order only when asked', async () => {
+  it('sends the single date range on the dispatch date', async () => {
     mountHistory();
-    expect(lastUrl()).not.toContain('order=');
-    await userEvent.selectOptions(await screen.findByLabelText('Thứ tự'), 'asc');
-    await waitFor(() => expect(lastUrl()).toContain('order=asc'));
+    await userEvent.type(await screen.findByLabelText('Từ ngày'), '2026-08-10');
+    await waitFor(() => expect(lastUrl()).toContain('sentFrom=2026-08-10'));
+
+    await userEvent.type(screen.getByLabelText('Đến ngày'), '2026-08-12');
+    await waitFor(() => expect(lastUrl()).toContain('sentTo=2026-08-12'));
   });
 
-  it('sends the check-out range the old form could not', async () => {
+  it('offers no other date axis', async () => {
     mountHistory();
-    await userEvent.click(await screen.findByText('Lọc theo ngày'));
-    const field = screen.getByLabelText('Trả phòng từ');
-    await userEvent.type(field, '2026-08-10');
-    await waitFor(() => expect(lastUrl()).toContain('checkOutFrom=2026-08-10'));
+    await screen.findByLabelText('Từ ngày');
+    expect(screen.queryByText('Lọc theo ngày')).toBeNull();
+    for (const gone of ['Nhận phòng từ', 'Trả phòng từ', 'Xác nhận từ', 'Gửi từ']) {
+      expect(screen.queryByLabelText(gone)).toBeNull();
+    }
   });
 });
 
@@ -162,34 +189,46 @@ describe('active filter chips', () => {
 
   it('shows one chip per active filter', async () => {
     mountHistory();
-    await userEvent.click(await screen.findByTestId('filter-source-AGODA'));
-    await userEvent.click(screen.getByTestId('filter-status-RECEIVED'));
+    await userEvent.click(await screen.findByTestId('filter-status-CHECKED_IN'));
+    await userEvent.click(screen.getByTestId('filter-status-CANCELLED'));
     await waitFor(() => expect(screen.getAllByTestId('filter-chip')).toHaveLength(2));
   });
 
   it('removes just that filter when its chip is dismissed', async () => {
     mountHistory();
-    await userEvent.click(await screen.findByTestId('filter-source-AGODA'));
-    await userEvent.click(screen.getByTestId('filter-status-RECEIVED'));
+    await userEvent.click(await screen.findByTestId('filter-status-CHECKED_IN'));
+    await userEvent.click(screen.getByTestId('filter-status-CANCELLED'));
     await waitFor(() => expect(screen.getAllByTestId('filter-chip')).toHaveLength(2));
 
-    await userEvent.click(screen.getByLabelText('Bỏ lọc Nguồn: Agoda'));
+    await userEvent.click(screen.getByLabelText('Bỏ lọc Trạng thái: Đã huỷ'));
     await waitFor(() => expect(screen.getAllByTestId('filter-chip')).toHaveLength(1));
-    expect(lastUrl()).toContain('status=RECEIVED');
-    expect(lastUrl()).not.toContain('source=');
+
+    // Asserted on state, not on the next URL: the single-status query was
+    // already fetched a moment ago, so react-query serves it from cache and
+    // correctly issues no new request to inspect.
+    expect(screen.getByTestId('filter-chip')).toHaveTextContent('Khách đã nhận phòng');
+    expect(screen.getByTestId('filter-status-CHECKED_IN')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('filter-status-CANCELLED')).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('gives the date range its own chips', async () => {
+    mountHistory();
+    await userEvent.type(await screen.findByLabelText('Từ ngày'), '2026-08-10');
+    await waitFor(() => expect(screen.getAllByTestId('filter-chip')).toHaveLength(1));
+    expect(screen.getByText('Từ ngày: 2026-08-10')).toBeInTheDocument();
   });
 
   it('clears everything at once', async () => {
     mountHistory();
-    await userEvent.click(await screen.findByTestId('filter-source-AGODA'));
-    await userEvent.click(screen.getByTestId('filter-status-RECEIVED'));
+    await userEvent.click(await screen.findByTestId('filter-status-CHECKED_IN'));
+    await userEvent.click(screen.getByTestId('filter-status-CANCELLED'));
     await waitFor(() => expect(screen.getAllByTestId('filter-chip')).toHaveLength(2));
 
     await userEvent.click(screen.getByTestId('filter-clear-all'));
     await waitFor(() => expect(screen.queryByTestId('filter-chips')).toBeNull());
     // Every toggle is released; the unfiltered result comes from cache.
-    expect(screen.getByTestId('filter-source-AGODA')).toHaveAttribute('aria-pressed', 'false');
-    expect(screen.getByTestId('filter-status-RECEIVED')).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByTestId('filter-status-CHECKED_IN')).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByTestId('filter-status-CANCELLED')).toHaveAttribute('aria-pressed', 'false');
   });
 });
 
@@ -199,13 +238,13 @@ describe('active filter chips', () => {
 describe('saved filter state', () => {
   it('restores the filters on a later visit', async () => {
     mountHistory();
-    await userEvent.click(await screen.findByTestId('filter-source-CTRIP'));
-    await waitFor(() => expect(lastUrl()).toContain('source=CTRIP'));
+    await userEvent.click(await screen.findByTestId('filter-status-NO_SHOW'));
+    await waitFor(() => expect(lastUrl()).toContain('status=NO_SHOW'));
 
     requested = [];
     mountHistory();
     await waitFor(() => expect(requested.length).toBeGreaterThan(0));
-    expect(lastUrl()).toContain('source=CTRIP');
+    expect(lastUrl()).toContain('status=NO_SHOW');
   });
 
   it('starts clean when the saved value is corrupt', async () => {
@@ -213,6 +252,22 @@ describe('saved filter state', () => {
     window.localStorage.setItem('kas.history.filters', '{not json');
     mountHistory();
     await waitFor(() => expect(requested.length).toBeGreaterThan(0));
-    expect(lastUrl()).not.toContain('source=');
+    expect(lastUrl()).not.toContain('status=');
+  });
+
+  it('drops a saved status this screen no longer offers', async () => {
+    /*
+      These filters outlive the page. Someone who had filtered by "RECEIVED"
+      before the list was narrowed would otherwise come back to a table silently
+      filtered by a status with no visible control and no way to clear it.
+    */
+    window.localStorage.setItem(
+      'kas.history.filters',
+      JSON.stringify({ ...EMPTY_SAVED, status: ['RECEIVED', 'CHECKED_IN'] }),
+    );
+    mountHistory();
+    await waitFor(() => expect(requested.length).toBeGreaterThan(0));
+    expect(lastUrl()).toContain('status=CHECKED_IN');
+    expect(lastUrl()).not.toContain('RECEIVED');
   });
 });

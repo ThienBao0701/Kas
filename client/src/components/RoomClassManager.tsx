@@ -68,7 +68,13 @@ export function RoomClassManager({ branchId, branchLabel, onClose }: Props) {
   });
 
   return (
-    <Modal open title={`Hạng phòng — ${branchLabel}`} onClose={onClose} footer={<Button variant="secondary" onClick={onClose}>Đóng</Button>}>
+    <Modal
+      open
+      size="2xl"
+      title={`Hạng phòng — ${branchLabel}`}
+      onClose={onClose}
+      footer={<Button variant="secondary" onClick={onClose}>Đóng</Button>}
+    >
       {mapping.isLoading ? <InlineSpinner /> : null}
       {mapping.isError ? <ErrorAlert>{toUserMessage(mapping.error)}</ErrorAlert> : null}
 
@@ -331,14 +337,44 @@ function DraftEditor({
     <div className="space-y-3">
       {error ? <ErrorAlert>{toUserMessage(error)}</ErrorAlert> : null}
 
-      <ul className="space-y-2">
+      {/*
+        The list scrolls on its own, independently of the dialog around it, so
+        the draft's actions above and the close button below stay reachable no
+        matter how many room classes a branch has.
+
+        `max-h` is in rem rather than vh: this list sits inside a dialog that is
+        already capped at the viewport, and a second vh cap would fight it.
+      */}
+      <ul className="max-h-96 space-y-2 overflow-y-auto overscroll-contain pr-1" data-testid="room-class-list">
         {draft.roomClasses.map((c) => (
           <li key={c.id} className="rounded-xl border border-slate-200 bg-white p-3">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="min-w-32 flex-1 font-medium text-slate-800">{c.displayName}</span>
+              {/*
+                THE NAME IS EDITABLE, not a label. `updateRoomClass` has always
+                accepted `displayName`; only the input was missing, so an Admin
+                could correct a typo in a code but had to delete and recreate a
+                class to correct one in its name — losing its aliases with it.
+
+                Committed on blur exactly like the code beside it, and only when
+                the value actually changed, so tabbing through edits nothing.
+              */}
+              <label className="sr-only" htmlFor={`name-${c.id}`}>Tên hạng phòng</label>
+              <input
+                id={`name-${c.id}`}
+                data-testid={`room-class-name-${c.id}`}
+                className={`${inputClass} min-w-32 flex-1 font-medium`}
+                defaultValue={c.displayName}
+                onBlur={(e) => {
+                  const value = e.target.value.trim();
+                  if (value && value !== c.displayName) {
+                    patch.mutate({ id: c.id, body: { displayName: value } });
+                  }
+                }}
+              />
               <label className="sr-only" htmlFor={`code-${c.id}`}>Mã PMS của {c.displayName}</label>
               <input
                 id={`code-${c.id}`}
+                data-testid={`room-class-code-${c.id}`}
                 className={`${inputClass} w-40 font-mono`}
                 defaultValue={c.pmsCode}
                 onBlur={(e) => {

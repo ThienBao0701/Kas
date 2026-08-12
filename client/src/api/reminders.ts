@@ -35,6 +35,15 @@ export const remindersApi = {
   create: (recipientUserId: number, body: string) =>
     api.post<{ reminder: ReminderView }>('/reminders', { recipientUserId, body }),
 
+  /**
+   * ADMIN only. One reminder per active receptionist, at every branch.
+   *
+   * Same endpoint and same model as a single send — each recipient gets their
+   * own row, so read state and unread badges keep working per person.
+   */
+  createForAllBranches: (body: string) =>
+    api.post<{ recipients: number }>('/reminders', { recipientScope: 'ALL_BRANCHES', body }),
+
   /** Recipient only — another account's id simply matches no row. */
   markRead: (id: string) => api.post<{ reminder: ReminderView }>(`/reminders/${id}/read`, {}),
 };

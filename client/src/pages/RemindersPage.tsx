@@ -26,7 +26,15 @@ import { Toast } from '../components/Toast';
 import { formatDateTime } from '../lib/format';
 import { useAuth } from '../auth/AuthProvider';
 
-/** Admin: pick one receptionist, write, send. */
+/**
+ * The "everyone" recipient.
+ *
+ * A sentinel rather than a real id, and deliberately not numeric, so it can
+ * never be confused with a user id by `Number()`.
+ */
+const ALL_BRANCHES = 'ALL_BRANCHES';
+
+/** Admin: pick one receptionist or every branch, write, send. */
 function ComposeReminder({ onSent }: { onSent: () => void }) {
   const queryClient = useQueryClient();
   const [recipientId, setRecipientId] = useState<string>('');
@@ -46,7 +54,19 @@ function ComposeReminder({ onSent }: { onSent: () => void }) {
   );
 
   const send = useMutation({
-    mutationFn: () => remindersApi.create(Number(recipientId), body.trim()),
+    /*
+      One place decides which call to make, so "send once" holds for both: the
+      button fires a single request either way, and the all-branches case is one
+      server-side fan-out rather than a loop of requests from the browser that
+      could half-succeed and leave some branches told and others not.
+    */
+    mutationFn: async (): Promise<void> => {
+      if (recipientId === ALL_BRANCHES) {
+        await remindersApi.createForAllBranches(body.trim());
+        return;
+      }
+      await remindersApi.create(Number(recipientId), body.trim());
+    },
     onSuccess: () => {
       setBody('');
       setRecipientId('');
@@ -73,6 +93,9 @@ function ComposeReminder({ onSent }: { onSent: () => void }) {
             onChange={(e) => setRecipientId(e.target.value)}
           >
             <option value="">— Chọn lễ tân —</option>
+            {/* Everyone, first — it is the broadest choice, so it reads before
+                the list an Admin would otherwise scroll to reach. */}
+            <option value={ALL_BRANCHES}>Tất cả chi nhánh</option>
             {receptionists.map((u) => (
               <option key={u.id} value={u.id}>
                 {u.fullName} ({u.username})

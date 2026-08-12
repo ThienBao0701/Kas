@@ -3,14 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { History, Search } from 'lucide-react';
 import { useAuth } from '../auth/AuthProvider';
-import {
-  bookingsApi,
-  branchesApi,
-  SOURCE_LABEL,
-  type BookingSource,
-  type BookingStatus,
-  type VerificationStatus,
-} from '../api/bookings';
+import { bookingsApi, branchesApi, type BookingStatus } from '../api/bookings';
 import { Card } from '../components/Card';
 import { EmptyState } from '../components/EmptyState';
 import { BusinessTypeBadge, LastMinuteBadge, SourceBadge } from '../components/Badges';
@@ -21,88 +14,68 @@ import { PageHeader, QueryState } from '../components/PageState';
 import { SkeletonList } from '../components/Skeleton';
 import { useDebounced } from '../hooks/useDebounced';
 import { usePersistentState } from '../hooks/usePersistentState';
-import { formatDate, formatDateTime, formatMoney, statusLabel, verificationLabel } from '../lib/format';
+import { formatDate, formatDateTime, formatMoney, statusLabel } from '../lib/format';
 
 /** Whole VND (or "Chưa xác định" when the booking-level total is unknown). */
 function totalDisplay(amount: number | null, currency: string): string {
   return amount != null ? formatMoney(amount, currency) : 'Chưa xác định';
 }
 
+/*
+  Only what the Admin can actually set.
+
+  Source, verification, the five extra date axes and the sort controls are gone
+  from this screen, and these filters are local state with no URL or storage
+  hydration — so keeping fields nothing can populate would be state that is
+  always empty and parameters that are always undefined. The API still accepts
+  every one of them; this page simply stops sending them.
+*/
 interface Filters {
   search: string;
   status: BookingStatus[];
-  source: BookingSource[];
-  verificationStatus: VerificationStatus[];
   paymentStatus: string;
   isLastMinute: boolean;
+  /** The single "Từ ngày / Đến ngày" range, on the dispatch date. */
   sentFrom: string;
   sentTo: string;
-  checkInFrom: string;
-  checkInTo: string;
-  checkOutFrom: string;
-  checkOutTo: string;
-  completedFrom: string;
-  completedTo: string;
   branchId: string;
-  sort: string;
-  order: string;
 }
 
 const EMPTY: Filters = {
   search: '',
   status: [],
-  source: [],
-  verificationStatus: [],
   paymentStatus: '',
   isLastMinute: false,
   sentFrom: '',
   sentTo: '',
-  checkInFrom: '',
-  checkInTo: '',
-  checkOutFrom: '',
-  checkOutTo: '',
-  completedFrom: '',
-  completedTo: '',
   branchId: '',
-  sort: '',
-  order: '',
 };
 
+/*
+  THE FOUR STAY OUTCOMES, and nothing else.
+
+  History answers "what happened to this reservation", so it lists the states a
+  completed stay can end in. The dispatch states (NEW, RECEIVED, COMPLETED,
+  ARCHIVED) are live-queue concepts with their own screens, and offering them
+  here invited an Admin to filter history by a state history is not about.
+
+  NOTHING WAS REMOVED FROM THE SYSTEM. Every BookingStatus value still exists,
+  is still written, and is still filterable through the API — this is the Admin
+  History filter UI narrowing, not a workflow change.
+*/
 const STATUS_OPTIONS: { value: BookingStatus; label: string }[] = (
-  ['NEW', 'RECEIVED', 'CHECKED_IN', 'CHECKED_OUT', 'COMPLETED', 'CANCELLED', 'NO_SHOW', 'ARCHIVED'] as BookingStatus[]
+  ['CHECKED_IN', 'CHECKED_OUT', 'CANCELLED', 'NO_SHOW'] as BookingStatus[]
 ).map((s) => ({ value: s, label: statusLabel(s) }));
 
-const SOURCE_OPTIONS: { value: BookingSource; label: string }[] = (
-  ['BOOKING_COM', 'AGODA', 'CTRIP'] as BookingSource[]
-).map((s) => ({ value: s, label: SOURCE_LABEL[s] }));
+/*
+  ONE DATE RANGE, on the dispatch date.
 
-const VERIFICATION_OPTIONS: { value: VerificationStatus; label: string }[] = (
-  ['NOT_SUBMITTED', 'PENDING_REVIEW', 'APPROVED', 'REJECTED'] as VerificationStatus[]
-).map((s) => ({ value: s, label: verificationLabel(s) }));
-
-const SORT_OPTIONS: { value: string; label: string }[] = [
-  { value: '', label: 'Ngày gửi (mặc định)' },
-  { value: 'checkInDate', label: 'Ngày nhận phòng' },
-  { value: 'checkOutDate', label: 'Ngày trả phòng' },
-  { value: 'completedAt', label: 'Ngày xác nhận' },
-  { value: 'createdAt', label: 'Ngày tạo' },
-  { value: 'updatedAt', label: 'Cập nhật gần nhất' },
-  { value: 'customerName', label: 'Tên khách' },
-  { value: 'totalAmount', label: 'Giá tổng' },
-  { value: 'status', label: 'Trạng thái đơn' },
-  { value: 'sourcePlatform', label: 'Nguồn' },
-];
-
-const DATE_FIELDS: { key: keyof Filters; label: string }[] = [
-  { key: 'sentFrom', label: 'Gửi từ' },
-  { key: 'sentTo', label: 'Gửi đến' },
-  { key: 'checkInFrom', label: 'Nhận phòng từ' },
-  { key: 'checkInTo', label: 'Nhận phòng đến' },
-  { key: 'checkOutFrom', label: 'Trả phòng từ' },
-  { key: 'checkOutTo', label: 'Trả phòng đến' },
-  { key: 'completedFrom', label: 'Xác nhận từ' },
-  { key: 'completedTo', label: 'Xác nhận đến' },
-];
+  `sentFrom`/`sentTo` are reused rather than a new meaning invented: they are
+  what the list is already sorted by (`sentAt desc` is the API default), so
+  "from/to" narrows the same axis the operator is already reading down the page.
+  The other six date fields filtered axes that were never sorted or displayed,
+  which is how you get an empty result and no idea why.
+*/
 
 const controlClass =
   'min-h-[2.75rem] rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600';
@@ -125,7 +98,24 @@ export function HistoryPage() {
   const isAdmin = user?.role === 'ADMIN';
   const navigate = useNavigate();
   const [page, setPage] = useState(1);
-  const [filters, setFilters] = usePersistentState<Filters>('kas.history.filters', EMPTY);
+  const [storedFilters, setFilters] = usePersistentState<Filters>('kas.history.filters', EMPTY);
+
+  /*
+    These filters persist in localStorage, so an Admin can arrive carrying a
+    status this screen no longer offers — "NEW", say, chosen before the list was
+    narrowed to the four stay outcomes. Left alone it would filter the table to
+    something the UI cannot show as selected or explain, which reads as history
+    having lost rows. Anything no longer offered is dropped on read.
+  */
+  const filters = useMemo<Filters>(
+    () => ({
+      ...storedFilters,
+      status: (storedFilters.status ?? []).filter((s) =>
+        STATUS_OPTIONS.some((o) => o.value === s),
+      ),
+    }),
+    [storedFilters],
+  );
 
   // Only the free-text box waits. The rest are discrete choices — a click is
   // already a deliberate act and does not need settling.
@@ -142,22 +132,13 @@ export function HistoryPage() {
     () => ({
       search: debouncedSearch.trim() || undefined,
       status: filters.status.length > 0 ? filters.status.join(',') : undefined,
-      source: filters.source.length > 0 ? filters.source.join(',') : undefined,
-      verificationStatus:
-        filters.verificationStatus.length > 0 ? filters.verificationStatus.join(',') : undefined,
       paymentStatus: filters.paymentStatus || undefined,
       isLastMinute: filters.isLastMinute ? 'true' : undefined,
       sentFrom: filters.sentFrom || undefined,
       sentTo: filters.sentTo || undefined,
-      checkInFrom: filters.checkInFrom || undefined,
-      checkInTo: filters.checkInTo || undefined,
-      checkOutFrom: filters.checkOutFrom || undefined,
-      checkOutTo: filters.checkOutTo || undefined,
-      completedFrom: filters.completedFrom || undefined,
-      completedTo: filters.completedTo || undefined,
       branchId: isAdmin && filters.branchId ? Number(filters.branchId) : undefined,
-      sort: filters.sort || undefined,
-      order: filters.order || undefined,
+      // `sort`/`order` are deliberately never sent: the API's own default is
+      // newest dispatch first, which is the ordering this page has always shown.
     }),
     [debouncedSearch, filters, isAdmin],
   );
@@ -175,10 +156,6 @@ export function HistoryPage() {
     const out: ActiveFilter[] = [];
     if (filters.search.trim()) out.push({ id: 'search', label: `Từ khoá: ${filters.search.trim()}` });
     for (const s of filters.status) out.push({ id: `status:${s}`, label: `Trạng thái: ${statusLabel(s)}` });
-    for (const s of filters.source) out.push({ id: `source:${s}`, label: `Nguồn: ${SOURCE_LABEL[s]}` });
-    for (const s of filters.verificationStatus) {
-      out.push({ id: `verification:${s}`, label: `Kiểm tra: ${verificationLabel(s)}` });
-    }
     if (filters.paymentStatus) {
       out.push({
         id: 'paymentStatus',
@@ -190,10 +167,8 @@ export function HistoryPage() {
       const branch = branches.data?.branches.find((b) => String(b.id) === filters.branchId);
       out.push({ id: 'branchId', label: `Chi nhánh: ${branch?.address ?? filters.branchId}` });
     }
-    for (const { key, label } of DATE_FIELDS) {
-      const value = filters[key];
-      if (typeof value === 'string' && value) out.push({ id: key, label: `${label}: ${value}` });
-    }
+    if (filters.sentFrom) out.push({ id: 'sentFrom', label: `Từ ngày: ${filters.sentFrom}` });
+    if (filters.sentTo) out.push({ id: 'sentTo', label: `Đến ngày: ${filters.sentTo}` });
     return out;
   }, [filters, isAdmin, branches.data]);
 
@@ -205,10 +180,6 @@ export function HistoryPage() {
   function removeChip(id: string) {
     const [kind, value] = id.split(':');
     if (kind === 'status') return update({ status: filters.status.filter((s) => s !== value) });
-    if (kind === 'source') return update({ source: filters.source.filter((s) => s !== value) });
-    if (kind === 'verification') {
-      return update({ verificationStatus: filters.verificationStatus.filter((s) => s !== value) });
-    }
     if (id === 'isLastMinute') return update({ isLastMinute: false });
     // Every remaining chip maps to a string field, cleared by emptying it.
     return update({ [id]: '' } as Partial<Filters>);
@@ -287,38 +258,10 @@ export function HistoryPage() {
               </select>
             </div>
 
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="history-sort">
-                Sắp xếp
-              </label>
-              <select
-                id="history-sort"
-                value={filters.sort}
-                onChange={(e) => update({ sort: e.target.value })}
-                className={controlClass}
-              >
-                {SORT_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="history-order">
-                Thứ tự
-              </label>
-              <select
-                id="history-order"
-                value={filters.order}
-                onChange={(e) => update({ order: e.target.value })}
-                className={controlClass}
-              >
-                <option value="">Giảm dần</option>
-                <option value="asc">Tăng dần</option>
-              </select>
-            </div>
+            {/*
+              No sorting controls. The API keeps its default — newest dispatch
+              first — which is preserved by simply never sending `sort`/`order`.
+            */}
 
             <label className="flex min-h-[2.75rem] items-center gap-2 text-sm text-slate-600">
               <input
@@ -339,41 +282,35 @@ export function HistoryPage() {
               onChange={(status) => update({ status })}
               testId="filter-status"
             />
-            <MultiSelect
-              legend="Nguồn"
-              options={SOURCE_OPTIONS}
-              selected={filters.source}
-              onChange={(source) => update({ source })}
-              testId="filter-source"
-            />
-            <MultiSelect
-              legend="Kiểm tra"
-              options={VERIFICATION_OPTIONS}
-              selected={filters.verificationStatus}
-              onChange={(verificationStatus) => update({ verificationStatus })}
-              testId="filter-verification"
-            />
           </div>
 
-          <details className="rounded-xl border border-slate-200 p-3">
-            <summary className="cursor-pointer text-sm font-medium text-slate-600">Lọc theo ngày</summary>
-            <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              {DATE_FIELDS.map(({ key, label }) => (
-                <div key={key}>
-                  <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor={`history-${key}`}>
-                    {label}
-                  </label>
-                  <input
-                    id={`history-${key}`}
-                    type="date"
-                    value={String(filters[key] ?? '')}
-                    onChange={(e) => update({ [key]: e.target.value } as Partial<Filters>)}
-                    className={`w-full ${controlClass}`}
-                  />
-                </div>
-              ))}
+          {/* One range, always visible — not folded into a details panel. */}
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="history-sentFrom">
+                Từ ngày
+              </label>
+              <input
+                id="history-sentFrom"
+                type="date"
+                value={filters.sentFrom}
+                onChange={(e) => update({ sentFrom: e.target.value })}
+                className={`w-full ${controlClass}`}
+              />
             </div>
-          </details>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="history-sentTo">
+                Đến ngày
+              </label>
+              <input
+                id="history-sentTo"
+                type="date"
+                value={filters.sentTo}
+                onChange={(e) => update({ sentTo: e.target.value })}
+                className={`w-full ${controlClass}`}
+              />
+            </div>
+          </div>
         </form>
       </Card>
 
