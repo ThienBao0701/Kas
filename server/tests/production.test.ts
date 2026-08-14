@@ -449,6 +449,23 @@ describe('production database bootstrap', () => {
     const operationalBooking = byName.get('Booking_one_operational_per_code_branch_checkin');
     expect(operationalBooking, 'operational duplicate-booking index is missing').toBeTruthy();
     expect(operationalBooking).toMatch(/UNIQUE/i);
+    /*
+      The PREDICATE, not just the index.
+
+      This index and `findOperationalDuplicate` are two enforcements of one rule,
+      and they must agree. They did not: soft delete leaves `status` untouched,
+      so a WITHDRAWN order stayed inside an index that only asked about status,
+      and re-sending a reservation the Admin had taken back was refused by the
+      database even once the application allowed it.
+
+      Asserted here so a future migration that recreates this index cannot
+      silently drop the clause and bring the refusal back.
+    */
+    expect(operationalBooking).toMatch(/"?deletedAt"?\s+IS\s+NULL/i);
+    // The states it still covers — DRAFT/READY remain deliberately excluded.
+    expect(operationalBooking).toMatch(/NEW/);
+    expect(operationalBooking).toMatch(/COMPLETED/);
+    expect(operationalBooking).toMatch(/ARCHIVED/);
   });
 
   it('11. the production bootstrap is idempotent', async () => {

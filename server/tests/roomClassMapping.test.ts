@@ -448,6 +448,77 @@ describe('E. draft and activation workflow', () => {
     expect((await resolveIn('CN4', 'Deluxe Premium')).pmsCode).toBe('DLXPR');
   });
 
+  /*
+    E3e-g. ALTERNATE NAMES SURVIVE THE WHOLE ROUND TRIP.
+
+    The reported bug ("tên gọi khác" vanished after activating) was in the UI:
+    the alias box committed only on Enter while the fields beside it committed on
+    blur, so clicking activate discarded the text before it was ever sent. The
+    server path was always correct — these pin that, so a future change to the
+    persistence chain cannot quietly reintroduce the same symptom from the other
+    end.
+  */
+  it('E3e. an alias added to a draft survives activation and is resolvable', async () => {
+    const cn5 = await branchIdOf('CN5');
+    const cn5Base = `/api/admin/branches/${cn5}/room-mapping`;
+    await testPrisma.branchRoomMappingVersion.deleteMany({ where: { branchId: cn5, status: 'DRAFT' } });
+
+    const activeBefore = await loadActiveMapping(cn5, testPrisma);
+    const draft = (await adminAgent.post(`${cn5Base}/drafts`).send({})).body.draft;
+    const target = draft.roomClasses[0]!;
+    const codeBefore = target.pmsCode;
+
+    const added = await adminAgent
+      .post(`${cn5Base}/drafts/${draft.id}/room-classes/${target.id}/aliases`)
+      .send({ alias: 'Phòng Đặc Biệt A' });
+    expect(added.status).toBe(201);
+
+    await adminAgent
+      .post(`${cn5Base}/drafts/${draft.id}/activate`)
+      .send({ expectedActiveVersionId: activeBefore!.versionId });
+
+    // Present on the live mapping after activation…
+    const live = await loadActiveMapping(cn5, testPrisma);
+    const cls = live!.classes.find((c) => c.pmsCode === codeBefore)!;
+    expect(cls.aliases.map((a) => a.alias)).toContain('Phòng Đặc Biệt A');
+    // …and it actually resolves, which is what the alias is for.
+    expect((await resolveIn('CN5', 'Phòng Đặc Biệt A')).pmsCode).toBe(codeBefore);
+    // The PMS code was not disturbed by adding an alias.
+    expect(cls.pmsCode).toBe(codeBefore);
+  });
+
+  it('E3f. a second alias does not remove the first', async () => {
+    const draft = await freshDraft();
+    const target = draft.classes[0]!;
+    const url = `${base()}/drafts/${draft.id}/room-classes/${target.id}/aliases`;
+
+    await adminAgent.post(url).send({ alias: 'Tên Gọi Một' });
+    const second = await adminAgent.post(url).send({ alias: 'Tên Gọi Hai' });
+    expect(second.status).toBe(201);
+
+    const reloaded = (await adminAgent.get(`${base()}/draft`)).body.draft;
+    const cls = reloaded.roomClasses.find((c: { id: string }) => c.id === target.id);
+    const names = cls.aliases.map((a: { alias: string }) => a.alias);
+    expect(names).toContain('Tên Gọi Một');
+    expect(names).toContain('Tên Gọi Hai');
+    expect(cls.pmsCode).toBe(target.pmsCode);
+  });
+
+  it('E3g. a duplicate alias is still refused', async () => {
+    // The fix was in the UI; the server's protections are unchanged.
+    const draft = await freshDraft();
+    const target = draft.classes[0]!;
+    const url = `${base()}/drafts/${draft.id}/room-classes/${target.id}/aliases`;
+
+    await adminAgent.post(url).send({ alias: 'Trùng Tên' });
+    const again = await adminAgent.post(url).send({ alias: 'trùng tên' });
+    expect(again.status).toBeGreaterThanOrEqual(400);
+
+    const reloaded = (await adminAgent.get(`${base()}/draft`)).body.draft;
+    const cls = reloaded.roomClasses.find((c: { id: string }) => c.id === target.id);
+    expect(cls.aliases.filter((a: { alias: string }) => a.alias.toLowerCase() === 'trùng tên')).toHaveLength(1);
+  });
+
   it('E4. an invalid draft cannot be activated', async () => {
     const draft = (await adminAgent.post(`${base()}/drafts`).send({})).body.draft;
     // Deactivate every class → an empty mapping.

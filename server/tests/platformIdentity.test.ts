@@ -386,29 +386,59 @@ describe('recognition', () => {
       .post('/api/bookings/extract')
       .send({ rawText: bookingText('Some Unrecognised Property'), source: 'BOOKING_COM' });
     expect(extract.status).toBe(201);
-    // Nothing was auto-assigned…
-    expect(extract.body.booking.branchId ?? null).toBeNull();
+    // Nothing was auto-assigned — and with the review no longer persisted, an
+    // unrecognised property leaves no row carrying a guessed branch either.
+    expect(extract.body.suggestedBranch).toBeNull();
     expect(extract.body.requiresManualConfirmation).toBe(true);
-
-    const stored = await testPrisma.booking.findUniqueOrThrow({
-      where: { id: extract.body.booking.id },
-    });
-    expect(stored.branchId).toBeNull();
+    expect(await testPrisma.booking.count()).toBe(0);
     expect(configs.length).toBeGreaterThan(0);
 
+    const branchId = branchIdByCode.get('TRUONG_DINH_05')!;
+    const roomClass = await testPrisma.branchRoomClass.findFirstOrThrow({
+      where: { branchId, active: true, version: { status: 'ACTIVE' } },
+    });
+    const body = {
+      rawText: bookingText('Some Unrecognised Property'),
+      hotelName: extract.body.booking.hotelName,
+      customerName: extract.body.booking.guestName ?? '',
+      phone: extract.body.booking.phone,
+      bookingCode: extract.body.booking.bookingCode ?? '',
+      checkInDate: extract.body.booking.checkIn,
+      checkOutDate: extract.body.booking.checkOut,
+      totalAmount: extract.body.booking.totalAmount,
+      paymentStatus: extract.body.booking.paymentStatus,
+      specialRequest: extract.body.booking.specialRequest,
+      rooms: extract.body.rooms.map(
+        (r: { roomIndex: number; roomName: string | null; roomTotal: number | null; nights: unknown[] }) => ({
+          roomIndex: r.roomIndex,
+          roomType: r.roomName,
+          roomSubtotal: r.roomTotal,
+          roomClassId: roomClass.id,
+          nights: r.nights,
+        }),
+      ),
+      acknowledgedWarningCodes: [
+        'UNKNOWN_HOTEL',
+        'UNRESOLVED_EXTRACT_WARNINGS',
+        'LOW_CONFIDENCE_BRANCH',
+        'MISSING_PHONE',
+        'MISSING_TOTAL',
+        'NULL_NIGHTLY_PRICE',
+        'MISSING_ROOM_TYPE',
+        'NIGHTLY_SUBTOTAL_MISMATCH',
+        'ROOM_TOTAL_MISMATCH',
+      ],
+    };
+
     // …and sending without a branch is refused by the server.
-    const blocked = await adminAgent
-      .post(`/api/admin/bookings/${extract.body.booking.id}/send`)
-      .send({});
+    const blocked = await adminAgent.post('/api/admin/bookings/dispatch').send(body);
     expect(blocked.status).toBe(422);
+    expect(await testPrisma.booking.count()).toBe(0);
 
     // The Admin confirms explicitly, and only then does it dispatch.
-    const branchId = branchIdByCode.get('TRUONG_DINH_05')!;
-    const sent = await adminAgent
-      .post(`/api/admin/bookings/${extract.body.booking.id}/send`)
-      .send({ branchId, acknowledgedWarningCodes: ['UNKNOWN_HOTEL', 'UNRESOLVED_EXTRACT_WARNINGS'] });
-    expect([200, 422]).toContain(sent.status);
-    if (sent.status === 200) {
+    const sent = await adminAgent.post('/api/admin/bookings/dispatch').send({ ...body, branchId });
+    expect([201, 422]).toContain(sent.status);
+    if (sent.status === 201) {
       expect(sent.body.booking.branch.code).toBe('TRUONG_DINH_05');
     }
   });

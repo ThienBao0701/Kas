@@ -14,10 +14,46 @@
  *   LINE 1: BK <CODE>_<ROOM_ABBR>_<NIGHTS> ĐÊM <TOTAL> <PAY> CI
  *   LINE 2: [ĂN SÁNG ]<DD/MM> <CONTACT>[ <ARRIVAL>]
  */
-import type { BookingDetail, PaymentStatus, RoomView } from '../api/bookings';
+import type { BusinessType, PaymentStatus } from '../api/bookings';
 import { formatAmountCopy, hcmDayMonth, nightCount } from './format';
 
 const NO_CODE_MESSAGE = 'Chưa có mã Booking để tạo ghi chú.';
+
+/**
+ * The room fields the note actually reads.
+ *
+ * Named separately from `RoomView` so an UNSENT Booking.com review — which has
+ * no booking, and therefore no row ids — can be previewed by the same builder
+ * that reception uses on a stored one. `RoomView` satisfies it, so every
+ * existing caller is unaffected.
+ */
+export interface NoteRoom {
+  roomType: string | null;
+  roomClassPmsCode?: string | null;
+  /** Only the count is read — see `noteNights`. */
+  nights: readonly unknown[];
+}
+
+/**
+ * The booking fields the note reads, and nothing else.
+ *
+ * Widening the parameter rather than making the review screen fabricate a whole
+ * `BookingDetail`: a preview that had to invent an id, a status and a dozen
+ * verification fields to print two lines would be claiming things that are not
+ * true. `BookingDetail` is assignable to this, so reception's path is untouched.
+ */
+export interface PmsNoteInput {
+  bookingCode: string | null;
+  rooms: readonly NoteRoom[];
+  checkInDate: string | null;
+  checkOutDate: string | null;
+  totalAmount: number | null;
+  paymentStatus: PaymentStatus;
+  branch?: { breakfastIncluded?: boolean } | null;
+  specialRequest: string | null;
+  phone: string | null;
+  businessType?: BusinessType;
+}
 
 /** Lower-cases and strips Vietnamese diacritics (incl. đ) for keyword matching. */
 const COMBINING_MARKS = /[̀-ͯ]/g;
@@ -71,7 +107,7 @@ export function abbreviateRoomType(roomType: string | null | undefined): string 
  * Only a room with no snapshot (pre-C.3.8, or a name that could not be resolved
  * deterministically) falls back to the legacy keyword table.
  */
-export function roomAbbreviation(room: RoomView): string {
+export function roomAbbreviation(room: NoteRoom): string {
   const snapshot = room.roomClassPmsCode?.trim();
   if (snapshot) return snapshot;
   return abbreviateRoomType(room.roomType);
@@ -94,7 +130,7 @@ export function roomAbbreviation(room: RoomView): string {
  * own room list, and alphabetising them would reorder what the receptionist
  * checks against the reservation. No room type is ever silently dropped.
  */
-export function roomsAbbreviation(rooms: RoomView[]): string {
+export function roomsAbbreviation(rooms: readonly NoteRoom[]): string {
   if (rooms.length === 0) return 'PHONG';
   // Preserve first-seen order while counting duplicates.
   const order: string[] = [];
@@ -111,7 +147,7 @@ export function roomsAbbreviation(rooms: RoomView[]): string {
  * Nights = check-in (inclusive) → check-out (exclusive). Falls back to the
  * longest room's nightly-row count only when the dates cannot yield a value.
  */
-export function noteNights(b: Pick<BookingDetail, 'checkInDate' | 'checkOutDate' | 'rooms'>): number {
+export function noteNights(b: Pick<PmsNoteInput, 'checkInDate' | 'checkOutDate' | 'rooms'>): number {
   const fromDates = nightCount(b.checkInDate, b.checkOutDate);
   if (fromDates > 0) return fromDates;
   return b.rooms.reduce((max, r) => Math.max(max, r.nights.length), 0);
@@ -195,7 +231,7 @@ export interface PmsNoteResult {
 }
 
 /** Builds the full note, or a reason it cannot be generated. `now` is injectable. */
-export function buildPmsNote(b: BookingDetail, now: Date = new Date()): PmsNoteResult {
+export function buildPmsNote(b: PmsNoteInput, now: Date = new Date()): PmsNoteResult {
   const code = b.bookingCode?.trim();
   if (!code) return { ok: false, error: NO_CODE_MESSAGE };
 

@@ -45,24 +45,23 @@ function mount(onRequest?: (path: string, init: RequestInit) => void) {
 }
 
 describe('DispatchPage — intake source tabs', () => {
-  it('offers the three parsers plus the two platforms that are announced but not built', async () => {
+  it('offers the three parsers plus the three platforms that are announced but not built', async () => {
     mount();
     const tablist = await screen.findByRole('tablist', { name: 'Nguồn đặt phòng' });
     const tabs = within(tablist).getAllByRole('tab');
 
     // Booking.com is shown as "Booking" — the enum value is unchanged, only the
-    // label. Tripadvisor and G2J are listed but carry no extraction; selecting
-    // one says so rather than accepting text it cannot parse.
+    // label. Tripadvisor, G2J and Traveloka are listed but carry no extraction;
+    // selecting one says so rather than accepting text it cannot parse.
     expect(tabs.map((t) => t.textContent)).toEqual([
       'Booking',
       'Agoda',
       'CTrip',
       'Tripadvisor',
       'G2J',
+      'Traveloka',
     ]);
     expect(within(tablist).queryByText('Booking.com')).not.toBeInTheDocument();
-    // Traveloka is an identity-only platform and is still not offered here.
-    expect(within(tablist).queryByText('Traveloka')).not.toBeInTheDocument();
   });
 
   it('marks exactly one tab selected, starting on Booking.com', async () => {

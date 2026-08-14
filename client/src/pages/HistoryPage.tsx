@@ -281,6 +281,9 @@ export function HistoryPage() {
               selected={filters.status}
               onChange={(status) => update({ status })}
               testId="filter-status"
+              // One outcome per row: these labels are full sentences, and
+              // wrapping put two of them side by side at common widths.
+              orientation="stack"
             />
           </div>
 

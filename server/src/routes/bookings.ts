@@ -13,7 +13,7 @@ import { parseCtripBooking } from '../booking/ctrip';
 import { loadBranchConfigs } from '../booking/branchConfig';
 import { detectBusinessType } from '../booking/businessType';
 import { persistDraftBooking, snapshotRoomClasses } from '../booking/store';
-import { serializeBookingPreview } from '../booking/serialize';
+import { serializeBookingPreview, serializeParsedPreview } from '../booking/serialize';
 import {
   BOOKING_LIST_INCLUDE,
   serializeCompletedListItem,
@@ -210,7 +210,22 @@ function actor(user: UserWithBranch, correlationId?: string) {
 export function createBookingsRouter(): Router {
   const router = Router();
 
-  // POST /api/bookings/extract — Admin-only: parse raw text into a stored DRAFT.
+  /**
+   * POST /api/bookings/extract — Admin-only: parse raw text into a review.
+   *
+   * ── TWO BEHAVIOURS, ON PURPOSE ────────────────────────────────────────────
+   * BOOKING.COM returns a PREVIEW and writes nothing. The reservation is
+   * reviewed in the browser and created once, at Send, by
+   * `POST /api/admin/bookings/dispatch`. Extracting is no longer an act of
+   * record: an Admin who pastes the wrong page, changes their mind, or closes
+   * the tab leaves nothing behind.
+   *
+   * AGODA and CTRIP are UNCHANGED. They still persist a DRAFT here. Their
+   * production review path is `POST /api/admin/ota/*`, which already creates its
+   * booking in one transaction and never touches this route — so this is a
+   * legacy intake that other callers and tests still rely on, and quietly
+   * changing it would alter two platforms that were not part of this work.
+   */
   router.post('/bookings/extract', requireAuth, requirePasswordChanged, requireAdmin, (req, res, next) => {
     (async () => {
       const { rawText, source } = extractSchema.parse(req.body);
@@ -229,17 +244,45 @@ export function createBookingsRouter(): Router {
           : source === 'CTRIP'
             ? parseCtripBooking(rawText, branches)
             : parseBooking(rawText, branches, 'BOOKING_COM');
-      const bookingId = await persistDraftBooking(parsed, rawText, req.currentUser?.id ?? null, source);
-      // Branch-specific room codes, captured as an immutable snapshot.
-      await snapshotRoomClasses(bookingId);
-
-      // The same deterministic detection persisted by the store, surfaced in the
+      // The same deterministic detection the dispatch re-runs, surfaced in the
       // preview so the Admin sees the type + confidence and can confirm/override.
       const business = detectBusinessType({
         rawText,
         roomType: parsed.rooms[0]?.roomName ?? null,
         specialRequest: parsed.specialRequest,
       });
+
+      /*
+        BOOKING.COM: preview only. Nothing is written — no Booking, no
+        BookingRoom, no BookingNightPrice, no room-class snapshot.
+
+        Room classes are not resolved here either, and cannot be: resolution is
+        scoped to a branch, and the Admin chooses the branch DURING the review
+        that has not happened yet. The screen asks
+        `POST /api/admin/branches/:branchId/room-mapping/resolve` once it has
+        one, and the dispatch resolves authoritatively when the order is sent.
+      */
+      if (source === 'BOOKING_COM') {
+        res.status(201).json({
+          ...serializeParsedPreview(parsed, 'BOOKING_COM', branches),
+          branchMatchScore: parsed.branchMatchScore,
+          branchConfidence: parsed.branchConfidence,
+          branchConfident: parsed.branchConfident,
+          requiresManualConfirmation: parsed.requiresManualConfirmation,
+          fieldConfidence: parsed.fieldConfidence,
+          parserQuality: parsed.parserQuality,
+          businessType: business.type,
+          businessTypeConfidence: business.confidence,
+          businessTypeRequiresAdminConfirmation: business.requiresAdminConfirmation,
+          businessTypeMatchedRules: business.matchedRules,
+          agoda: null,
+        });
+        return;
+      }
+
+      const bookingId = await persistDraftBooking(parsed, rawText, req.currentUser?.id ?? null, source);
+      // Branch-specific room codes, captured as an immutable snapshot.
+      await snapshotRoomClasses(bookingId);
 
       const stored = await prisma.booking.findUniqueOrThrow({
         where: { id: bookingId },
@@ -338,6 +381,7 @@ export function createBookingsRouter(): Router {
           Object.assign(where, activeQueueWhere(getClock().now()));
         }
 
+        const now = getClock().now();
         const { skip, take } = paginate(query.page, query.pageSize);
         const [total, rows] = await prisma.$transaction([
           prisma.booking.count({ where }),
@@ -350,7 +394,54 @@ export function createBookingsRouter(): Router {
           }),
         ]);
 
-        res.json({ bookings: rows.map(serializeNewListItem), pagination: meta(query.page, query.pageSize, total) });
+        /*
+          WHEN THE RESPONSE CLOCK STARTED, per order.
+
+          The SLA measures Admin-sent → reception-started, so it restarts every
+          time an order is put in front of reception again. `sentAt` alone is not
+          that instant: the claim-expiry resend deliberately does NOT touch
+          `sentAt` — it releases a lapsed claim and leaves the dispatch record
+          alone — so an order resent at 15:00 would otherwise be measured from
+          its original 09:00 send and read as hours overdue the moment it
+          reappeared.
+
+          The resend already leaves an authoritative mark: a BOOKING_RESENT audit
+          row. Taking the later of the two reads the real "most recently put in
+          front of reception" instant out of data that already exists — no new
+          column, and no change to a claim workflow that is working.
+
+          One grouped query for the whole page, never one per row.
+        */
+        const resentAt = new Map<string, Date>();
+        if (rows.length > 0) {
+          const groups = await prisma.bookingAuditEvent.groupBy({
+            by: ['bookingId'],
+            where: { bookingId: { in: rows.map((r) => r.id) }, action: 'BOOKING_RESENT' },
+            _max: { createdAt: true },
+          });
+          for (const g of groups) {
+            if (g._max.createdAt) resentAt.set(g.bookingId, g._max.createdAt);
+          }
+        }
+
+        const bookings = rows.map((row) => {
+          const resent = resentAt.get(row.id) ?? null;
+          const startedAt =
+            row.sentAt && resent
+              ? row.sentAt > resent
+                ? row.sentAt
+                : resent
+              : (resent ?? row.sentAt);
+          return { ...serializeNewListItem(row), slaStartedAt: startedAt?.toISOString() ?? null };
+        });
+
+        res.json({
+          bookings,
+          pagination: meta(query.page, query.pageSize, total),
+          // The client renders the SLA as (slaStartedAt + window − serverNow), so
+          // a wrong or wound-back PC clock cannot flatter the response time.
+          serverNow: now.toISOString(),
+        });
       })().catch(next);
     };
   }

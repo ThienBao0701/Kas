@@ -31,6 +31,7 @@ import { parseCtripBooking } from './ctrip';
 import { OTA_REVIEW_VERSION } from './otaReview';
 import type { OtaReview } from './otaReview';
 import { collectCorrections } from './otaCorrections';
+import { allocatePhysicalRooms } from './otaRoomAllocation';
 import { currentBuildId, recordRequestOrigin, type RequestOrigin } from './requestAudit';
 import { allocateCtripNightly } from './ctripNightly';
 
@@ -255,32 +256,39 @@ export async function dispatchOtaReview(
         parserCommit: currentBuildId(),
         reviewBuildId: currentBuildId(),
         rawTextSha256: createHash('sha256').update(request.rawText, 'utf8').digest('hex'),
+        /*
+          ONE ROW PER PHYSICAL ROOM, not per review line.
+
+          "SUP × 3" is three rooms the branch has to create, and `BookingRoom`
+          has no quantity column — so a single row for that line lost the count
+          and left the whole reservation's nightly figures sitting under it. The
+          screen then showed one room priced for three.
+
+          Expanding here matches what Booking.com's parser already does, so both
+          platforms persist the same canonical shape and nothing downstream has
+          to ask which one a booking came from.
+
+          The nightly aggregate is DIVIDED across the rooms rather than repeated
+          — repeating it was never an option, it would multiply the stay's value
+          — and the division is exact: see `allocatePhysicalRooms`.
+        */
         rooms: {
-          create: review.rooms.map((room, index) => ({
-            roomIndex: index + 1,
+          create: allocatePhysicalRooms(review.rooms, allocation.nights).map((room) => ({
+            roomIndex: room.roomIndex,
             // The internal PMS code is what the branch acts on; the OTA's own
             // name is preserved beside it so the source stays auditable.
-            roomType: room.pmsCode ?? room.otaRoomName ?? '',
-            roomSubtotal: review.rooms.length === 1 ? review.branchPrice : null,
-            // EVERY night the platform stated, on the first line only.
-            //
-            // The nightly figures cover the whole reservation, so repeating
-            // them under each room line would multiply the stay's value by the
-            // number of lines. They are attached once and left exactly as
-            // parsed — no night is dropped, merged or recomputed.
-            nights:
-              index === 0
-                ? {
-                    create: allocation.nights.map((night) => ({
-                      stayDate: isoToUtcDate(night.stayDate),
-                      amount: night.amount,
-                      currency: 'VND',
-                      // False for every night the platform stated; true only
-                      // for the CTrip nights derived from a bare total.
-                      isEstimated: night.isEstimated,
-                    })),
-                  }
-                : undefined,
+            roomType: room.roomType,
+            roomSubtotal: room.roomSubtotal,
+            nights: {
+              create: room.nights.map((night) => ({
+                stayDate: isoToUtcDate(night.stayDate),
+                amount: night.amount,
+                currency: 'VND',
+                // False for every night the platform stated; true only for the
+                // CTrip nights derived from a bare total.
+                isEstimated: night.isEstimated,
+              })),
+            },
           })),
         },
         // Everything the review flagged is stored with the booking, so the

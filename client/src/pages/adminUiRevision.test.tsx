@@ -143,7 +143,7 @@ describe('order input sources', () => {
     const names = within(tabs)
       .getAllByRole('tab')
       .map((t) => t.textContent?.trim());
-    expect(names).toEqual(['Booking', 'Agoda', 'CTrip', 'Tripadvisor', 'G2J']);
+    expect(names).toEqual(['Booking', 'Agoda', 'CTrip', 'Tripadvisor', 'G2J', 'Traveloka']);
     // The old label is gone entirely.
     expect(within(tabs).queryByText('Booking.com')).not.toBeInTheDocument();
   });
@@ -185,6 +185,30 @@ describe('order input sources', () => {
       'Ứng dụng sẽ phát triển phần này sớm nhất',
     );
     expect(screen.queryByRole('button', { name: /Trích xuất thông tin/ })).not.toBeInTheDocument();
+  });
+
+  it('shows the coming-soon notice for Traveloka, and no way to submit', async () => {
+    mount();
+    renderApp('/app/dispatch');
+
+    const tabs = await screen.findByRole('tablist', { name: 'Nguồn đặt phòng' });
+    await userEvent.click(within(tabs).getByRole('tab', { name: 'Traveloka' }));
+
+    expect(screen.getByTestId('source-coming-soon')).toHaveTextContent(
+      'Ứng dụng sẽ phát triển phần này sớm nhất',
+    );
+    expect(screen.queryByRole('button', { name: /Trích xuất thông tin/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+  });
+
+  it('never calls an extractor for Traveloka', async () => {
+    const fetchMock = mount();
+    renderApp('/app/dispatch');
+
+    const tabs = await screen.findByRole('tablist', { name: 'Nguồn đặt phòng' });
+    await userEvent.click(within(tabs).getByRole('tab', { name: 'Traveloka' }));
+
+    expect(fetchMock.mock.calls.some(([u]) => String(u).includes('/extract'))).toBe(false);
   });
 
   it('never calls an extractor for a placeholder source', async () => {
@@ -240,6 +264,23 @@ describe('history filters', () => {
       'Đã huỷ',
       'Khách không đến',
     ]);
+  });
+
+  it('stacks the status options one per row', async () => {
+    /*
+      These labels are full sentences. Wrapping put two of them on one row at
+      common widths, so "Đã huỷ" sat beside a neighbour and read as a column
+      rather than a list. The container must be a vertical stack, not a wrap.
+    */
+    historyMount();
+    renderApp('/app/history');
+
+    const group = await screen.findByTestId('filter-status');
+    const row = group.querySelector('div');
+    expect(row?.className).toContain('flex-col');
+    expect(row?.className).not.toContain('flex-wrap');
+    // All four are still there, in order, and still individually selectable.
+    expect(within(group).getAllByRole('button')).toHaveLength(4);
   });
 
   it('offers no source filter and no verification filter', async () => {

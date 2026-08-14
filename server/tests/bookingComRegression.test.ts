@@ -134,19 +134,68 @@ describe('Booking.com — parsing is unchanged', () => {
   });
 });
 
+/**
+ * Extract, then send — the whole Booking.com path as an operator walks it.
+ *
+ * The review used to be an editable DRAFT and the send a state transition on it.
+ * It is now one transactional create at the end of an in-browser review, so this
+ * helper stands in for the review screen: it takes the preview, picks the
+ * branch's internal room codes, and sends.
+ */
+async function extractAndSend(rawText: string, branchId: number) {
+  const extract = await adminAgent
+    .post('/api/bookings/extract')
+    .send({ rawText, source: 'BOOKING_COM' });
+  expect(extract.status).toBe(201);
+  expect(extract.body.booking.sourcePlatform).toBe('BOOKING_COM');
+
+  const roomClass = await testPrisma.branchRoomClass.findFirstOrThrow({
+    where: { branchId, active: true, version: { status: 'ACTIVE' } },
+  });
+
+  const sent = await adminAgent.post('/api/admin/bookings/dispatch').send({
+    rawText,
+    branchId,
+    hotelName: extract.body.booking.hotelName,
+    customerName: extract.body.booking.guestName ?? '',
+    phone: extract.body.booking.phone,
+    bookingCode: extract.body.booking.bookingCode ?? '',
+    checkInDate: extract.body.booking.checkIn,
+    checkOutDate: extract.body.booking.checkOut,
+    totalAmount: extract.body.booking.totalAmount,
+    paymentStatus: extract.body.booking.paymentStatus,
+    specialRequest: extract.body.booking.specialRequest,
+    rooms: extract.body.rooms.map(
+      (r: { roomIndex: number; roomName: string | null; roomTotal: number | null; nights: unknown[] }) => ({
+        roomIndex: r.roomIndex,
+        roomType: r.roomName,
+        roomSubtotal: r.roomTotal,
+        roomClassId: roomClass.id,
+        nights: r.nights,
+      }),
+    ),
+    acknowledgedWarningCodes: [
+      'MISSING_PHONE',
+      'MISSING_TOTAL',
+      'NULL_NIGHTLY_PRICE',
+      'MISSING_ROOM_TYPE',
+      'NIGHTLY_SUBTOTAL_MISMATCH',
+      'ROOM_TOTAL_MISMATCH',
+      'LOW_CONFIDENCE_BRANCH',
+      'UNRESOLVED_EXTRACT_WARNINGS',
+    ],
+  });
+  return { extract, sent };
+}
+
 describe('Booking.com — never touches the OTA note builder', () => {
   it('extraction and dispatch call buildOtaPmsNote zero times', async () => {
     const spy = vi.spyOn(otaPmsNote, 'buildOtaPmsNote');
     try {
-      const extract = await adminAgent
-        .post('/api/bookings/extract')
-        .send({ rawText: RAW, source: 'BOOKING_COM' });
-      expect(extract.status).toBe(201);
-      expect(extract.body.booking.sourcePlatform).toBe('BOOKING_COM');
-
-      await adminAgent
-        .post(`/api/admin/bookings/${extract.body.booking.id}/send`)
-        .send({ branchId: ownBranchId, acknowledgedWarningCodes: [] });
+      const { sent } = await extractAndSend(RAW, ownBranchId);
+      // Asserted, so this negative is proved against a dispatch that SUCCEEDED
+      // rather than one that never got far enough to call anything.
+      expect(sent.status, JSON.stringify(sent.body).slice(0, 300)).toBe(201);
 
       expect(spy).not.toHaveBeenCalled();
     } finally {
@@ -157,23 +206,20 @@ describe('Booking.com — never touches the OTA note builder', () => {
 
 describe('Booking.com — dispatch and branch-scoped visibility are unchanged', () => {
   it('dispatches through the existing path and reaches only its own branch', async () => {
-    const extract = await adminAgent
-      .post('/api/bookings/extract')
-      .send({ rawText: RAW, source: 'BOOKING_COM' });
-    expect(extract.status).toBe(201);
-    const bookingId = extract.body.booking.id as string;
+    // The branch this fixture resolves to, by exact identity match — surfaced in
+    // the preview now instead of pre-written onto a draft.
+    const { extract, sent } = await extractAndSend(RAW, ownBranchId);
+    expect(extract.body.suggestedBranch.id).toBe(ownBranchId);
+    expect(extract.body.branchConfident).toBe(true);
 
-    // The branch was auto-assigned by the exact identity match.
-    const draft = await testPrisma.booking.findUniqueOrThrow({ where: { id: bookingId } });
-    expect(draft.branchId).toBe(ownBranchId);
-    expect(draft.sourcePlatform).toBe('BOOKING_COM');
-
-    const sent = await adminAgent
-      .post(`/api/admin/bookings/${bookingId}/send`)
-      .send({ branchId: ownBranchId, acknowledgedWarningCodes: [] });
-    expect(sent.status).toBe(200);
+    expect(sent.status, JSON.stringify(sent.body).slice(0, 300)).toBe(201);
+    const bookingId = sent.body.booking.id as string;
     expect(sent.body.booking.status).toBe('NEW');
     expect(sent.body.booking.branch.code).toBe('BUI_THI_XUAN_40');
+
+    const stored = await testPrisma.booking.findUniqueOrThrow({ where: { id: bookingId } });
+    expect(stored.branchId).toBe(ownBranchId);
+    expect(stored.sourcePlatform).toBe('BOOKING_COM');
 
     // Its own receptionist sees it…
     const inbox = await ownAgent.get('/api/bookings/new');
@@ -186,13 +232,9 @@ describe('Booking.com — dispatch and branch-scoped visibility are unchanged', 
   });
 
   it('keeps the proof workflow reachable for the assigned receptionist', async () => {
-    const extract = await adminAgent
-      .post('/api/bookings/extract')
-      .send({ rawText: RAW, source: 'BOOKING_COM' });
-    const bookingId = extract.body.booking.id as string;
-    await adminAgent
-      .post(`/api/admin/bookings/${bookingId}/send`)
-      .send({ branchId: ownBranchId, acknowledgedWarningCodes: [] });
+    const { sent } = await extractAndSend(RAW, ownBranchId);
+    expect(sent.status).toBe(201);
+    const bookingId = sent.body.booking.id as string;
 
     const detail = await ownAgent.get(`/api/bookings/${bookingId}`);
     expect(detail.status).toBe(200);

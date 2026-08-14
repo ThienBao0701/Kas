@@ -179,22 +179,44 @@ describe('nightly rates are preserved night by night', () => {
     expect(nights.every((n) => n.isEstimated === false)).toBe(true);
   });
 
-  it('does not multiply the nights across several room lines', async () => {
-    // The nightly figures cover the whole reservation. Repeating them under
-    // each line would multiply the stay's value by the number of room types.
+  it('divides the nights across the physical rooms without multiplying the stay', async () => {
+    /*
+      The nightly figures cover the whole reservation, so repeating them under
+      each room would multiply the stay's value — the thing this test has always
+      guarded. It used to guard it by hanging every night on the first room and
+      leaving the rest empty, which lost the room count: "SUP × 3" persisted as
+      one room holding three rooms' worth of money.
+
+      The guard is now stronger. Each physical room carries its own share of
+      every night, and the shares are asserted to add back to exactly what the
+      platform stated — so the stay can be neither inflated nor eroded.
+    */
     const res = await dispatch({ source: 'AGODA', rawText: MULTI_ROOM, overrides: { paymentMode: 'CN' } });
     expect(res.status).toBe(201);
 
     const rooms = await testPrisma.bookingRoom.findMany({
       where: { bookingId: res.body.bookingId },
-      include: { nights: true },
+      include: { nights: { orderBy: { stayDate: 'asc' } } },
       orderBy: { roomIndex: 'asc' },
     });
 
-    expect(rooms).toHaveLength(3);
-    expect(rooms[0]!.nights).toHaveLength(res.body.review.nightlyRates.length);
-    expect(rooms[1]!.nights).toHaveLength(0);
-    expect(rooms[2]!.nights).toHaveLength(0);
+    // One row per PHYSICAL room: the quantities on the review, summed.
+    const physicalRooms = (res.body.review.rooms as { quantity: number }[]).reduce(
+      (sum, r) => sum + r.quantity,
+      0,
+    );
+    expect(rooms).toHaveLength(physicalRooms);
+
+    const nightly = res.body.review.nightlyRates as { stayDate: string; amount: number | null }[];
+    // Every room carries every night — none is dropped or left empty.
+    for (const room of rooms) expect(room.nights).toHaveLength(nightly.length);
+
+    // And night by night, the shares add back to the platform's own figure.
+    nightly.forEach((stated, index) => {
+      if (stated.amount === null) return;
+      const summed = rooms.reduce((sum, room) => sum + (room.nights[index]!.amount ?? 0), 0);
+      expect(summed, `night ${stated.stayDate}`).toBe(stated.amount);
+    });
   });
 
   it('allocates estimated nights for a CTrip mail that stated none (5.1)', async () => {

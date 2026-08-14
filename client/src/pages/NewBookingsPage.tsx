@@ -14,6 +14,7 @@ import { LastMinuteBadge, StatusBadge, WorkflowBadge } from '../components/Badge
 import { Pagination } from '../components/Pagination';
 import { PageHeader, InlineSpinner, QueryState } from '../components/PageState';
 import { BookingDetailView } from '../components/BookingDetailView';
+import { ResponseSla } from '../components/ResponseSla';
 import { Toast } from '../components/Toast';
 import { useCut } from '../hooks/useCut';
 import { formatDate, formatDateTime } from '../lib/format';
@@ -137,6 +138,7 @@ function ReceptionistInbox() {
                   <BookingListRow
                     booking={b}
                     selected={b.id === selectedId}
+                    serverNow={list.data?.serverNow ?? null}
                     onSelect={() => {
                       setSelectedId(b.id);
                       lastIndexRef.current = bookings.findIndex((x) => x.id === b.id);
@@ -168,10 +170,13 @@ function BookingListRow({
   booking: b,
   selected,
   onSelect,
+  serverNow,
 }: {
   booking: NewListItem;
   selected: boolean;
   onSelect: () => void;
+  /** The server's clock from the list payload, so the SLA is not PC-clock based. */
+  serverNow?: string | null;
 }) {
   return (
     <button
@@ -191,8 +196,19 @@ function BookingListRow({
         <span className="truncate font-medium text-slate-900">{b.customerName ?? 'Khách chưa rõ'}</span>
         {b.isLastMinute ? <LastMinuteBadge /> : null}
       </div>
-      <div className="mt-1">
+      {/*
+        The response SLA sits beside the workflow state, which is where a
+        receptionist already looks to decide what to pick up next. It is an
+        indicator only — nothing about the order changes when it runs out, and
+        the CẮT controls and claim countdown on the detail panel are untouched.
+      */}
+      <div className="mt-1 flex flex-wrap items-center gap-2">
         <WorkflowBadge status={b.verificationStatus} />
+        <ResponseSla
+          slaStartedAt={b.slaStartedAt ?? b.sentAt}
+          claimedAt={b.claimedAt}
+          serverNow={serverNow}
+        />
       </div>
     </button>
   );

@@ -230,6 +230,23 @@ function auditRow(audit: NonNullable<BookingDetail['corrections'][number]['reque
 export function serializeAdminBookingDetail(booking: BookingDetail) {
   return {
     ...claimView(booking),
+    /*
+      Whether this order may be sent back to its branch.
+
+      DERIVED FROM THE ROW, and from exactly the same three conditions the server
+      enforces on the write — so the button and the endpoint cannot disagree.
+      Computing it here rather than in the browser means one rule, in one place,
+      that a screen cannot get wrong.
+
+      APPROVED is excluded because that status asserts the reservation already
+      exists in the hotel system; offering to send it back would be offering to
+      create a duplicate. See `redispatchDeletedBooking`.
+    */
+    canRedispatch:
+      booking.sentAt !== null &&
+      booking.deletedAt !== null &&
+      booking.verificationStatus !== 'APPROVED',
+    deletedAt: iso(booking.deletedAt),
     id: booking.id,
     status: booking.status,
     sourcePlatform: booking.sourcePlatform,

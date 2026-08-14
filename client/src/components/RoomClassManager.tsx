@@ -331,6 +331,20 @@ function DraftEditor({
     onSuccess: onChanged,
   });
 
+  /**
+   * Sends whatever alias text is pending for a class, if any.
+   *
+   * One place, called from both blur and Enter, so the two can never drift
+   * apart again. A blank box is a no-op rather than a rejected request, and the
+   * text is left in place until the server accepts it — a refused duplicate
+   * stays on screen to be corrected instead of vanishing.
+   */
+  function commitAlias(roomClassId: string): void {
+    const value = (aliasDraft[roomClassId] ?? '').trim();
+    if (value.length === 0 || alias.isPending) return;
+    alias.mutate({ id: roomClassId, alias: value });
+  }
+
   const error = add.error ?? patch.error ?? alias.error ?? dropAlias.error;
 
   return (
@@ -404,17 +418,34 @@ function DraftEditor({
                   </button>
                 </span>
               ))}
+              {/*
+                COMMITS ON BLUR AS WELL AS ENTER.
+
+                This was the bug: the name and the PMS code beside it save on
+                blur, but the alias saved only on Enter. An Admin who typed a
+                "tên gọi khác" and then clicked "Kích hoạt cập nhật" never
+                pressed Enter, so the text sat in local React state and was
+                thrown away — the field looked accepted and the alias silently
+                never existed. Nothing was wrong with the request, the service or
+                the schema; the value was simply never sent.
+
+                Blurring is also what clicking the activate button does first, so
+                the alias is saved into the draft before it is promoted.
+              */}
               <label className="sr-only" htmlFor={`alias-${c.id}`}>Thêm tên gọi khác cho {c.displayName}</label>
               <input
                 id={`alias-${c.id}`}
+                data-testid={`room-class-alias-input-${c.id}`}
                 className="w-40 rounded-full border border-slate-300 px-2 py-0.5"
                 placeholder="Thêm tên gọi khác"
                 value={aliasDraft[c.id] ?? ''}
                 onChange={(e) => setAliasDraft((prev) => ({ ...prev, [c.id]: e.target.value }))}
+                onBlur={() => commitAlias(c.id)}
                 onKeyDown={(e) => {
                   if (e.key !== 'Enter') return;
-                  const value = (aliasDraft[c.id] ?? '').trim();
-                  if (value) alias.mutate({ id: c.id, alias: value });
+                  // Prevent the Enter from also submitting anything around it.
+                  e.preventDefault();
+                  commitAlias(c.id);
                 }}
               />
             </div>

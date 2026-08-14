@@ -72,12 +72,23 @@ export function MultiSelect<T extends string>({
   selected,
   onChange,
   testId,
+  orientation = 'wrap',
 }: {
   legend: string;
   options: { value: T; label: string }[];
   selected: T[];
   onChange: (next: T[]) => void;
   testId?: string;
+  /**
+   * `wrap` packs options onto as few rows as fit — the default, and right for
+   * short labels. `stack` gives each option its own row.
+   *
+   * Stacking is opt-in rather than the new default because wrapping is the
+   * correct behaviour for most option sets; it matters where labels are long
+   * enough that a wrapped row reads as two unrelated columns, which is how "Đã
+   * huỷ" ended up sitting beside a neighbour.
+   */
+  orientation?: 'wrap' | 'stack';
 }) {
   function toggle(value: T) {
     onChange(selected.includes(value) ? selected.filter((v) => v !== value) : [...selected, value]);
@@ -86,7 +97,15 @@ export function MultiSelect<T extends string>({
   return (
     <fieldset data-testid={testId}>
       <legend className="mb-1 text-xs font-medium text-slate-500">{legend}</legend>
-      <div className="flex flex-wrap gap-1.5">
+      <div
+        className={
+          orientation === 'stack'
+            // `items-start` so each button is only as wide as its label rather
+            // than stretching across the column.
+            ? 'flex flex-col items-start gap-1.5'
+            : 'flex flex-wrap gap-1.5'
+        }
+      >
         {options.map((o) => {
           const on = selected.includes(o.value);
           return (

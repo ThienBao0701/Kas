@@ -29,8 +29,14 @@ import {
   updateRoomClass,
   validateDraft,
 } from '../room/roomMappingService';
+import { loadActiveMapping, resolveRoomClass } from '../room/roomClassResolver';
 
 const aliasSchema = z.object({ alias: z.string().trim().min(1).max(120) });
+
+/** The room names to look up. Nullable members: a room may have no name at all. */
+const resolveSchema = z.object({
+  roomNames: z.array(z.string().max(300).nullable()).max(100).default([]),
+});
 
 function branchIdOf(raw: string | undefined): number {
   const id = Number(raw);
@@ -58,6 +64,49 @@ export function createAdminRoomMappingRouter(): Router {
       res.json({
         active: await getActiveVersion(branchId),
         draft: await getDraftVersion(branchId),
+      });
+    })().catch(next);
+  });
+
+  /**
+   * POST …/resolve — what would these room names resolve to at this branch?
+   *
+   * A pure question with a pure answer: it reads the branch's ACTIVE mapping,
+   * runs the SAME `resolveRoomClass` every stored snapshot is produced by, and
+   * writes nothing at all. No Booking, no BookingRoom, no snapshot row.
+   *
+   * It exists because a Booking.com reservation no longer has a draft to hang a
+   * snapshot on. The branch is chosen DURING review, so resolution cannot happen
+   * at extraction time any more — the review screen asks this instead, and the
+   * answer pre-fills the room-class picker exactly as the extract-time snapshot
+   * used to. What it returns is a suggestion for a human to confirm; the
+   * authoritative resolution is redone server-side when the order is dispatched.
+   *
+   * Branch-scoped like every other route here, so the mapping consulted is
+   * always the one named in the path.
+   */
+  router.post(`${base}/resolve`, (req, res, next) => {
+    (async () => {
+      const branchId = branchIdOf(req.params.branchId);
+      const { roomNames } = resolveSchema.parse(req.body ?? {});
+      const mapping = await loadActiveMapping(branchId);
+
+      res.json({
+        // Null when the branch has no active mapping — the caller must treat
+        // that as "cannot resolve", never as "use some other branch".
+        versionId: mapping?.versionId ?? null,
+        rooms: roomNames.map((sourceRoomName) => {
+          const r = resolveRoomClass({ branchId, sourceRoomName }, mapping);
+          return {
+            sourceRoomName,
+            status: r.status,
+            roomClassId: r.roomClassId,
+            displayName: r.displayName,
+            pmsCode: r.pmsCode,
+            matchedAlias: r.matchedAlias,
+            matchType: r.matchType,
+          };
+        }),
       });
     })().catch(next);
   });

@@ -11,44 +11,75 @@
  *   The dropdown lists the branch's OWN active room classes, read from the
  *   existing room-mapping API. There is no second catalogue in the frontend.
  *
- *   A selection is written by the server (`setRoomClass`), which validates it
- *   against the booking's branch and ACTIVE mapping version and stores it as
- *   MANUAL. Nothing is decided locally — what comes back is the snapshot the
- *   note will really be built from.
- *
  *   The note is produced by `buildPmsNote`, the SAME Booking.com builder
  *   reception uses. There is no second generator and no Agoda-style format
  *   anywhere near this file: an Agoda note is a different layout produced on
  *   the server, and a Booking.com booking must never print one.
  *
+ * ── CONTROLLED, NOT SELF-PERSISTING ───────────────────────────────────────
+ * This used to POST each selection against a persisted DRAFT and adopt whatever
+ * the server echoed back. There is no draft any more: the reservation is created
+ * once, at Send. So the component now takes its rooms as props and reports a
+ * change to the parent, which owns the review state.
+ *
+ * That does NOT make the browser the authority on which class is valid. The
+ * options offered are the branch's own ACTIVE mapping, served by the server, and
+ * the choice is re-resolved against that same mapping when the order is
+ * dispatched — a class that does not belong to the branch is refused there, not
+ * quietly stored. What moved is WHEN the choice is written, not WHO decides it.
+ *
  * The OTA room name is displayed exactly as Booking.com stated it and is never
  * replaced by the internal code — they are different fields answering different
  * questions ("what did the platform sell?" vs "what is it called in our PMS?").
  */
-import { useState } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { ClipboardList, Copy, StickyNote } from 'lucide-react';
-import { bookingsApi, type BookingDetail } from '../api/bookings';
 import { roomMappingApi } from '../api/roomMapping';
 import { toUserMessage } from '../api/errors';
 import { UNMAPPED_ROOM_MESSAGE, everyRoomHasPmsCode } from '../lib/bookingComRoomClass';
-import { buildPmsNote } from '../lib/pmsNote';
+import { buildPmsNote, type PmsNoteInput } from '../lib/pmsNote';
 import { copyText } from '../lib/copy';
 import { Card } from './Card';
 import { Button } from './Button';
 import { ErrorAlert } from './ErrorAlert';
+import { useState } from 'react';
 
 const inputClass =
   'w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600';
 
+/** One room of the review, as this card needs to read and update it. */
+export interface ReviewRoomView {
+  roomIndex: number;
+  /** The name Booking.com printed, verbatim. */
+  roomType: string | null;
+  roomClassId?: string | null;
+  roomClassPmsCode?: string | null;
+  roomClassDisplayName?: string | null;
+  roomClassStatus?: 'RESOLVED' | 'MANUAL' | 'UNRESOLVED' | 'LEGACY' | null;
+  nights: readonly unknown[];
+}
+
 export interface BookingComRoomReviewProps {
-  /** The saved booking, with the Admin's unsaved edits merged in for preview. */
-  booking: BookingDetail;
-  /** The branch the booking is SAVED against — what the server will validate. */
+  /**
+   * The reservation as the review currently stands — stored or not.
+   *
+   * `Omit` rather than an intersection: the rooms here are the richer review
+   * rows, and intersecting the two room shapes would leave the narrower one
+   * winning at every property access.
+   */
+  booking: Omit<PmsNoteInput, 'rooms'> & { rooms: readonly ReviewRoomView[] };
+  /** The branch whose internal codes are being offered. */
   branchId: number | undefined;
-  /** The Admin picked a different branch and has not saved it yet. */
+  /**
+   * The picker is disabled while this is true.
+   *
+   * It exists for the legacy stored-booking caller, where the codes belong to
+   * the branch the booking was SAVED against and offering a newly picked
+   * branch's codes would produce a refusal the Admin could not explain. An
+   * in-memory review has no saved branch to diverge from, so it never sets it.
+   */
   branchDirty?: boolean;
-  /** Called with the server's stored snapshot after a successful selection. */
+  /** Reports the Admin's choice to whoever owns the review state. */
   onRoomClassChanged: (roomIndex: number, roomClassId: string, pmsCode: string, displayName: string) => void;
 }
 
@@ -70,17 +101,7 @@ export function BookingComRoomReview({
   });
 
   const options = (mapping.data?.active?.roomClasses ?? []).filter((c) => c.active);
-
-  const [pendingIndex, setPendingIndex] = useState<number | null>(null);
-  const setRoomClass = useMutation({
-    mutationFn: (vars: { roomIndex: number; roomClassId: string }) =>
-      bookingsApi.setRoomClass(booking.id, vars.roomIndex, vars.roomClassId),
-    onSuccess: (res) => {
-      const r = res.room;
-      onRoomClassChanged(r.roomIndex, r.roomClassId, r.pmsCode, r.displayName);
-    },
-    onSettled: () => setPendingIndex(null),
-  });
+  const [selectionError, setSelectionError] = useState<string | null>(null);
 
   return (
     <>
@@ -157,17 +178,26 @@ export function BookingComRoomReview({
                   <select
                     aria-label={`Mã nội bộ dòng ${room.roomIndex}`}
                     className={`${inputClass} mt-1`}
-                    disabled={
-                      branchId === undefined ||
-                      branchDirty ||
-                      options.length === 0 ||
-                      pendingIndex === room.roomIndex
-                    }
+                    disabled={branchId === undefined || branchDirty || options.length === 0}
                     value={room.roomClassId ?? ''}
                     onChange={(e) => {
                       if (!e.target.value) return; // never un-set back to nothing
-                      setPendingIndex(room.roomIndex);
-                      setRoomClass.mutate({ roomIndex: room.roomIndex, roomClassId: e.target.value });
+                      const chosen = options.find((c) => c.id === e.target.value);
+                      if (!chosen) {
+                        // The list came from the server; a value not in it means
+                        // the branch's mapping moved underneath this screen.
+                        setSelectionError(
+                          'Danh sách mã nội bộ đã thay đổi. Vui lòng tải lại trang.',
+                        );
+                        return;
+                      }
+                      setSelectionError(null);
+                      onRoomClassChanged(
+                        room.roomIndex,
+                        chosen.id,
+                        chosen.pmsCode,
+                        chosen.displayName,
+                      );
                     }}
                   >
                     <option value="">— Chưa chọn —</option>
@@ -203,9 +233,9 @@ export function BookingComRoomReview({
           ) : null}
         </ul>
 
-        {setRoomClass.isError ? (
+        {selectionError ? (
           <div className="mt-3">
-            <ErrorAlert>{toUserMessage(setRoomClass.error)}</ErrorAlert>
+            <ErrorAlert>{selectionError}</ErrorAlert>
           </div>
         ) : null}
 
@@ -231,7 +261,7 @@ export function BookingComRoomReview({
  * note wins: silently keeping a stale edit over a corrected note is how a
  * wrong room code would reach the hotel system.
  */
-function PmsNoteCard({ booking }: { booking: BookingDetail }) {
+function PmsNoteCard({ booking }: { booking: PmsNoteInput }) {
   const generated = buildPmsNote(booking);
   const generatedText = generated.ok ? generated.text ?? '' : '';
 

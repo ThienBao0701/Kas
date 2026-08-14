@@ -186,6 +186,13 @@ export interface BookingDetail extends ClaimFields {
    * what reception is shown, not what the booking contains.
    */
   cutFields?: CutField[];
+  /**
+   * Whether this order may be sent back to its branch — true only when it was
+   * sent once AND is currently withdrawn. Derived server-side from the same
+   * conditions the endpoint enforces. Admin payloads only.
+   */
+  canRedispatch?: boolean;
+  deletedAt?: string | null;
   id: string;
   status: BookingStatus;
   sourcePlatform: BookingSource;
@@ -263,6 +270,15 @@ export const CUT_FIELDS = ['CUSTOMER_NAME', 'TOTAL_AMOUNT', 'PMS_NOTE'] as const
 export type CutField = (typeof CUT_FIELDS)[number];
 
 export interface NewListItem extends ClaimFields {
+  /**
+   * When this order was most recently put in front of reception — the start of
+   * the response SLA.
+   *
+   * Usually the dispatch instant, but later than `sentAt` for an order that was
+   * resent, because a resend restarts the response window. Resolved server-side;
+   * see the `/bookings/new` handler.
+   */
+  slaStartedAt?: string | null;
   id: string;
   bookingCode: string | null;
   customerName: string | null;
@@ -390,8 +406,38 @@ export interface AgodaPartnerExtras {
   pmsNoteError: string | null;
 }
 
+/** One room of an extraction preview — no id, because nothing was stored. */
+export interface PreviewRoom {
+  roomIndex: number;
+  roomName: string | null;
+  roomTotal: number | null;
+  nights: { stayDate: string; amount: number | null; currency: string; isEstimated: boolean }[];
+}
+
+/**
+ * What the extraction endpoint returns for BOOKING.COM.
+ *
+ * `persisted: false` is the contract, not a detail: nothing was written, so
+ * there is no `id` to fetch, patch or send. The review lives in the browser
+ * until the Admin presses Gửi, which posts the whole thing to
+ * `bookingsApi.dispatchBookingCom`.
+ */
 export interface ExtractResponse {
-  booking: { id: string; status: BookingStatus };
+  persisted: false;
+  booking: {
+    bookingCode: string | null;
+    hotelName: string | null;
+    sourcePlatform: BookingSource;
+    guestName: string | null;
+    phone: string | null;
+    checkIn: string | null;
+    checkOut: string | null;
+    currency: string;
+    totalAmount: number | null;
+    paymentStatus: PaymentStatus;
+    specialRequest: string | null;
+    parserVersion: string;
+  };
   suggestedBranch: Branch | null;
   branchConfidence: number;
   branchConfident: boolean;
@@ -401,9 +447,36 @@ export interface ExtractResponse {
   businessTypeConfidence: number;
   businessTypeRequiresAdminConfirmation: boolean;
   businessTypeMatchedRules: string[];
+  rooms: PreviewRoom[];
   warnings: WarningView[];
   /** Null unless the source was an Agoda hotel-partner email. */
   agoda: AgodaPartnerExtras | null;
+}
+
+/** The complete reviewed reservation, sent in one request at Gửi. */
+export interface BookingComDispatchPayload {
+  rawText: string;
+  branchId: number;
+  hotelName: string | null;
+  customerName: string;
+  phone: string | null;
+  bookingCode: string;
+  checkInDate: string | null;
+  checkOutDate: string | null;
+  totalAmount: number | null;
+  paymentStatus: PaymentStatus;
+  specialRequest: string | null;
+  rooms: {
+    roomIndex: number;
+    roomType: string | null;
+    roomSubtotal: number | null;
+    /** The internal class the Admin picked; null lets the server resolve it. */
+    roomClassId: string | null;
+    nights: { stayDate: string; amount: number | null }[];
+  }[];
+  /** Only when the Admin explicitly chose it on the review screen. */
+  businessType?: 'DIRECT' | 'PARTNER';
+  acknowledgedWarningCodes: string[];
 }
 
 /** Vietnamese label + tone for a business type. */
@@ -412,39 +485,6 @@ export const BUSINESS_TYPE_LABEL: Record<BusinessType, string> = {
   PARTNER: 'Đơn đối tác',
   UNKNOWN: 'Chưa xác định',
 };
-
-/** What the server stored after an Admin picked an internal room class. */
-export interface ManualRoomClassResult {
-  roomIndex: number;
-  roomClassId: string;
-  displayName: string;
-  pmsCode: string;
-  status: 'MANUAL';
-}
-
-// --- Editing payloads ------------------------------------------------------
-export interface RoomEdit {
-  roomIndex: number;
-  roomType: string | null;
-  roomSubtotal: number | null;
-  taxAmount?: number | null;
-  feeAmount?: number | null;
-  nights: { stayDate: string; amount: number | null; manuallyCorrected?: boolean }[];
-}
-
-export interface BookingEdit {
-  hotelName?: string | null;
-  branchId?: number | null;
-  customerName?: string;
-  phone?: string | null;
-  bookingCode?: string;
-  checkInDate?: string | null;
-  checkOutDate?: string | null;
-  totalAmount?: number | null;
-  paymentStatus?: PaymentStatus;
-  specialRequest?: string | null;
-  rooms?: RoomEdit[];
-}
 
 function query(params: Record<string, string | number | boolean | undefined>): string {
   const q = new URLSearchParams();
@@ -459,26 +499,36 @@ export const bookingsApi = {
   extract: (rawText: string, source: BookingSource = 'BOOKING_COM') =>
     api.post<ExtractResponse>('/bookings/extract', { rawText, source }),
 
-  adminDetail: (id: string) => api.get<{ booking: BookingDetail }>(`/admin/bookings/${id}`),
-  update: (id: string, edit: BookingEdit) => api.put<{ booking: BookingDetail }>(`/admin/bookings/${id}`, edit),
-  confirmBusinessType: (id: string, businessType: 'DIRECT' | 'PARTNER') =>
-    api.post<{ booking: BookingDetail }>(`/admin/bookings/${id}/business-type`, { businessType }),
-  markReady: (id: string, note?: string) => api.post<{ booking: BookingDetail }>(`/admin/bookings/${id}/ready`, { note }),
-  send: (id: string, branchId: number, acknowledgedWarningCodes: string[]) =>
-    api.post<{ booking: BookingDetail }>(`/admin/bookings/${id}/send`, { branchId, acknowledgedWarningCodes }),
-
   /**
-   * The Admin chooses the internal room class for one room.
+   * Creates and sends a reviewed Booking.com reservation in ONE call.
    *
-   * The server validates the class against the booking's branch and its ACTIVE
-   * mapping version and stores the choice as MANUAL, so what comes back is the
-   * snapshot the PMS note will actually be generated from — not a local guess.
+   * Replaces update-draft → mark-ready → send. There is no booking to update
+   * beforehand: the server creates it, already NEW, inside one transaction, and
+   * a failure leaves nothing behind for the Admin to clean up. The review state
+   * stays in the browser so a rejected send can be corrected and retried.
    */
-  setRoomClass: (id: string, roomIndex: number, roomClassId: string) =>
-    api.put<{ room: ManualRoomClassResult }>(
-      `/bookings/${id}/rooms/${roomIndex}/room-class`,
-      { roomClassId },
-    ),
+  dispatchBookingCom: (payload: BookingComDispatchPayload) =>
+    api.post<{ booking: BookingDetail }>('/admin/bookings/dispatch', payload),
+
+  /*
+    THE DRAFT LIFECYCLE IS GONE FROM THIS CLIENT.
+
+    Six wrappers used to live here — adminDetail, update, confirmBusinessType,
+    markReady, send and setRoomClass. Together they were the Booking.com review:
+    extract wrote a DRAFT, each of these edited it, and send flipped it to NEW.
+    Every one of them existed to mutate a booking nobody had decided to create.
+
+    `dispatchBookingCom` above replaces all six. They are removed rather than
+    left unused because a dead wrapper is an invitation to write through it
+    again, and reviving any of them would put an unsent reservation back in the
+    database — the exact thing this change removed.
+
+    THE SERVER ENDPOINTS THEY CALLED STILL EXIST and are unchanged:
+    `/admin/bookings/:id` (GET/PUT), `/business-type`, `/ready`, `/send` and
+    `/bookings/:id/rooms/:n/room-class`. They operate on bookings that ALREADY
+    EXIST and remain covered by the server suite. What was retired is
+    Booking.com's use of them, not the capability.
+  */
 
   detail: (id: string) =>
     api.get<{ booking: BookingDetail; serverNow?: string }>(`/bookings/${id}`),
@@ -524,9 +574,18 @@ export const bookingsApi = {
     ),
   /** Admin: release an expired claim so reception can take it again. */
   resend: (id: string) => api.post<{ success: true; claimCycle: number }>(`/bookings/${id}/resend`, {}),
+  /**
+   * Admin: send a WITHDRAWN order back to its branch.
+   *
+   * Distinct from `resend` above: that releases a lapsed claim on an order still
+   * with reception, this revives one the Admin deleted. The server refuses
+   * unless the order was sent once and is currently deleted.
+   */
+  redispatch: (id: string) =>
+    api.post<{ booking: BookingDetail }>(`/admin/bookings/${id}/redispatch`, {}),
 
   listNew: (params: { branchId?: number; page?: number; pageSize?: number } = {}) =>
-    api.get<ListResponse<NewListItem>>(`/bookings/new${query(params)}`),
+    api.get<ListResponse<NewListItem> & { serverNow?: string }>(`/bookings/new${query(params)}`),
   listPendingReview: (params: { branchId?: number; page?: number; pageSize?: number } = {}) =>
     api.get<ListResponse<NewListItem>>(`/bookings/pending-review${query(params)}`),
   listRejected: (params: { branchId?: number; page?: number; pageSize?: number } = {}) =>

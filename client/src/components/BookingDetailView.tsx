@@ -17,6 +17,7 @@ import { LastMinuteBadge, PaymentBadge, SourceBadge, WorkflowBadge } from './Bad
 import { ErrorAlert } from './ErrorAlert';
 import { Section } from './Section';
 import { DeleteBookingButton } from './DeleteBookingButton';
+import { RedispatchButton } from './RedispatchButton';
 import { ProofSection } from './ProofSection';
 import { Toast } from './Toast';
 
@@ -410,7 +411,15 @@ export function BookingDetailView({
       ) : null}
 
       {isAdmin ? (
-        <div className="flex justify-end">
+        <div className="flex justify-end gap-2">
+          {/*
+            Only for a withdrawn order, and only because the SERVER said so —
+            `canRedispatch` is derived from the same two conditions the endpoint
+            enforces, so the control cannot offer something the write refuses.
+          */}
+          {b.canRedispatch ? (
+            <RedispatchButton bookingId={b.id} guestName={b.customerName} onDone={setToast} />
+          ) : null}
           <DeleteBookingButton bookingId={b.id} guestName={b.customerName} isAdmin={isAdmin} />
         </div>
       ) : null}
