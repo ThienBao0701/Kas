@@ -357,7 +357,7 @@ later phase.**
 
 Unresolved hotel-issue counts are computed **live from `HotelIssue` status** — there
 is no persisted counter table and no duplicate totals. **Unresolved = `NEW` +
-`IN_PROGRESS`; `RESOLVED` issues stay in history but are never counted.**
+`IN_PROGRESS`; `COMPLETED` issues stay in history but are never counted.**
 
 `GET /api/issues/summary` returns totals plus a per-branch breakdown:
 
@@ -367,9 +367,10 @@ is no persisted counter table and no duplicate totals. **Unresolved = `NEW` +
                   "newCount": 2, "inProgressCount": 1, "totalUnresolved": 3 } ] }
 ```
 
-Branch scope mirrors the rest of the app: an **Admin** sees **all eight branches**
-(including zero-count ones); a **receptionist** sees **only their own branch** and
-cannot widen the scope with a `branchId` query parameter. The counters feed the
+Branch scope mirrors the rest of the app: an **Admin** and **Bộ phận kỹ thuật**
+each see **all eight branches** (including zero-count ones); a **receptionist**
+sees **only their own branch** and cannot widen the scope with a `branchId` query
+parameter. The counters feed the
 Admin sidebar badge, the dashboard "Sự cố đang mở" card, and the per-branch summary
 cards on the Issues page (click a card to filter the list). They refresh on the
 existing **polling** cadence — **no SSE**. Counts always come from issue status,

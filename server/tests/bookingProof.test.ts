@@ -31,6 +31,22 @@ beforeEach(async () => {
   ownAgent = (await loginAgent(app, 'letan_own', RECEPTIONIST_PASSWORD)).agent;
   await createReceptionist(otherBranchId, { username: 'letan_other', mustChangePassword: false });
   otherAgent = (await loginAgent(app, 'letan_other', RECEPTIONIST_PASSWORD)).agent;
+
+  /*
+    Both receptionists check in to a shift.
+
+    Submitting a proof IS the receptionist asserting "I created this
+    reservation", so the server now takes the order's creator from the shift
+    they are working and refuses the submission when there is none. That is the
+    subject of bookingCreatorAttribution.test.ts; here it is just the precondition
+    every one of these cases needs, so it is established once in the setup.
+  */
+  for (const agent of [ownAgent, otherAgent]) {
+    const res = await agent
+      .post('/api/reception/shifts/check-in')
+      .send({ shiftType: 'A', receptionistName: 'Lễ tân trực' });
+    expect(res.status).toBe(201);
+  }
 });
 
 afterAll(async () => {

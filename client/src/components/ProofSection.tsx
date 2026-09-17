@@ -20,7 +20,6 @@ import { ApiError, toUserMessage } from '../api/errors';
 import { formatDate, formatDateTime, formatFileSize, formatMoney } from '../lib/format';
 import { Card } from './Card';
 import { Button } from './Button';
-import { Input } from './Input';
 import { Modal } from './Modal';
 import { ErrorAlert } from './ErrorAlert';
 import { PaymentBadge } from './Badges';
@@ -29,6 +28,7 @@ import { ProofOcrCard } from './ProofOcrCard';
 import { ProofComparisonCard } from './ProofComparisonCard';
 import { useProofComparison } from '../hooks/useProofComparison';
 import { DUPLICATE_WARNING } from '../lib/claim';
+import { useShiftSession } from '../hooks/useShiftSession';
 
 /**
  * The proof-of-creation workflow surface. What it renders depends on the
@@ -75,40 +75,24 @@ export function ProofSection({
 /* Upload (receptionist)                                                       */
 /* -------------------------------------------------------------------------- */
 
-const CREATOR_NAME_REQUIRED = 'Vui lòng nhập tên người tạo đơn';
-
 function UploadCard({ booking: b, onChanged }: { booking: BookingDetail; onChanged?: (m: string) => void }) {
   const [file, setFile] = useState<File | null>(null);
-  const [creatorName, setCreatorName] = useState('');
-  const [nameError, setNameError] = useState<string | null>(null);
   const rejected = b.verificationStatus === 'REJECTED';
   const lastRejection = [...b.proofs].reverse().find((p) => p.status === 'REJECTED');
+  // Who the server will record as the creator. Shown, never typed.
+  const { data: shift } = useShiftSession();
+  const session = shift?.session ?? null;
 
   const submit = useMutation({
-    // Carried on the existing optional `note` field — the request contract is
-    // unchanged, so nothing on the server had to move for this.
-    mutationFn: () => bookingsApi.submitProof(b.id, file!, creatorName.trim()),
+    mutationFn: () => bookingsApi.submitProof(b.id, file!),
     onSuccess: () => {
       // Only clear on success; a failure keeps the image so the user can retry.
       setFile(null);
-      setCreatorName('');
-      setNameError(null);
       onChanged?.('Đã gửi ảnh cho Admin kiểm tra.');
     },
   });
 
-  /**
-   * The creator's name is required, and it is checked HERE rather than by
-   * disabling the button. A disabled control explains nothing: a receptionist
-   * with an image attached and no name would see a dead button and no reason
-   * for it. Clicking tells them exactly which field is missing.
-   */
   function handleSubmit() {
-    if (creatorName.trim().length === 0) {
-      setNameError(CREATOR_NAME_REQUIRED);
-      return;
-    }
-    setNameError(null);
     submit.mutate();
   }
 
@@ -144,26 +128,30 @@ function UploadCard({ booking: b, onChanged }: { booking: BookingDetail; onChang
       {submit.isError ? <div className="mt-3"><ErrorAlert>{toUserMessage(submit.error)}</ErrorAlert></div> : null}
 
       {/*
-        Reuses the shared Input, which already carries this app's field-error
-        treatment: red border, aria-invalid, and the message wired to the field
-        by aria-describedby. Nothing bespoke to keep in step with the rest.
+        THE CREATOR IS SHOWN, NOT TYPED.
+
+        This used to be a free-text "Tên người tạo đơn" box, retyped on every
+        single order and stored exactly as sent. The server now takes the name
+        from the shift the receptionist checked in with, so the field is gone:
+        there is nothing to mistype, nothing to leave blank, and nothing a
+        browser can put another receptionist's name into.
+
+        It is still DISPLAYED, because a person about to sign for work should be
+        able to see whose name is going on it.
       */}
-      <div className="mt-4">
-        <Input
-          label="Tên người tạo đơn"
-          value={creatorName}
-          onChange={(e) => {
-            setCreatorName(e.target.value);
-            // Clear as soon as they start fixing it — leaving the message up
-            // while they type reads as though it is still wrong.
-            if (nameError) setNameError(null);
-          }}
-          error={nameError ?? undefined}
-          maxLength={1000}
-          disabled={submit.isPending}
-          placeholder="Ví dụ: Nguyễn Văn A"
-        />
-      </div>
+      {session ? (
+        <div
+          data-testid="proof-creator"
+          className="mt-4 rounded-xl bg-slate-50 px-3 py-2.5 text-sm text-slate-700"
+        >
+          <span className="text-slate-500">Người tạo đơn:</span>{' '}
+          <strong className="text-slate-900">{session.receptionistName}</strong>
+          <span className="text-slate-400"> · </span>
+          <span>
+            {session.shiftName} ({session.shiftWindow})
+          </span>
+        </div>
+      ) : null}
 
       {/*
         THE DUPLICATE WARNING, IMMEDIATELY ABOVE THE SUBMIT BUTTON.

@@ -52,8 +52,16 @@ export function createNavBadgesRouter(): Router {
       const user = req.currentUser!;
       const now = getClock().now();
 
-      // Bộ phận đặt phòng has a one-item menu and no operational queue.
-      if (user.role === 'BOOKING_DEPARTMENT') {
+      /*
+        Departments with no part in the booking workflow get zeros.
+
+        Bộ phận đặt phòng has a one-item menu; Bộ phận kỹ thuật works incident
+        queues and no booking screen at all. Both are branchless, so without this
+        they fall through to the branch filter below, where `branchId === null`
+        widens to EVERY branch — handing a role that cannot open a single one of
+        those screens a count of every order on all eight.
+      */
+      if (user.role === 'BOOKING_DEPARTMENT' || user.role === 'TECHNICAL') {
         res.json({ counts: EMPTY, serverNow: now.toISOString() });
         return;
       }

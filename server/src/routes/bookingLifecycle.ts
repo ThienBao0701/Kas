@@ -21,9 +21,25 @@
  */
 import { Router } from 'express';
 import { z } from 'zod';
-import { requireAuth, requirePasswordChanged } from '../middleware/auth';
+import { requireAuth, requirePasswordChanged, requireRole } from '../middleware/auth';
 import { applyLifecycleAction, type LifecycleAction } from '../booking/lifecycle';
 import { readRequestOrigin } from '../booking/requestAudit';
+
+/**
+ * WHO OPERATES A BOOKING THROUGH ITS STAY.
+ *
+ * An ALLOW-LIST, not a negative test, and that distinction is the point. The
+ * branch check inside `applyLifecycleAction` reads
+ * `actor.role === 'RECEPTIONIST' && booking.branchId !== actor.branchId`, so any
+ * role that is not a receptionist skips it entirely. That was harmless while
+ * every authenticated user either was one or was an Admin; with branchless
+ * departments in the system it would have let Bộ phận kỹ thuật check a guest in
+ * at a property it has no connection to.
+ *
+ * Naming the two roles that DO operate bookings means a future department gets
+ * nothing here by default, which is the correct direction for a mistake to fail.
+ */
+const requireBookingOperator = requireRole('ADMIN', 'RECEPTIONIST');
 
 /** A reason is optional everywhere, and required nowhere but cancellation. */
 const bodySchema = z
@@ -48,6 +64,7 @@ export function createBookingLifecycleRouter(): Router {
       `/bookings/:id/${path}`,
       requireAuth,
       requirePasswordChanged,
+      requireBookingOperator,
       (req, res, next) => {
         (async () => {
           const body = bodySchema.parse(req.body ?? {}) ?? {};

@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   ClipboardPaste,
   FileText,
+  Hammer,
   History,
   Inbox,
   LayoutDashboard,
@@ -68,9 +69,24 @@ export const RECEPTIONIST_NAV: NavItem[] = [
   { to: '/app/reminders', label: 'Nhắc nhở', icon: BellRing },
 ];
 
+/**
+ * Bộ phận kỹ thuật works three queues and nothing else.
+ *
+ * The three items are WORKFLOW STATES, not saved filters: an incident is in
+ * exactly one of them, and it moves between them only by a technician acting on
+ * it. No booking screen appears here — this role has no branch and no part in
+ * dispatch.
+ */
+export const TECHNICAL_NAV: NavItem[] = [
+  { to: '/app/technical/new', label: 'Sự cố khách sạn', icon: Wrench },
+  { to: '/app/technical/in-progress', label: 'Đang sửa', icon: Hammer },
+  { to: '/app/technical/completed', label: 'Đã hoàn thành', icon: CheckCircle2 },
+];
+
 export function navForRole(role: UserRole | undefined): NavItem[] {
   if (role === 'ADMIN') return ADMIN_NAV;
   if (role === 'BOOKING_DEPARTMENT') return BOOKING_DEPARTMENT_NAV;
+  if (role === 'TECHNICAL') return TECHNICAL_NAV;
   // Receptionist, and anything unrecognised: never the Chứng từ menu.
   return RECEPTIONIST_NAV;
 }
@@ -82,7 +98,7 @@ export function titleForPath(pathname: string): string {
   if (pathname.startsWith('/app/chat/')) return 'Chat box';
   if (pathname.startsWith('/app/reminders')) return 'Nhắc nhở';
   if (pathname.startsWith('/app/resend-orders')) return 'Gửi lại đơn';
-  const all = [...ADMIN_NAV, ...RECEPTIONIST_NAV, ...BOOKING_DEPARTMENT_NAV];
+  const all = [...ADMIN_NAV, ...RECEPTIONIST_NAV, ...BOOKING_DEPARTMENT_NAV, ...TECHNICAL_NAV];
   const match = all
     .slice()
     .sort((a, b) => b.to.length - a.to.length)

@@ -26,11 +26,22 @@ type Handler = (init: RequestInit) => { status: number; body?: unknown };
 
 const BRANCH = { id: 1, code: 'TRUONG_DINH_05', hotelName: 'Saigon Hotel', address: '05 Trương Định' };
 
+/*
+  The summary response as the server now sends it.
+
+  `range` and the per-branch `sent` are not optional extras: the page reads both,
+  so a fixture without them describes a shape the server cannot produce and the
+  screen renders `undefined` where a count belongs. `date` is the first day of
+  the scope, so it tracks `range.from` by default; a range case passes its own
+  `range` through `over`.
+*/
 function summaryBody(over: Record<string, unknown> = {}) {
+  const date = typeof over.date === 'string' ? over.date : '2026-08-11';
   return {
-    date: '2026-08-11',
+    date,
+    range: { from: date, to: date },
     totals: { waiting: 3, confirmedToday: 2, lastMinute: 1, sentToday: 5 },
-    branches: [{ branch: BRANCH, waiting: 3, confirmedToday: 2, lastMinute: 1 }],
+    branches: [{ branch: BRANCH, waiting: 3, confirmedToday: 2, lastMinute: 1, sent: 5 }],
     issues: { reported: 4, stillOpen: 2 },
     ...over,
   };
@@ -71,13 +82,39 @@ describe('dashboard date selector', () => {
     });
     renderApp('/app/dashboard');
 
-    const picker = await screen.findByTestId('dashboard-date');
-    expect(picker).toHaveValue(today);
+    // One control with two ends. Both open on today, so the opening scope is a
+    // single day and the request keeps its original `?date=` shape.
+    expect(await screen.findByTestId('dashboard-range-from')).toHaveValue(today);
+    expect(screen.getByTestId('dashboard-range-to')).toHaveValue(today);
 
     await waitFor(() => {
       const asked = fetchMock.mock.calls.some(([u]) => String(u).includes(`date=${today}`));
       expect(asked).toBe(true);
     });
+  });
+
+  it('shows each branch its share of the total, so the two reconcile', async () => {
+    /*
+      THE DISCREPANCY THIS CHANGE EXISTS TO END. The branch section used to have
+      no column that summed to "Tổng đơn gửi", so an operator could read 5 sent
+      at the top and find nothing below it that added up — the counters were
+      being taken from different date axes. The row now carries its share of the
+      same population, and the server proves the sum (adminDashboard.test.ts,
+      CASE 5). This asserts the operator can actually see it.
+    */
+    const today = new Date(Date.now() + 7 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    mount({
+      [`GET /api/admin/dashboard/summary?date=${today}`]: () => ({
+        status: 200,
+        body: summaryBody({ date: today }),
+      }),
+    });
+    renderApp('/app/dashboard');
+
+    const section = (await screen.findByText('Theo chi nhánh')).parentElement!;
+    expect(within(section).getByText('đã gửi')).toBeInTheDocument();
+    // 5 is this branch's `sent`, and equals totals.sentToday for the one branch.
+    expect(within(section).getByText('5')).toBeInTheDocument();
   });
 
   it('sends the CHOSEN date to the server, not a client-side filter', async () => {
@@ -86,6 +123,17 @@ describe('dashboard date selector', () => {
       [`GET /api/admin/dashboard/summary?date=${today}`]: () => ({
         status: 200,
         body: summaryBody({ date: today, totals: { waiting: 3, confirmedToday: 2, lastMinute: 1, sentToday: 5 } }),
+      }),
+      /*
+        Mid-edit: the start has moved and the end has not followed yet. That is
+        a real request the page makes, so it is answered rather than left to
+        404 and blank the screen the assertions below read. Its figures are the
+        default ones, which appear in the first payload too — so they can never
+        be mistaken for the chosen day's.
+      */
+      [`GET /api/admin/dashboard/summary?from=2026-08-09&to=${today}`]: () => ({
+        status: 200,
+        body: summaryBody({ date: '2026-08-09', range: { from: '2026-08-09', to: today } }),
       }),
       'GET /api/admin/dashboard/summary?date=2026-08-09': () => ({
         status: 200,
@@ -98,10 +146,14 @@ describe('dashboard date selector', () => {
     });
     renderApp('/app/dashboard');
 
-    const picker = await screen.findByTestId('dashboard-date');
+    // ONE day is now both ends of the range set to it, and that is still the
+    // `?date=` request — the single-day view keeps the shape it always had.
     // fireEvent, not userEvent.type: a native date input takes a whole value,
     // and typing it character by character produces intermediate invalid states.
-    fireEvent.change(picker, { target: { value: '2026-08-09' } });
+    fireEvent.change(await screen.findByTestId('dashboard-range-from'), {
+      target: { value: '2026-08-09' },
+    });
+    fireEvent.change(screen.getByTestId('dashboard-range-to'), { target: { value: '2026-08-09' } });
 
     // The request carries the date…
     await waitFor(() => {
@@ -113,6 +165,111 @@ describe('dashboard date selector', () => {
     expect(await screen.findByText('9')).toBeInTheDocument();
     expect(await screen.findByText('8')).toBeInTheDocument();
     expect(await screen.findByText('6')).toBeInTheDocument();
+  });
+
+  it('never sends an inverted range when an end is cleared', async () => {
+    /*
+      THE DEFECT THIS PINS. Clearing the start while the end sat on a past day
+      used to resolve the blank end to TODAY, producing from=<today>&to=<past>.
+      The server refuses that with 422 — correctly — so the operator lost every
+      card on the page to an error alert, having done nothing but press Delete
+      in a date box.
+
+      A cleared end now collapses onto the other one: the scope becomes the
+      remaining day, which is what the boxes on screen actually say.
+    */
+    const today = new Date(Date.now() + 7 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const fetchMock = mount({
+      [`GET /api/admin/dashboard/summary?date=${today}`]: () => ({
+        status: 200,
+        body: summaryBody({ date: today }),
+      }),
+      [`GET /api/admin/dashboard/summary?from=2026-08-01&to=${today}`]: () => ({
+        status: 200,
+        body: summaryBody({ date: '2026-08-01', range: { from: '2026-08-01', to: today } }),
+      }),
+      'GET /api/admin/dashboard/summary?from=2026-08-01&to=2026-08-05': () => ({
+        status: 200,
+        body: summaryBody({ date: '2026-08-01', range: { from: '2026-08-01', to: '2026-08-05' } }),
+      }),
+      // What a cleared start must now produce: the remaining day, alone.
+      'GET /api/admin/dashboard/summary?date=2026-08-05': () => ({
+        status: 200,
+        body: summaryBody({ date: '2026-08-05' }),
+      }),
+    });
+    renderApp('/app/dashboard');
+
+    fireEvent.change(await screen.findByTestId('dashboard-range-from'), {
+      target: { value: '2026-08-01' },
+    });
+    fireEvent.change(screen.getByTestId('dashboard-range-to'), { target: { value: '2026-08-05' } });
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(([u]) =>
+          String(u).includes('from=2026-08-01&to=2026-08-05'),
+        ),
+      ).toBe(true),
+    );
+
+    // Now clear the START, the way an operator does before retyping it.
+    fireEvent.change(screen.getByTestId('dashboard-range-from'), { target: { value: '' } });
+
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(([u]) => String(u) === '/api/admin/dashboard/summary?date=2026-08-05'),
+      ).toBe(true),
+    );
+    // No request may ever carry a start later than its end.
+    for (const [u] of fetchMock.mock.calls) {
+      const m = /[?&]from=(\d{4}-\d{2}-\d{2})&to=(\d{4}-\d{2}-\d{2})/.exec(String(u));
+      if (m) expect(m[1]! <= m[2]!).toBe(true);
+    }
+    // The page still says which period it is counting, and offers the way back.
+    expect(screen.getByRole('button', { name: 'Hôm nay' })).toBeInTheDocument();
+  });
+
+  it('sends a RANGE request when the two ends differ', async () => {
+    const today = new Date(Date.now() + 7 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const fetchMock = mount({
+      [`GET /api/admin/dashboard/summary?date=${today}`]: () => ({
+        status: 200,
+        body: summaryBody({ date: today }),
+      }),
+      // Again the mid-edit scope: start moved, end still today.
+      [`GET /api/admin/dashboard/summary?from=2026-08-01&to=${today}`]: () => ({
+        status: 200,
+        body: summaryBody({ date: '2026-08-01', range: { from: '2026-08-01', to: today } }),
+      }),
+      'GET /api/admin/dashboard/summary?from=2026-08-01&to=2026-08-05': () => ({
+        status: 200,
+        body: summaryBody({
+          date: '2026-08-01',
+          range: { from: '2026-08-01', to: '2026-08-05' },
+          totals: { waiting: 9, confirmedToday: 8, lastMinute: 7, sentToday: 66 },
+          issues: { reported: 1, stillOpen: 0 },
+        }),
+      }),
+    });
+    renderApp('/app/dashboard');
+
+    fireEvent.change(await screen.findByTestId('dashboard-range-from'), {
+      target: { value: '2026-08-01' },
+    });
+    fireEvent.change(screen.getByTestId('dashboard-range-to'), { target: { value: '2026-08-05' } });
+
+    // Two different ends go out as `from`+`to`, in that order, and as nothing
+    // else: a period is not a day, so there is no `date=` for this scope.
+    await waitFor(() => {
+      const asked = fetchMock.mock.calls.some(
+        ([u]) => String(u) === '/api/admin/dashboard/summary?from=2026-08-01&to=2026-08-05',
+      );
+      expect(asked).toBe(true);
+    });
+    expect(fetchMock.mock.calls.some(([u]) => String(u).includes('date=2026-08-01'))).toBe(false);
+    // The page knows it is showing a period, not a day.
+    expect(await screen.findByText('Sự cố trong kỳ')).toBeInTheDocument();
+    expect(await screen.findByText('66')).toBeInTheDocument();
   });
 
   it('shows the day\'s issue count', async () => {
@@ -241,7 +398,9 @@ describe('history filters', () => {
     historyMount();
     renderApp('/app/history');
 
-    await screen.findByTestId('filter-status');
+    // The range is the page-ready signal: it is the one filter control that is
+    // certain to be on this screen.
+    await screen.findByTestId('history-range');
     expect(screen.queryByLabelText('Sắp xếp')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Thứ tự')).not.toBeInTheDocument();
     expect(screen.queryByText('Cập nhật gần nhất')).not.toBeInTheDocument();
@@ -249,56 +408,54 @@ describe('history filters', () => {
     expect(screen.queryByText('Tăng dần')).not.toBeInTheDocument();
   });
 
-  it('offers exactly the four stay outcomes as statuses', async () => {
-    historyMount();
-    renderApp('/app/history');
-
-    const group = await screen.findByTestId('filter-status');
-    // MultiSelect renders each option as a toggle button, not a checkbox.
-    const labels = within(group)
-      .getAllByRole('button')
-      .map((b) => b.textContent?.trim());
-    expect(labels).toEqual([
-      'Khách đã nhận phòng',
-      'Khách đã trả phòng',
-      'Đã huỷ',
-      'Khách không đến',
-    ]);
-  });
-
-  it('stacks the status options one per row', async () => {
+  it('offers no status filter at all — the four stay outcomes are gone', async () => {
     /*
-      These labels are full sentences. Wrapping put two of them on one row at
-      common widths, so "Đã huỷ" sat beside a neighbour and read as a column
-      rather than a list. The container must be a vertical stack, not a wrap.
+      The screen is a record of what was DISPATCHED, read by date and by booking
+      code; the outcome filter was not how anyone arrived at a row, and the table
+      has no status column for it to narrow. Nothing was removed from the system
+      — every BookingStatus is still written and still filterable through the
+      API — this is the History filter UI narrowing.
     */
     historyMount();
     renderApp('/app/history');
 
-    const group = await screen.findByTestId('filter-status');
-    const row = group.querySelector('div');
-    expect(row?.className).toContain('flex-col');
-    expect(row?.className).not.toContain('flex-wrap');
-    // All four are still there, in order, and still individually selectable.
-    expect(within(group).getAllByRole('button')).toHaveLength(4);
+    await screen.findByTestId('history-range');
+    expect(screen.queryByTestId('filter-status')).not.toBeInTheDocument();
+    for (const outcome of [
+      'Khách đã nhận phòng',
+      'Khách đã trả phòng',
+      'Đã huỷ',
+      'Khách không đến',
+    ]) {
+      expect(screen.queryByText(outcome)).not.toBeInTheDocument();
+    }
   });
 
   it('offers no source filter and no verification filter', async () => {
     historyMount();
     renderApp('/app/history');
 
-    await screen.findByTestId('filter-status');
+    await screen.findByTestId('history-range');
     expect(screen.queryByTestId('filter-source')).not.toBeInTheDocument();
     expect(screen.queryByTestId('filter-verification')).not.toBeInTheDocument();
   });
 
-  it('offers exactly one date range, Từ ngày / Đến ngày', async () => {
+  it('offers exactly one date range, and it is ONE control', async () => {
     historyMount();
     renderApp('/app/history');
 
-    await screen.findByTestId('filter-status');
-    expect(screen.getByLabelText('Từ ngày')).toBeInTheDocument();
-    expect(screen.getByLabelText('Đến ngày')).toBeInTheDocument();
+    await screen.findByTestId('history-range');
+    // A fieldset with a legend is one labelled group: the two ends belong to a
+    // single field, and there is exactly one such field on the page.
+    expect(screen.getAllByRole('group', { name: 'Khoảng thời gian' })).toHaveLength(1);
+    // getByRole itself refuses a second match, so this IS the "exactly one".
+    const range = screen.getByRole('group', { name: 'Khoảng thời gian' });
+    expect(within(range).getByLabelText('Khoảng thời gian: từ ngày')).toBeInTheDocument();
+    expect(within(range).getByLabelText('Khoảng thời gian: đến ngày')).toBeInTheDocument();
+    // The ends no longer answer to bare labels of their own — that is what made
+    // them read as two independent questions.
+    expect(screen.queryByLabelText('Từ ngày')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Đến ngày')).not.toBeInTheDocument();
     for (const gone of ['Gửi từ', 'Gửi đến', 'Nhận phòng từ', 'Nhận phòng đến', 'Trả phòng từ', 'Trả phòng đến', 'Xác nhận từ', 'Xác nhận đến']) {
       expect(screen.queryByLabelText(gone)).not.toBeInTheDocument();
     }
@@ -308,20 +465,46 @@ describe('history filters', () => {
     const fetchMock = historyMount();
     renderApp('/app/history');
 
-    const from = await screen.findByLabelText('Từ ngày');
-    await userEvent.type(from, '2026-08-01');
+    await screen.findByTestId('history-range');
+    // fireEvent, not userEvent.type: a native date input takes a whole value,
+    // and typing it character by character produces intermediate invalid states
+    // that the range's own min/max then clamp away.
+    fireEvent.change(screen.getByLabelText('Khoảng thời gian: từ ngày'), {
+      target: { value: '2026-08-01' },
+    });
 
+    // THE WIRE CONTRACT IS UNCHANGED: the control is new, `sentFrom`/`sentTo`
+    // on `sentAt` are not.
     await waitFor(() => {
       const asked = fetchMock.mock.calls.some(([u]) => String(u).includes('sentFrom=2026-08-01'));
       expect(asked).toBe(true);
     });
   });
 
+  it('sends no status parameter, whatever the operator picks', async () => {
+    const fetchMock = historyMount();
+    renderApp('/app/history');
+
+    await screen.findByTestId('history-range');
+    fireEvent.change(screen.getByLabelText('Khoảng thời gian: đến ngày'), {
+      target: { value: '2026-08-31' },
+    });
+
+    await waitFor(() => {
+      const asked = fetchMock.mock.calls.some(([u]) => String(u).includes('sentTo=2026-08-31'));
+      expect(asked).toBe(true);
+    });
+    const historyCalls = fetchMock.mock.calls.filter(([u]) => String(u).includes('/bookings/history'));
+    for (const [u] of historyCalls) {
+      expect(String(u)).not.toContain('status=');
+    }
+  });
+
   it('sends no sort or order, leaving the API default in place', async () => {
     const fetchMock = historyMount();
     renderApp('/app/history');
 
-    await screen.findByTestId('filter-status');
+    await screen.findByTestId('history-range');
     const historyCalls = fetchMock.mock.calls.filter(([u]) => String(u).includes('/bookings/history'));
     expect(historyCalls.length).toBeGreaterThan(0);
     for (const [u] of historyCalls) {

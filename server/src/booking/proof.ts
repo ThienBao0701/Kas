@@ -5,6 +5,7 @@ import { getClock, type Clock } from '../lib/clock';
 import { loadBookingDetail } from './bookingRepo';
 import { generateStoredFileName, saveProofFile, sniffImageMime } from './proofStorage';
 import { assertClaimAllowsSubmission } from './claim';
+import { isShiftRole, requireOpenSession } from '../shift/shiftService';
 import type { BookingDetail } from './bookingView';
 
 type Actor = {
@@ -117,6 +118,32 @@ export async function submitProof(
 
   const previousStatus = booking.verificationStatus;
 
+  /**
+   * WHO CREATED THIS ORDER — decided here, by the server, from the open shift.
+   *
+   * Submitting the proof IS the receptionist asserting "I created this
+   * reservation in the hotel system", so this is the moment the order gains a
+   * creator. Before shifts existed they typed a name into the form and it was
+   * stored verbatim: unverifiable, easy to mistype, and trivially spoofable by
+   * anyone willing to edit a request. Now the name comes from the session they
+   * checked in with, and `note` from the client is ignored for this purpose.
+   *
+   * With no open shift the submission is REFUSED (SHIFT_CHECK_IN_REQUIRED)
+   * rather than falling back to whatever the browser sent — a fallback would
+   * quietly reintroduce the very field this replaces.
+   *
+   * Only a receptionist works a shift. An Admin submitting on their behalf is
+   * not on one, and their submission carries no shift attribution.
+   */
+  const shiftSession = isShiftRole(actor.role)
+    ? await requireOpenSession({
+        id: actor.id,
+        role: actor.role,
+        branchId: actor.branchId,
+        fullName: actor.fullName,
+      })
+    : null;
+
   // THE CLAIM DEADLINE IS ENFORCED HERE, not in the browser. A receptionist
   // whose tab slept, whose network dropped, or whose polled list is stale will
   // still be refused, because this reads the stored deadline at the moment of
@@ -192,6 +219,11 @@ export async function submitProof(
         fileSize: file.size,
         submissionNote: note ?? null,
         submittedByUserId: actor.id,
+        // Copied, not referenced: this is who was working AT THIS ATTEMPT, and
+        // it must not move when the shift closes or the account is renamed.
+        shiftSessionId: shiftSession?.id ?? null,
+        receptionistNameSnapshot: shiftSession?.receptionistName ?? null,
+        shiftType: shiftSession?.shiftType ?? null,
         status: 'PENDING_REVIEW',
       },
     });

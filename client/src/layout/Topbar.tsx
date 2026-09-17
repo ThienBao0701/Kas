@@ -4,6 +4,7 @@ import { AccountMenu } from './AccountMenu';
 import { NotificationBell } from './NotificationBell';
 import { InstallButton } from '../pwa/InstallButton';
 import { titleForPath } from './navigation';
+import { ShiftIndicator } from '../components/ShiftGate';
 
 export function Topbar({ onOpenMenu }: { onOpenMenu: () => void }) {
   const location = useLocation();
@@ -23,6 +24,8 @@ export function Topbar({ onOpenMenu }: { onOpenMenu: () => void }) {
         <h1 className="text-base font-semibold text-slate-800">{title}</h1>
       </div>
       <div className="flex items-center gap-1">
+        {/* Which shift is running, and whose. Renders nothing for other roles. */}
+        <ShiftIndicator />
         {/*
           One component, one mount point, both roles. Admin and Reception share
           this bar, so the install affordance is on every authenticated screen

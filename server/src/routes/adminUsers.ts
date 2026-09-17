@@ -13,7 +13,22 @@ import { requireAuth, requireAdmin, requirePasswordChanged } from '../middleware
  * The roles this endpoint may create. ADMIN is deliberately absent: an
  * administrator is bootstrapped, never minted through the user-management API.
  */
-const MANAGEABLE_ROLES = ['RECEPTIONIST', 'BOOKING_DEPARTMENT'] as const;
+const MANAGEABLE_ROLES = ['RECEPTIONIST', 'BOOKING_DEPARTMENT', 'TECHNICAL'] as const;
+
+/**
+ * The roles that are GLOBAL — branchless by definition. Listing them once, and
+ * deriving the branch rules below from it, is what stops a fourth department
+ * from being classified by a `!== 'BOOKING_DEPARTMENT'` test that happens to
+ * mean "is a receptionist" today and something else tomorrow.
+ */
+const GLOBAL_ROLES: readonly string[] = ['BOOKING_DEPARTMENT', 'TECHNICAL'];
+
+/** Vietnamese department names, for the messages this endpoint returns. */
+const ROLE_LABELS: Record<(typeof MANAGEABLE_ROLES)[number], string> = {
+  RECEPTIONIST: 'lễ tân',
+  BOOKING_DEPARTMENT: 'bộ phận đặt phòng',
+  TECHNICAL: 'bộ phận kỹ thuật',
+};
 
 const createUserSchema = z
   .object({
@@ -26,14 +41,14 @@ const createUserSchema = z
     branchId: z.number().int().positive().optional(),
     active: z.boolean().optional(),
   })
-  // A receptionist IS a branch; Bộ phận đặt phòng is global and must not carry
-  // one, or it would silently inherit branch-scoped access somewhere later.
+  // A receptionist IS a branch; a global department must not carry one, or it
+  // would silently inherit branch-scoped access somewhere later.
   .refine((v) => v.role !== 'RECEPTIONIST' || v.branchId !== undefined, {
     message: 'Tài khoản lễ tân phải thuộc một chi nhánh.',
     path: ['branchId'],
   })
-  .refine((v) => v.role !== 'BOOKING_DEPARTMENT' || v.branchId === undefined, {
-    message: 'Tài khoản bộ phận đặt phòng không thuộc chi nhánh nào.',
+  .refine((v) => !GLOBAL_ROLES.includes(v.role) || v.branchId === undefined, {
+    message: 'Tài khoản bộ phận không thuộc chi nhánh nào.',
     path: ['branchId'],
   });
 
@@ -72,7 +87,7 @@ async function loadReceptionist(id: number) {
   // Admin accounts are off-limits here, so the administrator can never lock
   // itself out or demote itself through this API.
   if (!(MANAGEABLE_ROLES as readonly string[]).includes(user.role)) {
-    throw ApiError.forbidden('Chỉ có thể quản lý tài khoản lễ tân và bộ phận đặt phòng.');
+    throw ApiError.forbidden('Chỉ có thể quản lý tài khoản lễ tân và các bộ phận.');
   }
   return user;
 }
@@ -153,10 +168,17 @@ export function createAdminUsersRouter(): Router {
   router.put('/admin/users/:id', (req, res, next) => {
     (async () => {
       const id = parseUserId(req.params.id);
-      await loadReceptionist(id);
+      const existing = await loadReceptionist(id);
       const body = updateUserSchema.parse(req.body);
 
       if (body.branchId !== undefined) {
+        // The create path refuses a branch on a global department; the update
+        // path did not, so an account could be given one afterwards and end up
+        // in a state `createUserSchema` would never have allowed.
+        if (GLOBAL_ROLES.includes(existing.role)) {
+          const label = ROLE_LABELS[existing.role as (typeof MANAGEABLE_ROLES)[number]] ?? 'bộ phận';
+          throw ApiError.validation(`Tài khoản ${label} không thuộc chi nhánh nào.`);
+        }
         await assertBranchUsable(body.branchId);
       }
 

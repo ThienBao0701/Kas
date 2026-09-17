@@ -43,6 +43,7 @@ import {
   type TargetColumn,
   type TargetSchema,
 } from './targetSchema';
+import { legacySourceNames, renameEnumValue, sourceColumnFor } from './legacyRenames';
 import { describeDatabaseUrl } from '../config/databaseUrl';
 
 export type TransferMode = 'dry-run' | 'execute';
@@ -130,7 +131,9 @@ function coerceRow(
 ): (string | null)[] {
   const rowKey = String(row.id ?? '?');
   return columns.map((column) => {
-    const value = row[column.name] ?? null;
+    // A renamed column is read under the name the LEGACY source used; for
+    // everything else this is the target name unchanged.
+    const value = row[sourceColumnFor(table, column.name)] ?? null;
     switch (column.kind) {
       case 'boolean':
         return coerceBoolean(value, { table, column: column.name, rowKey });
@@ -139,8 +142,13 @@ function coerceRow(
         return coerceInteger(value, { table, column: column.name, rowKey });
       case 'timestamp':
         return coerceTimestamp(value, { table, column: column.name, rowKey });
-      case 'enum':
-        return coerceEnum(value, column.enumValues, { table, column: column.name, rowKey });
+      case 'enum': {
+        // A legacy enum LABEL may also have been renamed. Translated before the
+        // check, so the error message below still lists the target's real values.
+        const renamed =
+          typeof value === 'string' ? renameEnumValue(column.udtName, value.trim()) : value;
+        return coerceEnum(renamed, column.enumValues, { table, column: column.name, rowKey });
+      }
       default:
         return coerceText(value, { table, column: column.name, rowKey });
     }
@@ -198,11 +206,19 @@ export function planTable(
   const targetTable = schema.get(table)!;
   const sourceColumns = new Set(source.columns(table).map((c) => c.name));
 
-  const columns = targetTable.columns.filter((c) => sourceColumns.has(c.name));
+  // A column the target renamed is still present in the source under its old
+  // name, so it is matched through the rename map rather than dropped.
+  const columns = targetTable.columns.filter((c) =>
+    sourceColumns.has(sourceColumnFor(table, c.name)),
+  );
   const targetNames = new Set(targetTable.columns.map((c) => c.name));
+  // The legacy names those renames account for. Without this, the loop below
+  // would report a renamed column as data loss — the very thing it exists to
+  // catch, fired on the one case that is not a loss.
+  const renamedAway = legacySourceNames(table);
 
   for (const name of sourceColumns) {
-    if (!targetNames.has(name)) {
+    if (!targetNames.has(name) && !renamedAway.has(name)) {
       problems.push(
         `${table}.${name}: có trong nguồn nhưng KHÔNG có trong đích — dữ liệu sẽ bị mất.`,
       );

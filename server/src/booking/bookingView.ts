@@ -143,6 +143,14 @@ export function proofView(bookingId: string, proof: ProofRow) {
     submissionNote: proof.submissionNote,
     submittedBy: actor(proof.submittedBy),
     submittedAt: proof.submittedAt.toISOString(),
+    /**
+     * Who created the order, and on which shift — resolved by the server at
+     * submission. Null on attempts made before shifts existed, where
+     * `submissionNote` is the only (typed, unverified) record of the name.
+     */
+    receptionistName: proof.receptionistNameSnapshot,
+    shiftType: proof.shiftType,
+    shiftSessionId: proof.shiftSessionId,
     reviewedBy: actor(proof.reviewedBy),
     reviewedAt: iso(proof.reviewedAt),
     reviewReasonCode: proof.reviewReasonCode,

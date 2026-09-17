@@ -10,22 +10,53 @@ afterEach(() => {
 
 const BRANCH = { id: 1, code: 'TRUONG_DINH_05', hotelName: 'Saigon Hotel & Ben Thanh', address: '05 Trương Định' };
 
+/** The receptionist is checked in, so the shift picker never interrupts. */
+const OPEN_SHIFT = {
+  status: 200,
+  body: {
+    session: {
+      id: 's1',
+      branchId: 1,
+      shiftType: 'A',
+      shiftName: 'Ca A',
+      shiftWindow: '06:00 – 14:00',
+      receptionistName: 'Lễ tân Một',
+      startedAt: '2026-09-16T23:00:00.000Z',
+      nominalEndAt: '2026-09-17T07:00:00.000Z',
+      graceEndAt: '2026-09-17T07:10:00.000Z',
+      closedAt: null,
+      promptDue: false,
+    },
+  },
+};
+
 function issue(over: Record<string, unknown> = {}) {
   return {
     id: 'i1',
     branchId: 1,
     branch: BRANCH,
+    areaCategory: 'ROOM',
     roomNumber: '301',
+    floorNumber: null,
+    areaSubtype: null,
+    locationDetail: null,
+    locationLabel: 'Phòng · Phòng 301',
     category: 'AIR_CONDITIONER',
     description: 'Máy lạnh không lạnh',
     photoUrl: null,
     status: 'NEW',
     reportedBy: { id: 2, fullName: 'Lễ tân Một' },
+    reportedByName: 'Lễ tân Một',
     acceptedBy: null,
-    resolvedBy: null,
+    acceptedByName: null,
+    acceptedAt: null,
+    technicianName: null,
+    technicianPhone: null,
+    completedBy: null,
+    completedByName: null,
+    completedAt: null,
     createdAt: '2026-07-24T02:00:00.000Z',
     updatedAt: '2026-07-24T02:00:00.000Z',
-    resolvedAt: null,
     ...over,
   };
 }
@@ -40,6 +71,7 @@ describe('IssuesPage — receptionist', () => {
     const fetchMock = installApiMock({
       'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),
       'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
+      'GET /api/reception/shifts/current': () => OPEN_SHIFT,
       'GET /api/issues?pageSize=100': () => listBody(created ? [issue()] : []),
       'POST /api/issues': () => {
         created = true;
@@ -55,57 +87,78 @@ describe('IssuesPage — receptionist', () => {
 
     await user.click(screen.getByRole('button', { name: 'Báo cáo mới' }));
     const dialog = await screen.findByRole('dialog');
-    // Room number is clearly marked optional with helper text.
-    expect(within(dialog).getByText('Để trống nếu sự cố không liên quan đến phòng.')).toBeInTheDocument();
-    await user.type(within(dialog).getByLabelText('Mô tả'), 'Máy lạnh không lạnh');
+
+    // The area is asked FIRST, and it decides the rest of the form.
+    expect(within(dialog).getByLabelText('Sự cố')).toHaveValue('ROOM');
+    await user.type(within(dialog).getByText('Số phòng').querySelector('input')!, '301');
+    await user.type(within(dialog).getByLabelText('Mô tả sự cố'), 'Máy lạnh không lạnh');
     await user.click(within(dialog).getByRole('button', { name: 'Gửi báo cáo' }));
 
-    expect(await screen.findByText('Đã gửi báo cáo sự cố cho Admin.')).toBeInTheDocument();
+    expect(await screen.findByText('Đã gửi báo cáo sự cố cho bộ phận kỹ thuật.')).toBeInTheDocument();
     const called = fetchMock.mock.calls.some(
       ([url, init]) => String(url) === '/api/issues' && (init as RequestInit).method === 'POST',
     );
     expect(called).toBe(true);
   });
+
+  it('shows the reported incident with its location and status', async () => {
+    installApiMock({
+      'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),
+      'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
+      'GET /api/reception/shifts/current': () => OPEN_SHIFT,
+      'GET /api/issues?pageSize=100': () => listBody([issue()]),
+    });
+
+    renderApp('/app/issues');
+
+    const list = await screen.findByRole('list', { name: 'Danh sách sự cố' });
+    expect(within(list).getByText('Phòng · Phòng 301')).toBeInTheDocument();
+    expect(within(list).getByText('Máy lạnh không lạnh')).toBeInTheDocument();
+    expect(within(list).getByText('Sự cố khách sạn')).toBeInTheDocument();
+  });
 });
 
 describe('IssuesPage — admin', () => {
-  it('lists issues and accepts then resolves one', async () => {
-    let status: 'NEW' | 'IN_PROGRESS' | 'RESOLVED' = 'NEW';
-    const fetchMock = installApiMock({
+  /**
+   * THE ADMIN IS READ-ONLY FOR THE WORKFLOW.
+   *
+   * This test used to accept and resolve an incident from here, which recorded
+   * an administrator as having done maintenance work. Bộ phận kỹ thuật does that
+   * now, and the API refuses an Admin outright — so what this screen must show
+   * is the state, not a way to change it.
+   */
+  it('lists issues with their technician, and offers no workflow actions', async () => {
+    installApiMock({
       'GET /api/auth/me': () => ({ status: 200, body: { user: ADMIN_USER } }),
       'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
-      'GET /api/issues?pageSize=100': () => listBody([issue({ status })]),
-      'POST /api/issues/i1/accept': () => {
-        status = 'IN_PROGRESS';
-        return { status: 200, body: { issue: issue({ status }) } };
-      },
-      'POST /api/issues/i1/resolve': () => {
-        status = 'RESOLVED';
-        return { status: 200, body: { issue: issue({ status }) } };
-      },
+      'GET /api/issues?pageSize=100': () =>
+        listBody([
+          issue({
+            status: 'IN_PROGRESS',
+            technicianName: 'Trần Văn B',
+            technicianPhone: '0901234567',
+            acceptedAt: '2026-07-24T03:00:00.000Z',
+          }),
+        ]),
     });
 
-    const user = userEvent.setup();
     renderApp('/app/issues');
 
     const table = await screen.findByRole('table');
     expect(within(table).getByText('05 Trương Định')).toBeInTheDocument();
     expect(within(table).getByText('Máy lạnh')).toBeInTheDocument();
     expect(within(table).getByText('Lễ tân Một')).toBeInTheDocument();
+    // The technician and how to reach them.
+    expect(within(table).getByText('Trần Văn B')).toBeInTheDocument();
+    expect(within(table).getByText('0901234567')).toBeInTheDocument();
 
-    await user.click(within(table).getByRole('button', { name: 'Tiếp nhận' }));
-    expect(await screen.findByText('Đã tiếp nhận sự cố.')).toBeInTheDocument();
-
-    await user.click(within(table).getByRole('button', { name: /Đã xử lý/ }));
-    expect(await screen.findByText('Đã đánh dấu sự cố đã xử lý.')).toBeInTheDocument();
-
-    const acceptCalled = fetchMock.mock.calls.some(([u, i]) => String(u) === '/api/issues/i1/accept' && (i as RequestInit).method === 'POST');
-    const resolveCalled = fetchMock.mock.calls.some(([u, i]) => String(u) === '/api/issues/i1/resolve' && (i as RequestInit).method === 'POST');
-    expect(acceptCalled).toBe(true);
-    expect(resolveCalled).toBe(true);
+    // No way to transition anything from here.
+    expect(within(table).queryByRole('button', { name: 'Tiếp nhận' })).toBeNull();
+    expect(within(table).queryByRole('button', { name: /Hoàn thành/ })).toBeNull();
+    expect(within(table).queryByRole('button', { name: /Đã xử lý/ })).toBeNull();
   });
 
-  it('renders visually distinct NEW / IN_PROGRESS / RESOLVED status badges', async () => {
+  it('renders visually distinct NEW / IN_PROGRESS / COMPLETED status badges', async () => {
     installApiMock({
       'GET /api/auth/me': () => ({ status: 200, body: { user: ADMIN_USER } }),
       'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
@@ -113,7 +166,7 @@ describe('IssuesPage — admin', () => {
         listBody([
           issue({ id: 'a', status: 'NEW' }),
           issue({ id: 'b', status: 'IN_PROGRESS' }),
-          issue({ id: 'c', status: 'RESOLVED' }),
+          issue({ id: 'c', status: 'COMPLETED' }),
         ]),
     });
     renderApp('/app/issues');
@@ -123,9 +176,11 @@ describe('IssuesPage — admin', () => {
     // Rows are newest-first but each was created with the same timestamp, so match
     // by the badge label within its own row. Each status has a distinct colour
     // class (colour is not the sole signal — the labels differ too).
-    expect(within(rows.find((r) => within(r).queryByText('Mới'))!).getByText('Mới').className).toMatch(/amber/);
-    expect(within(rows.find((r) => within(r).queryByText('Đang xử lý'))!).getByText('Đang xử lý').className).toMatch(/blue/);
-    const resolvedRow = rows.find((r) => within(r).queryByText('Đã xử lý') && !within(r).queryByRole('button', { name: /Đã xử lý/ }))!;
-    expect(within(resolvedRow).getByText('Đã xử lý').className).toMatch(/green/);
+    const badge = (label: string) =>
+      within(rows.find((r) => within(r).queryByText(label))!).getByText(label).className;
+
+    expect(badge('Sự cố khách sạn')).toMatch(/amber/);
+    expect(badge('Đang sửa')).toMatch(/blue/);
+    expect(badge('Đã hoàn thành')).toMatch(/green/);
   });
 });

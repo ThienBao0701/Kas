@@ -3,13 +3,24 @@
  * branch and picks one per charge document — but it is not an admin: it reaches
  * the Chứng từ module and nothing else that is admin-only.
  */
-export type UserRole = 'ADMIN' | 'RECEPTIONIST' | 'BOOKING_DEPARTMENT';
+/**
+ * TECHNICAL ("Bộ phận kỹ thuật") is GLOBAL too: one maintenance team serves all
+ * eight properties, so it has no branch and works incidents from every one. It is
+ * the ONLY role that may move an incident through its workflow — an Admin sees
+ * everything and changes nothing.
+ *
+ * NOTE: this union is hand-written and is NOT generated from the Prisma enum, so
+ * adding a role to the schema does not update it. `ROLE_LABEL` below is the one
+ * place that fails to compile when the two drift — keep it exhaustive.
+ */
+export type UserRole = 'ADMIN' | 'RECEPTIONIST' | 'BOOKING_DEPARTMENT' | 'TECHNICAL';
 
 /** How each role is named to a person. */
 export const ROLE_LABEL: Record<UserRole, string> = {
   ADMIN: 'Quản trị viên',
   RECEPTIONIST: 'Lễ tân',
   BOOKING_DEPARTMENT: 'Bộ phận đặt phòng',
+  TECHNICAL: 'Bộ phận kỹ thuật',
 };
 
 export interface Branch {

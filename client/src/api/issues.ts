@@ -15,7 +15,32 @@ export type IssueCategory =
   | 'GUEST_REQUEST'
   | 'OTHER';
 
-export type IssueStatus = 'NEW' | 'IN_PROGRESS' | 'RESOLVED';
+/**
+ * The three workflow states. COMPLETED was called RESOLVED before the technical
+ * department existed; the enum value itself was renamed in the database, so
+ * there is no legacy literal to keep accepting here.
+ */
+export type IssueStatus = 'NEW' | 'IN_PROGRESS' | 'COMPLETED';
+
+/** WHERE the incident is — the first thing the report form asks. */
+export type IssueAreaCategory =
+  | 'ROOM'
+  | 'LOBBY'
+  | 'HALLWAY'
+  | 'STAIRCASE'
+  | 'RESTAURANT'
+  | 'ROOFTOP'
+  | 'OTHER_AREA';
+
+/** What is wrong in the lobby. */
+export type IssueAreaSubtype =
+  | 'RECEPTION_DESK'
+  | 'SOFA'
+  | 'FLOOR'
+  | 'CEILING'
+  | 'LIGHT_BULB'
+  | 'CLOCK'
+  | 'OTHER';
 
 /** Vietnamese labels (dropdown/display order). */
 export const ISSUE_CATEGORIES: { value: IssueCategory; label: string }[] = [
@@ -36,27 +61,105 @@ export const ISSUE_CATEGORY_LABEL: Record<IssueCategory, string> = Object.fromEn
   ISSUE_CATEGORIES.map((c) => [c.value, c.label]),
 ) as Record<IssueCategory, string>;
 
+export const ISSUE_AREAS: { value: IssueAreaCategory; label: string }[] = [
+  { value: 'ROOM', label: 'Phòng' },
+  { value: 'LOBBY', label: 'Khu Vực Sảnh' },
+  { value: 'HALLWAY', label: 'Khu Vực Hành Lang' },
+  { value: 'STAIRCASE', label: 'Khu Vực Cầu Thang' },
+  { value: 'RESTAURANT', label: 'Khu Vực Nhà Hàng' },
+  { value: 'ROOFTOP', label: 'Khu Vực Rooftop' },
+  { value: 'OTHER_AREA', label: 'Các Khu Vực Còn Lại' },
+];
+
+export const ISSUE_AREA_LABEL: Record<IssueAreaCategory, string> = Object.fromEntries(
+  ISSUE_AREAS.map((a) => [a.value, a.label]),
+) as Record<IssueAreaCategory, string>;
+
+export const ISSUE_AREA_SUBTYPES: { value: IssueAreaSubtype; label: string }[] = [
+  { value: 'RECEPTION_DESK', label: 'Quầy lễ tân' },
+  { value: 'SOFA', label: 'Sofa' },
+  { value: 'FLOOR', label: 'Nền nhà' },
+  { value: 'CEILING', label: 'Trần nhà' },
+  { value: 'LIGHT_BULB', label: 'Bóng đèn' },
+  { value: 'CLOCK', label: 'Đồng hồ' },
+  { value: 'OTHER', label: 'Khác' },
+];
+
+export const ISSUE_AREA_SUBTYPE_LABEL: Record<IssueAreaSubtype, string> = Object.fromEntries(
+  ISSUE_AREA_SUBTYPES.map((a) => [a.value, a.label]),
+) as Record<IssueAreaSubtype, string>;
+
+/** The workflow-state names, as the Technical tabs say them. */
 export const ISSUE_STATUS_LABEL: Record<IssueStatus, string> = {
-  NEW: 'Mới',
-  IN_PROGRESS: 'Đang xử lý',
-  RESOLVED: 'Đã xử lý',
+  NEW: 'Sự cố khách sạn',
+  IN_PROGRESS: 'Đang sửa',
+  COMPLETED: 'Đã hoàn thành',
 };
+
+/**
+ * WHICH FIELDS EACH AREA USES — the mirror of `server/src/issue/issueArea.ts`.
+ *
+ * This copy decides which inputs are RENDERED. It does not decide what is
+ * VALID: the server re-derives the same rule and refuses a bad combination, so a
+ * request that skips the form is refused too.
+ */
+export interface AreaFields {
+  roomNumber: boolean;
+  floorNumber: boolean;
+  areaSubtype: boolean;
+  category: boolean;
+}
+
+export const AREA_FIELDS: Record<IssueAreaCategory, AreaFields> = {
+  ROOM: { roomNumber: true, floorNumber: false, areaSubtype: false, category: true },
+  LOBBY: { roomNumber: false, floorNumber: false, areaSubtype: true, category: false },
+  HALLWAY: { roomNumber: false, floorNumber: true, areaSubtype: false, category: false },
+  STAIRCASE: { roomNumber: false, floorNumber: true, areaSubtype: false, category: false },
+  RESTAURANT: { roomNumber: false, floorNumber: false, areaSubtype: false, category: true },
+  ROOFTOP: { roomNumber: false, floorNumber: false, areaSubtype: false, category: true },
+  OTHER_AREA: { roomNumber: false, floorNumber: false, areaSubtype: false, category: true },
+};
+
+/** "Không có trong danh sách" always has to say which thing it is. */
+export function requiresLocationDetail(
+  area: IssueAreaCategory,
+  subtype: IssueAreaSubtype | '',
+): boolean {
+  return area === 'OTHER_AREA' || (area === 'LOBBY' && subtype === 'OTHER');
+}
 
 export interface Issue {
   id: string;
   branchId: number;
   branch: Branch | null;
+  areaCategory: IssueAreaCategory | null;
   roomNumber: string | null;
-  category: IssueCategory;
+  floorNumber: string | null;
+  areaSubtype: IssueAreaSubtype | null;
+  locationDetail: string | null;
+  /** The place as one line, built by the server so every screen agrees. */
+  locationLabel: string;
+  category: IssueCategory | null;
   description: string;
   photoUrl: string | null;
   status: IssueStatus;
   reportedBy: Actor | null;
+  reportedByName: string | null;
   acceptedBy: Actor | null;
-  resolvedBy: Actor | null;
+  acceptedByName: string | null;
+  acceptedAt: string | null;
+  technicianName: string | null;
+  technicianPhone: string | null;
+  completedBy: Actor | null;
+  completedByName: string | null;
+  completedAt: string | null;
   createdAt: string;
   updatedAt: string;
-  resolvedAt: string | null;
+}
+
+/** The fault type, or an em dash for the areas that are not asked for one. */
+export function issueCategoryLabel(issue: Pick<Issue, 'category'>): string {
+  return issue.category ? ISSUE_CATEGORY_LABEL[issue.category] : '—';
 }
 
 export interface IssueListResponse {
@@ -83,6 +186,13 @@ export interface IssueSummary {
   byBranch: BranchIssueSummary[];
 }
 
+/** The three queue totals, counted server-side across every branch. */
+export interface TechnicalCounts {
+  newCount: number;
+  inProgressCount: number;
+  completedCount: number;
+}
+
 function query(params: Record<string, string | number | undefined>): string {
   const q = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
@@ -93,29 +203,56 @@ function query(params: Record<string, string | number | undefined>): string {
 }
 
 export interface NewIssueInput {
-  category: IssueCategory;
+  areaCategory: IssueAreaCategory;
   description: string;
+  category?: IssueCategory;
   roomNumber?: string;
+  floorNumber?: string;
+  areaSubtype?: IssueAreaSubtype;
+  locationDetail?: string;
   photo?: File;
 }
 
+export interface AcceptIssueInput {
+  technicianName: string;
+  technicianPhone: string;
+}
+
 export const issuesApi = {
-  list: (params: { branchId?: number; status?: IssueStatus; page?: number; pageSize?: number } = {}) =>
-    api.get<IssueListResponse>(`/issues${query(params)}`),
+  list: (
+    params: {
+      branchId?: number;
+      status?: IssueStatus;
+      areaCategory?: IssueAreaCategory;
+      page?: number;
+      pageSize?: number;
+    } = {},
+  ) => api.get<IssueListResponse>(`/issues${query(params)}`),
 
   detail: (id: string) => api.get<{ issue: Issue }>(`/issues/${id}`),
 
   create: (input: NewIssueInput) => {
     const form = new FormData();
-    form.append('category', input.category);
+    form.append('areaCategory', input.areaCategory);
     form.append('description', input.description);
-    if (input.roomNumber && input.roomNumber.trim().length > 0) form.append('roomNumber', input.roomNumber.trim());
+    // Only the fields this area actually uses are sent; the server drops any
+    // that do not belong to it anyway.
+    if (input.category) form.append('category', input.category);
+    if (input.roomNumber?.trim()) form.append('roomNumber', input.roomNumber.trim());
+    if (input.floorNumber?.trim()) form.append('floorNumber', input.floorNumber.trim());
+    if (input.areaSubtype) form.append('areaSubtype', input.areaSubtype);
+    if (input.locationDetail?.trim()) form.append('locationDetail', input.locationDetail.trim());
     if (input.photo) form.append('image', input.photo);
     return api.postForm<{ issue: Issue }>('/issues', form);
   },
 
-  accept: (id: string) => api.post<{ issue: Issue }>(`/issues/${id}/accept`, {}),
-  resolve: (id: string) => api.post<{ issue: Issue }>(`/issues/${id}/resolve`, {}),
+  accept: (id: string, input: AcceptIssueInput) =>
+    api.post<{ issue: Issue }>(`/issues/${id}/accept`, input),
+
+  complete: (id: string) => api.post<{ issue: Issue }>(`/issues/${id}/complete`, {}),
 
   summary: () => api.get<{ summary: IssueSummary }>('/issues/summary'),
+
+  counts: (params: { branchId?: number } = {}) =>
+    api.get<{ counts: TechnicalCounts }>(`/issues/counts${query(params)}`),
 };

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { UserPlus } from 'lucide-react';
-import { adminUsersApi, type CreateUserInput } from '../api/adminUsers';
+import { adminUsersApi, type CreateUserInput, requiresBranch } from '../api/adminUsers';
 import { branchesApi } from '../api/bookings';
 import { branchLabel, type Branch } from '../auth/types';
 import { toUserMessage } from '../api/errors';
@@ -35,11 +35,11 @@ export function SettingsPage() {
     <div>
       <PageHeader
         title="Quản lý tài khoản"
-        description="Tạo và quản lý tài khoản lễ tân cho từng chi nhánh."
+        description="Tạo và quản lý tài khoản lễ tân và các bộ phận."
         actions={
           <Button onClick={() => setCreateOpen(true)}>
             <UserPlus className="h-4 w-4" aria-hidden="true" />
-            Thêm lễ tân
+            Thêm bộ phận
           </Button>
         }
       />
@@ -131,15 +131,13 @@ function CreateUserModal({
     branchId: 0,
   };
   const [form, setForm] = useState<CreateUserInput>(EMPTY);
-  const isReceptionist = form.role !== 'BOOKING_DEPARTMENT';
+  // Derived from the shared list, not from a negative test against one role.
+  const needsBranch = requiresBranch(form.role);
 
   const create = useMutation({
-    // Bộ phận đặt phòng is global, so no branch is sent at all — the server
-    // refuses one, and sending 0 would be a validation error rather than "none".
-    mutationFn: () =>
-      adminUsersApi.create(
-        isReceptionist ? form : { ...form, branchId: undefined },
-      ),
+    // A global department sends no branch at all — the server refuses one, and
+    // sending 0 would be a validation error rather than "none".
+    mutationFn: () => adminUsersApi.create(needsBranch ? form : { ...form, branchId: undefined }),
     onSuccess: () => {
       setForm(EMPTY);
       onCreated();
@@ -150,7 +148,7 @@ function CreateUserModal({
     form.username.trim() &&
     form.fullName.trim() &&
     form.temporaryPassword.length >= 8 &&
-    (!isReceptionist || (form.branchId ?? 0) > 0);
+    (!needsBranch || (form.branchId ?? 0) > 0);
 
   return (
     <Modal
@@ -190,14 +188,15 @@ function CreateUserModal({
           >
             <option value="RECEPTIONIST">Lễ tân</option>
             <option value="BOOKING_DEPARTMENT">Bộ phận đặt phòng</option>
+            <option value="TECHNICAL">Bộ phận kỹ thuật</option>
           </select>
         </label>
         {/*
-          A branch belongs to a receptionist alone. Bộ phận đặt phòng works
-          across every branch and picks one on each charge document, so offering
-          the field would imply a scope the account does not have.
+          A branch belongs to a receptionist alone. A global department works
+          across every branch, so offering the field would imply a scope the
+          account does not have.
         */}
-        {isReceptionist ? (
+        {needsBranch ? (
           <label className="block text-sm font-medium text-slate-600">
             Chi nhánh
             <select aria-label="Chi nhánh" className={`${inputClass} mt-1`} value={form.branchId || ''} onChange={(e) => setForm({ ...form, branchId: Number(e.target.value) })}>
@@ -210,8 +209,7 @@ function CreateUserModal({
           </label>
         ) : (
           <p className="rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-600">
-            Tài khoản bộ phận đặt phòng làm việc trên tất cả chi nhánh và chọn chi nhánh trong từng
-            chứng từ.
+            Tài khoản bộ phận làm việc trên tất cả chi nhánh, không thuộc chi nhánh nào.
           </p>
         )}
       </div>

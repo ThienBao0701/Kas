@@ -2,7 +2,12 @@ import { Router } from 'express';
 import { prisma } from '../db/prisma';
 import { ApiError } from '../lib/errors';
 import { serializeBranch } from '../auth/serialize';
-import { requireAuth, requirePasswordChanged, requireBranchAccess } from '../middleware/auth';
+import {
+  requireAuth,
+  requirePasswordChanged,
+  requireBranchAccess,
+  seesAllBranches,
+} from '../middleware/auth';
 
 export function createBranchesRouter(): Router {
   const router = Router();
@@ -14,7 +19,12 @@ export function createBranchesRouter(): Router {
       const user = req.currentUser;
       if (!user) throw ApiError.authRequired();
 
-      if (user.role === 'ADMIN') {
+      // ADMIN monitors every branch and Bộ phận kỹ thuật works every branch, so
+      // both get the full list. Written as a predicate rather than a second
+      // `=== 'ADMIN'` because a branchless role falling through to the code
+      // below receives an EMPTY list — an application that looks broken rather
+      // than one that says why.
+      if (seesAllBranches(user.role)) {
         const branches = await prisma.branch.findMany({
           where: { active: true },
           orderBy: { id: 'asc' },

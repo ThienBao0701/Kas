@@ -68,6 +68,12 @@ export async function resetAll(): Promise<void> {
   await testPrisma.branchRoomMappingVersion.deleteMany();
   await testPrisma.branchChangeLog.deleteMany();
   await testPrisma.branchSourceAlias.deleteMany();
+  // ReceptionShiftSession holds RESTRICT FKs to BOTH User and Branch — a shift
+  // is an audit record of who was on the desk, so an account being removed must
+  // not silently take it with it. Cleared here, before either. The proofs that
+  // point at a session are already gone with their bookings, and that FK is
+  // SET NULL anyway.
+  await testPrisma.receptionShiftSession.deleteMany();
   await testPrisma.session.deleteMany();
   await testPrisma.user.deleteMany();
   await testPrisma.branch.deleteMany();

@@ -1,19 +1,20 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { getClock } from '../lib/clock';
-import { requireAuth, requireAdmin, requirePasswordChanged } from '../middleware/auth';
+import { requireAuth, requirePasswordChanged, requireRole } from '../middleware/auth';
 import { proofUpload } from '../middleware/upload';
 import { readIssuePhoto } from '../issue/issueStorage';
 import {
+  acceptIssue,
   authorizeIssuePhoto,
+  completeIssue,
   createIssue,
   getIssue,
   listIssues,
   serializeIssue,
-  setIssueStatus,
   updateIssue,
 } from '../issue/issueService';
-import { computeIssueSummary } from '../issue/issueSummary';
+import { computeIssueSummary, computeTechnicalCounts } from '../issue/issueSummary';
 import type { UserWithBranch } from '../auth/serialize';
 
 const CATEGORY = z.enum([
@@ -30,10 +31,24 @@ const CATEGORY = z.enum([
   'OTHER',
 ]);
 
+const AREA = z.enum(['ROOM', 'LOBBY', 'HALLWAY', 'STAIRCASE', 'RESTAURANT', 'ROOFTOP', 'OTHER_AREA']);
+const SUBTYPE = z.enum(['RECEPTION_DESK', 'SOFA', 'FLOOR', 'CEILING', 'LIGHT_BULB', 'CLOCK', 'OTHER']);
+const STATUS = z.enum(['NEW', 'IN_PROGRESS', 'COMPLETED']);
+
+/**
+ * Shape only. WHICH location fields are REQUIRED is decided by `normaliseArea`
+ * in the domain, not here — one rule, on the server, for a form and an API that
+ * must agree. zod's job is to reject the wrong TYPE; the domain's job is to
+ * reject the wrong COMBINATION.
+ */
 const createSchema = z.object({
   branchId: z.coerce.number().int().positive().optional(),
+  areaCategory: AREA,
   roomNumber: z.string().trim().max(50).optional(),
-  category: CATEGORY,
+  floorNumber: z.string().trim().max(50).optional(),
+  areaSubtype: SUBTYPE.optional(),
+  locationDetail: z.string().trim().max(500).optional(),
+  category: CATEGORY.optional(),
   description: z.string().trim().min(1, 'Vui lòng nhập mô tả sự cố.').max(2000),
 });
 
@@ -47,16 +62,30 @@ const updateSchema = z
 
 const listSchema = z.object({
   branchId: z.coerce.number().int().positive().optional(),
-  status: z.enum(['NEW', 'IN_PROGRESS', 'RESOLVED']).optional(),
+  status: STATUS.optional(),
+  areaCategory: AREA.optional(),
   page: z.coerce.number().int().positive().default(1),
   pageSize: z.coerce.number().int().positive().max(100).default(50),
+});
+
+const countsSchema = z.object({
+  branchId: z.coerce.number().int().positive().optional(),
+});
+
+/** Both fields are required: an accepted incident must always name a person. */
+const acceptSchema = z.object({
+  technicianName: z.string().trim().min(1, 'Vui lòng nhập họ và tên người sửa.').max(200),
+  technicianPhone: z.string().trim().min(1, 'Vui lòng nhập số điện thoại người sửa.').max(30),
 });
 
 function actor(user: UserWithBranch) {
   return { id: user.id, role: user.role, branchId: user.branchId, fullName: user.fullName };
 }
 
-/** Receptionist → Admin hotel issue reporting. */
+/** Only Bộ phận kỹ thuật works the queue. Admin monitors, and is refused here. */
+const requireTechnical = requireRole('TECHNICAL');
+
+/** Reception reports hotel incidents; Bộ phận kỹ thuật works them. */
 export function createIssuesRouter(): Router {
   const router = Router();
 
@@ -66,15 +95,13 @@ export function createIssuesRouter(): Router {
       const user = req.currentUser!;
       const input = createSchema.parse(req.body ?? {});
       const photo = req.file ? { buffer: req.file.buffer, size: req.file.size } : undefined;
-      const issue = await createIssue(
-        { branchId: input.branchId, roomNumber: input.roomNumber, category: input.category, description: input.description, photo },
-        actor(user),
-      );
+      const issue = await createIssue({ ...input, photo }, actor(user));
       res.status(201).json({ issue: serializeIssue(issue) });
     })().catch(next);
   });
 
-  // GET /api/issues — list (newest first; receptionist limited to own branch).
+  // GET /api/issues — list (newest first; receptionist limited to own branch,
+  // Technical and Admin see all eight).
   router.get('/issues', requireAuth, requirePasswordChanged, (req, res, next) => {
     (async () => {
       const user = req.currentUser!;
@@ -82,6 +109,7 @@ export function createIssuesRouter(): Router {
       const { issues, total } = await listIssues(actor(user), {
         branchId: q.branchId,
         status: q.status,
+        areaCategory: q.areaCategory,
         skip: (q.page - 1) * q.pageSize,
         take: q.pageSize,
       });
@@ -100,6 +128,18 @@ export function createIssuesRouter(): Router {
       const user = req.currentUser!;
       const summary = await computeIssueSummary(actor(user));
       res.json({ summary });
+    })().catch(next);
+  });
+
+  // GET /api/issues/counts — the three workflow-queue totals. Served by the
+  // server so a tab badge can never disagree with the tab it labels because the
+  // list behind it happened to be paginated.
+  router.get('/issues/counts', requireAuth, requirePasswordChanged, (req, res, next) => {
+    (async () => {
+      const user = req.currentUser!;
+      const q = countsSchema.parse(req.query);
+      const counts = await computeTechnicalCounts(actor(user), q.branchId);
+      res.json({ counts });
     })().catch(next);
   });
 
@@ -136,20 +176,23 @@ export function createIssuesRouter(): Router {
     })().catch(next);
   });
 
-  // POST /api/issues/:id/accept — Admin marks IN_PROGRESS.
-  router.post('/issues/:id/accept', requireAuth, requirePasswordChanged, requireAdmin, (req, res, next) => {
+  // POST /api/issues/:id/accept — Technical takes the job: NEW → IN_PROGRESS.
+  // `requireTechnical` refuses an Admin here; the service re-checks the role as
+  // well, so reaching the transition by any other path is refused too.
+  router.post('/issues/:id/accept', requireAuth, requirePasswordChanged, requireTechnical, (req, res, next) => {
     (async () => {
       const user = req.currentUser!;
-      const issue = await setIssueStatus(req.params.id!, 'IN_PROGRESS', actor(user), getClock());
+      const input = acceptSchema.parse(req.body ?? {});
+      const issue = await acceptIssue(req.params.id!, input, actor(user), getClock());
       res.json({ issue: serializeIssue(issue) });
     })().catch(next);
   });
 
-  // POST /api/issues/:id/resolve — Admin marks RESOLVED.
-  router.post('/issues/:id/resolve', requireAuth, requirePasswordChanged, requireAdmin, (req, res, next) => {
+  // POST /api/issues/:id/complete — Technical finishes: IN_PROGRESS → COMPLETED.
+  router.post('/issues/:id/complete', requireAuth, requirePasswordChanged, requireTechnical, (req, res, next) => {
     (async () => {
       const user = req.currentUser!;
-      const issue = await setIssueStatus(req.params.id!, 'RESOLVED', actor(user), getClock());
+      const issue = await completeIssue(req.params.id!, actor(user), getClock());
       res.json({ issue: serializeIssue(issue) });
     })().catch(next);
   });

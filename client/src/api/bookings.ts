@@ -534,10 +534,17 @@ export const bookingsApi = {
     api.get<{ booking: BookingDetail; serverNow?: string }>(`/bookings/${id}`),
 
   // --- Proof verification -------------------------------------------------
-  submitProof: (id: string, file: File, note?: string) => {
+  /**
+   * The image, and nothing else.
+   *
+   * There is no creator-name parameter any more: the server resolves who created
+   * the order from the receptionist's open shift. `note` stays on the server's
+   * schema so old rows keep their meaning, but the client no longer sends one —
+   * a name in the request body is exactly the thing that could be forged.
+   */
+  submitProof: (id: string, file: File) => {
     const form = new FormData();
     form.append('image', file);
-    if (note && note.trim().length > 0) form.append('note', note.trim());
     return api.postForm<{ booking: BookingDetail }>(`/bookings/${id}/proofs`, form);
   },
   approveProof: (id: string, proofId: string) =>
@@ -656,11 +663,26 @@ export const branchesApi = {
 };
 
 export interface DashboardSummary {
-  /** The day these figures describe (YYYY-MM-DD), resolved by the server. */
+  /** The first day of the scope (YYYY-MM-DD). For a single day, that day. */
   date: string;
+  /** The inclusive scope these figures describe, resolved by the server. */
+  range: { from: string; to: string };
+  /**
+   * Every figure is a property of ONE population: the orders DISPATCHED inside
+   * the scope. `waiting`/`confirmedToday`/`lastMinute` are subsets of
+   * `sentToday`, never wider than it — the server counts them from a single
+   * `sentAt` window so the cards and the branch rows cannot disagree.
+   */
   totals: { waiting: number; confirmedToday: number; lastMinute: number; sentToday: number };
-  branches: { branch: Branch; waiting: number; confirmedToday: number; lastMinute: number }[];
-  /** Issues REPORTED that day, and how many of those are still open. */
+  branches: {
+    branch: Branch;
+    waiting: number;
+    confirmedToday: number;
+    lastMinute: number;
+    /** This branch's share of `totals.sentToday`; the rows sum to it. */
+    sent: number;
+  }[];
+  /** Issues REPORTED in the scope, and how many of those are still open. */
   issues: { reported: number; stillOpen: number };
 }
 
@@ -702,8 +724,13 @@ export interface BookingStatistics {
 }
 
 export const dashboardApi = {
-  /** `date` is YYYY-MM-DD; omitted means today, exactly as before. */
-  summary: (params: { date?: string } = {}) =>
+  /**
+   * One day (`date`) or an inclusive range (`from`..`to`), both YYYY-MM-DD.
+   * Omitting everything means today, exactly as before. Sending `date`
+   * alongside `from`/`to` is refused by the server rather than resolved by
+   * precedence — see `summaryQuery`.
+   */
+  summary: (params: { date?: string; from?: string; to?: string } = {}) =>
     api.get<DashboardSummary>(`/admin/dashboard/summary${query(params)}`),
   statistics: (params: { from?: string; to?: string; branchId?: number } = {}) =>
     api.get<BookingStatistics>(`/admin/dashboard/statistics${query(params)}`),

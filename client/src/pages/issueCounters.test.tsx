@@ -26,8 +26,15 @@ const BY_BRANCH = [
 
 const ADMIN_SUMMARY = { totalUnresolved: 3, newCount: 2, inProgressCount: 1, byBranch: BY_BRANCH };
 
+/*
+  The summary shape the server actually sends: `range` accompanies `date` (and
+  equals it on a single day), and every `branches[]` row carries a numeric
+  `sent`. A fixture missing those describes a response the server cannot
+  produce, and the page would render undefined where a count belongs.
+*/
 const DASHBOARD_SUMMARY = {
   date: '2026-08-11',
+  range: { from: '2026-08-11', to: '2026-08-11' },
   totals: { waiting: 0, confirmedToday: 0, lastMinute: 0, sentToday: 0 },
   branches: [],
   issues: { reported: 0, stillOpen: 0 },
@@ -96,9 +103,16 @@ describe('Issue counters — dashboard card', () => {
       'GET /api/auth/me': () => ({ status: 200, body: { user: ADMIN_USER } }),
       'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
       'GET /api/issues/summary': () => ({ status: 200, body: { summary: ADMIN_SUMMARY } }),
+      // The dashboard opens on a single day, so the request is still
+      // `?date=<today>` — the range form is only used once the two ends differ.
       [`GET /api/admin/dashboard/summary?date=${today}`]: () => ({
         status: 200,
-        body: { ...DASHBOARD_SUMMARY, date: today, issues: { reported: 8, stillOpen: 3 } },
+        body: {
+          ...DASHBOARD_SUMMARY,
+          date: today,
+          range: { from: today, to: today },
+          issues: { reported: 8, stillOpen: 3 },
+        },
       }),
     });
     renderApp('/app/dashboard');
@@ -126,7 +140,7 @@ describe('Issue counters — admin branch cards + filter', () => {
     renderApp('/app/issues');
     const b1 = await screen.findByLabelText(/3 sự cố chưa xử lý tại 05 Trương Định/);
     expect(within(b1).getByText('3')).toBeInTheDocument();
-    expect(within(b1).getByText('Mới: 2 · Đang xử lý: 1')).toBeInTheDocument();
+    expect(within(b1).getByText('Mới: 2 · Đang sửa: 1')).toBeInTheDocument();
     // A zero-count branch is still shown.
     const zero = await screen.findByLabelText(/0 sự cố chưa xử lý tại 191 Lê Thánh Tôn/);
     expect(within(zero).getByText('0')).toBeInTheDocument();

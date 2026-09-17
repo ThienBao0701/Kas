@@ -3,6 +3,30 @@ import { act, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ADMIN_USER, EMPTY_OPERATIONAL_BLOCKS, RECEPTIONIST_USER, installApiMock, jsonResponse, renderApp } from '../test/utils';
 
+/**
+ * The receptionist is checked in. The server derives the order's creator from
+ * this, so the proof form needs no creator-name field — and the shift picker
+ * never interrupts these tests.
+ */
+const OPEN_SHIFT = {
+  status: 200,
+  body: {
+    session: {
+      id: 's1',
+      branchId: 1,
+      shiftType: 'A',
+      shiftName: 'Ca A',
+      shiftWindow: '06:00 – 14:00',
+      receptionistName: 'Lễ tân Một',
+      startedAt: '2026-09-16T23:00:00.000Z',
+      nominalEndAt: '2026-09-17T07:00:00.000Z',
+      graceEndAt: '2026-09-17T07:10:00.000Z',
+      closedAt: null,
+      promptDue: false,
+    },
+  },
+};
+
 /** Dispatches a document paste event carrying a single PNG clipboard image. */
 function firePasteImage(type = 'image/png') {
   const item = { kind: 'file', type, getAsFile: () => new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'x', { type }) };
@@ -11,15 +35,6 @@ function firePasteImage(type = 'image/png') {
   act(() => {
     document.dispatchEvent(e);
   });
-}
-
-/**
- * The proof upload will not submit without a creator name. Every test that
- * exercises a successful submission fills it, so the assertions stay about
- * what they were written to test rather than about the new required field.
- */
-async function fillCreatorName(user: ReturnType<typeof userEvent.setup>, name = 'Lễ tân Một') {
-  await user.type(screen.getByLabelText('Tên người tạo đơn'), name);
 }
 
 afterEach(() => {
@@ -118,6 +133,7 @@ function mockDetail(booking: unknown) {
   return installApiMock({
     'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),
     'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
+      'GET /api/reception/shifts/current': () => OPEN_SHIFT,
     'GET /api/bookings/b1': () => ({ status: 200, body: { booking } }),
   });
 }
@@ -160,6 +176,7 @@ describe('BookingDetailPage — receptionist proof upload', () => {
     const fetchMock = installApiMock({
       'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),
       'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
+      'GET /api/reception/shifts/current': () => OPEN_SHIFT,
       'GET /api/bookings/b1': () => ({
         status: 200,
         body: { booking: submitted ? PENDING_BOOKING : NEW_BOOKING },
@@ -193,7 +210,6 @@ describe('BookingDetailPage — receptionist proof upload', () => {
     await user.upload(input, file);
     expect(submitBtn).toBeEnabled();
 
-    await fillCreatorName(user);
     await user.click(submitBtn);
 
     // Success feedback + the proofs endpoint was called with a multipart POST.
@@ -204,89 +220,65 @@ describe('BookingDetailPage — receptionist proof upload', () => {
     expect(called).toBe(true);
   });
 
-  it('will not submit without a creator name, and says which field is missing', async () => {
-    const fetchMock = installApiMock({
-      'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),
-      'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
-      'GET /api/bookings/b1': () => ({ status: 200, body: { booking: NEW_BOOKING } }),
-      'POST /api/bookings/b1/proofs': () => ({ status: 201, body: { booking: PENDING_BOOKING } }),
-    });
-    const user = userEvent.setup();
-    renderApp('/app/booking/b1');
-
-    const submitBtn = await screen.findByRole('button', { name: 'Gửi Admin kiểm tra' });
-    const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'proof.png', { type: 'image/png' });
-    await user.upload(document.querySelector('input[type="file"]') as HTMLInputElement, file);
-
-    // The button stays clickable with the name empty — on purpose. A disabled
-    // button would give the receptionist no reason for the refusal.
-    expect(submitBtn).toBeEnabled();
-    await user.click(submitBtn);
-
-    expect(screen.getByText('Vui lòng nhập tên người tạo đơn')).toBeInTheDocument();
-    expect(screen.getByLabelText('Tên người tạo đơn')).toHaveAttribute('aria-invalid', 'true');
-    // Nothing was sent.
-    expect(fetchMock.mock.calls.some(([u]) => String(u) === '/api/bookings/b1/proofs')).toBe(false);
-    // And the chosen image is still there to submit once the name is filled.
-    expect(screen.getByText('proof.png')).toBeInTheDocument();
-  });
-
-  it('clears the validation message as soon as the name is typed, then submits', async () => {
-    const fetchMock = installApiMock({
-      'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),
-      'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
-      'GET /api/bookings/b1': () => ({ status: 200, body: { booking: NEW_BOOKING } }),
-      'POST /api/bookings/b1/proofs': () => ({ status: 201, body: { booking: PENDING_BOOKING } }),
-    });
-    const user = userEvent.setup();
-    renderApp('/app/booking/b1');
-
-    const submitBtn = await screen.findByRole('button', { name: 'Gửi Admin kiểm tra' });
-    const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'proof.png', { type: 'image/png' });
-    await user.upload(document.querySelector('input[type="file"]') as HTMLInputElement, file);
-    await user.click(submitBtn);
-    expect(screen.getByText('Vui lòng nhập tên người tạo đơn')).toBeInTheDocument();
-
-    await fillCreatorName(user);
-    expect(screen.queryByText('Vui lòng nhập tên người tạo đơn')).toBeNull();
-
-    await user.click(submitBtn);
-    expect(await screen.findByText('Đã gửi ảnh cho Admin kiểm tra.')).toBeInTheDocument();
-    expect(fetchMock.mock.calls.some(([u]) => String(u) === '/api/bookings/b1/proofs')).toBe(true);
-  });
-
-  it('treats a name of only spaces as missing', async () => {
-    const fetchMock = installApiMock({
-      'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),
-      'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
-      'GET /api/bookings/b1': () => ({ status: 200, body: { booking: NEW_BOOKING } }),
-      'POST /api/bookings/b1/proofs': () => ({ status: 201, body: { booking: PENDING_BOOKING } }),
-    });
-    const user = userEvent.setup();
-    renderApp('/app/booking/b1');
-
-    const submitBtn = await screen.findByRole('button', { name: 'Gửi Admin kiểm tra' });
-    const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'proof.png', { type: 'image/png' });
-    await user.upload(document.querySelector('input[type="file"]') as HTMLInputElement, file);
-    await user.type(screen.getByLabelText('Tên người tạo đơn'), '   ');
-    await user.click(submitBtn);
-
-    expect(screen.getByText('Vui lòng nhập tên người tạo đơn')).toBeInTheDocument();
-    expect(fetchMock.mock.calls.some(([u]) => String(u) === '/api/bookings/b1/proofs')).toBe(false);
-  });
-
-  it('no longer offers the optional admin note', async () => {
+  /**
+   * THE CREATOR NAME IS NO LONGER TYPED.
+   *
+   * It used to be a required free-text box on this form, retyped on every order
+   * and stored exactly as sent. The server now takes it from the shift the
+   * receptionist checked in with, so the field is gone — there is nothing to
+   * mistype, nothing to leave blank, and nothing a request can put another
+   * receptionist's name into.
+   */
+  it('offers no creator-name field at all', async () => {
     mockDetail(NEW_BOOKING);
     renderApp('/app/booking/b1');
 
-    expect(await screen.findByLabelText('Tên người tạo đơn')).toBeInTheDocument();
+    await screen.findByRole('button', { name: 'Gửi Admin kiểm tra' });
+    expect(screen.queryByLabelText('Tên người tạo đơn')).toBeNull();
+    // Nor the older optional admin note.
     expect(screen.queryByText('Ghi chú cho Admin (không bắt buộc)')).toBeNull();
+  });
+
+  it('shows whose name the server will record', async () => {
+    mockDetail(NEW_BOOKING);
+    renderApp('/app/booking/b1');
+
+    const creator = await screen.findByTestId('proof-creator');
+    expect(creator).toHaveTextContent('Lễ tân Một');
+    expect(creator).toHaveTextContent('Ca A');
+  });
+
+  it('submits with the image alone, and sends no name', async () => {
+    const fetchMock = installApiMock({
+      'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),
+      'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
+      'GET /api/reception/shifts/current': () => OPEN_SHIFT,
+      'GET /api/bookings/b1': () => ({ status: 200, body: { booking: NEW_BOOKING } }),
+      'POST /api/bookings/b1/proofs': () => ({ status: 201, body: { booking: PENDING_BOOKING } }),
+    });
+    const user = userEvent.setup();
+    renderApp('/app/booking/b1');
+
+    const submitBtn = await screen.findByRole('button', { name: 'Gửi Admin kiểm tra' });
+    const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'proof.png', { type: 'image/png' });
+    await user.upload(document.querySelector('input[type="file"]') as HTMLInputElement, file);
+    await user.click(submitBtn);
+
+    expect(await screen.findByText('Đã gửi ảnh cho Admin kiểm tra.')).toBeInTheDocument();
+
+    const call = fetchMock.mock.calls.find(([u]) => String(u) === '/api/bookings/b1/proofs');
+    expect(call).toBeDefined();
+    const sent = call![1]!.body as FormData;
+    expect(sent.get('image')).toBeInstanceOf(File);
+    // The field the old typed box used is not sent at all.
+    expect(sent.get('note')).toBeNull();
   });
 
   it('does not expose OCR details to the receptionist (only a received note)', async () => {
     installApiMock({
       'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),
       'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
+      'GET /api/reception/shifts/current': () => OPEN_SHIFT,
       'GET /api/bookings/b1': () => ({ status: 200, body: { booking: PENDING_BOOKING } }),
     });
     renderApp('/app/booking/b1');
@@ -317,6 +309,7 @@ describe('BookingDetailPage — receptionist proof upload', () => {
     installApiMock({
       'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),
       'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
+      'GET /api/reception/shifts/current': () => OPEN_SHIFT,
       'GET /api/bookings/b1': () => ({ status: 200, body: { booking: rejected } }),
     });
 
@@ -333,6 +326,7 @@ describe('BookingDetailPage — receptionist proof upload', () => {
     const fetchMock = installApiMock({
       'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),
       'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
+      'GET /api/reception/shifts/current': () => OPEN_SHIFT,
       'GET /api/bookings/b1': () => ({ status: 200, body: { booking: submitted ? PENDING_BOOKING : NEW_BOOKING } }),
       'POST /api/bookings/b1/proofs': () => {
         submitted = true;
@@ -351,7 +345,6 @@ describe('BookingDetailPage — receptionist proof upload', () => {
     expect(await screen.findByText(/^pasted-proof-\d+\.png$/)).toBeInTheDocument();
     expect(submitBtn).toBeEnabled();
 
-    await fillCreatorName(user);
     await user.click(submitBtn);
     expect(await screen.findByText('Đã gửi ảnh cho Admin kiểm tra.')).toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([u, i]) => String(u) === '/api/bookings/b1/proofs' && (i as RequestInit).method === 'POST')).toBe(true);
@@ -363,6 +356,7 @@ describe('BookingDetailPage — receptionist proof upload', () => {
     const fetchMock = installApiMock({
       'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),
       'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
+      'GET /api/reception/shifts/current': () => OPEN_SHIFT,
       'GET /api/bookings/b1': () => ({ status: 200, body: { booking: submitted ? PENDING_BOOKING : rejected } }),
       'POST /api/bookings/b1/proofs': () => {
         submitted = true;
@@ -378,7 +372,6 @@ describe('BookingDetailPage — receptionist proof upload', () => {
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     await user.upload(input, file);
 
-    await fillCreatorName(user);
     await user.click(screen.getByRole('button', { name: 'Gửi Admin kiểm tra' }));
     expect(await screen.findByText('Đã gửi ảnh cho Admin kiểm tra.')).toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([u, i]) => String(u) === '/api/bookings/b1/proofs' && (i as RequestInit).method === 'POST')).toBe(true);
@@ -388,6 +381,7 @@ describe('BookingDetailPage — receptionist proof upload', () => {
     installApiMock({
       'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),
       'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
+      'GET /api/reception/shifts/current': () => OPEN_SHIFT,
       'GET /api/bookings/b1': () => ({ status: 200, body: { booking: NEW_BOOKING } }),
       'POST /api/bookings/b1/proofs': () => ({ status: 500, body: { error: { code: 'INTERNAL_ERROR', message: 'Lỗi máy chủ.' } } }),
     });
@@ -400,7 +394,6 @@ describe('BookingDetailPage — receptionist proof upload', () => {
     await user.upload(input, file);
     expect(screen.getByText('proof.png')).toBeInTheDocument();
 
-    await fillCreatorName(user);
     await user.click(submitBtn);
     // The image preview is preserved so the receptionist can retry.
     expect(await screen.findByText('Lỗi máy chủ.')).toBeInTheDocument();
@@ -432,7 +425,6 @@ describe('BookingDetailPage — receptionist proof upload', () => {
     const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'proof.png', { type: 'image/png' });
     await user.upload(document.querySelector('input[type="file"]') as HTMLInputElement, file);
 
-    await fillCreatorName(user);
     await user.click(submitBtn);
     // While the deferred upload is in flight the button shows the uploading label
     // and is disabled — a second click cannot fire a duplicate request.
@@ -452,6 +444,7 @@ describe('BookingDetailPage — admin review', () => {
     const fetchMock = installApiMock({
       'GET /api/auth/me': () => ({ status: 200, body: { user: ADMIN_USER } }),
       'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
+      'GET /api/reception/shifts/current': () => OPEN_SHIFT,
       'GET /api/bookings/b1': () => ({ status: 200, body: { booking: approved ? COMPLETED_BOOKING : PENDING_BOOKING } }),
       'GET /api/admin/bookings/b1/proofs/p1/analyses/latest': () => ({ status: 200, body: { analysis: { id: 'a1', proofId: 'p1', status: 'DISABLED', provider: 'disabled', analysisVersion: '1', extractedText: null, fields: null, errorMessage: null, startedAt: null, completedAt: null, createdAt: '2026-07-16T02:00:00.000Z' } } }),
       'GET /api/admin/bookings/b1/proofs/p1/comparisons/latest': () => ({ status: 200, body: { comparison: null } }),
@@ -484,6 +477,7 @@ describe('BookingDetailPage — admin review', () => {
     const fetchMock = installApiMock({
       'GET /api/auth/me': () => ({ status: 200, body: { user: ADMIN_USER } }),
       'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
+      'GET /api/reception/shifts/current': () => OPEN_SHIFT,
       'GET /api/bookings/b1': () => ({ status: 200, body: { booking: PENDING_BOOKING } }),
       'GET /api/admin/bookings/b1/proofs/p1/analyses/latest': () => ({ status: 200, body: { analysis: null } }),
       'GET /api/admin/bookings/b1/proofs/p1/comparisons/latest': () => ({ status: 200, body: { comparison: null } }),
@@ -514,6 +508,7 @@ describe('BookingDetailPage — admin review', () => {
     const fetchMock = installApiMock({
       'GET /api/auth/me': () => ({ status: 200, body: { user: ADMIN_USER } }),
       'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
+      'GET /api/reception/shifts/current': () => OPEN_SHIFT,
       'GET /api/bookings/b1': () => ({ status: 200, body: { booking: PENDING_BOOKING } }),
       'GET /api/admin/bookings/b1/proofs/p1/analyses/latest': () => ({ status: 200, body: { analysis: null } }),
       'GET /api/admin/bookings/b1/proofs/p1/comparisons/latest': () => ({ status: 200, body: { comparison: mismatch } }),

@@ -27,6 +27,17 @@ export const BOOKING_DEPARTMENT_USER: AuthUser = {
   mustChangePassword: false,
 };
 
+/** Bộ phận kỹ thuật: global, so no branch — it works all eight properties. */
+export const TECHNICAL_USER: AuthUser = {
+  id: 4,
+  username: 'kythuat',
+  fullName: 'Kỹ thuật viên trực',
+  role: 'TECHNICAL',
+  branch: null,
+  active: true,
+  mustChangePassword: false,
+};
+
 export const RECEPTIONIST_USER: AuthUser = {
   id: 2,
   username: 'letan',

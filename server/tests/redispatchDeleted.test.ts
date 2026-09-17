@@ -517,3 +517,154 @@ describe('reviving an order that has already been replaced', () => {
     ).toBe(1);
   });
 });
+
+/* ================================================================== */
+/* LAST MINUTE is re-stamped, because a resend IS a dispatch           */
+/* ================================================================== */
+
+/**
+ * `isLastMinute` says the guest arrives on the day the order reached the branch.
+ * It is written at dispatch by every send path — and "Gửi lại" is a send, so it
+ * has to be written here too.
+ *
+ * WHAT WENT WRONG WITHOUT THIS. The flag was carried over untouched, so it
+ * described a dispatch that had since been withdrawn. An order sent early, taken
+ * back, and re-sent on its check-in day stayed `false` and disappeared from the
+ * LAST MINUTE count on the one day it mattered; one that was last-minute first
+ * time round kept `true` long after the guest's arrival had passed. The
+ * dashboard reads this flag, so both halves were wrong numbers on the card whose
+ * whole job is urgency.
+ */
+describe('a resend re-stamps LAST MINUTE from the new dispatch moment', () => {
+  /** A withdrawn order with an explicit check-in and an explicit stale flag. */
+  async function withdrawnWithCheckIn(checkIn: string, staleFlag: boolean): Promise<string> {
+    const b = await testPrisma.booking.create({
+      data: {
+        bookingCode: `LM-${Math.random().toString(36).slice(2, 10)}`,
+        customerName: 'NGUYEN VAN A',
+        rawText: 'raw',
+        paymentStatus: 'PAY_AFTER',
+        branchId: cn1,
+        status: 'NEW',
+        verificationStatus: 'NOT_SUBMITTED',
+        checkInDate: new Date(`${checkIn}T00:00:00.000Z`),
+        // Whatever the FIRST dispatch stamped. The resend must not inherit it.
+        isLastMinute: staleFlag,
+        sentAt: new Date(NOW.getTime() - 5 * 24 * 3_600_000),
+        sentByUserId: adminId,
+        deletedAt: new Date(NOW.getTime() - 60_000),
+        deletedByUserId: adminId,
+      },
+    });
+    return b.id;
+  }
+
+  const flagOf = async (id: string) =>
+    (await testPrisma.booking.findUniqueOrThrow({ where: { id } })).isLastMinute;
+
+  it('CASE 1 — resent ON the check-in day becomes last minute', async () => {
+    // Dispatched five days early (so the original flag was correctly false),
+    // withdrawn, and re-sent on the day the guest actually arrives.
+    const id = await withdrawnWithCheckIn('2026-08-13', false);
+
+    expect((await redispatch(id)).status).toBe(200);
+    expect(await flagOf(id)).toBe(true);
+  });
+
+  it('CASE 2 — resent BEFORE the check-in day is not last minute', async () => {
+    const id = await withdrawnWithCheckIn('2026-08-20', false);
+
+    expect((await redispatch(id)).status).toBe(200);
+    expect(await flagOf(id)).toBe(false);
+  });
+
+  it('CASE 2b — a stale TRUE is cleared once the arrival day has passed', async () => {
+    // The mirror of CASE 1: last minute at first dispatch, re-sent a week later.
+    // Carrying the flag would keep counting it as urgent for a guest who was due
+    // days ago.
+    const id = await withdrawnWithCheckIn('2026-08-08', true);
+
+    expect((await redispatch(id)).status).toBe(200);
+    expect(await flagOf(id)).toBe(false);
+  });
+
+  it('CASE 3 — an order with no check-in date is never last minute', async () => {
+    const id = await makeBooking({ sent: true, deleted: true });
+
+    expect((await redispatch(id)).status).toBe(200);
+    expect(await flagOf(id)).toBe(false);
+  });
+
+  it('CASE 4 — the dashboard LAST MINUTE card counts the resent order', async () => {
+    /*
+      The end-to-end point of the fix. The dashboard scopes every card to the
+      orders SENT in the period, and reads this flag for LAST MINUTE — so a
+      resend must appear under both, on the day it was resent.
+    */
+    const id = await withdrawnWithCheckIn('2026-08-13', false);
+    expect((await redispatch(id)).status).toBe(200);
+
+    const res = await adminAgent.get('/api/admin/dashboard/summary?date=2026-08-13');
+    expect(res.status).toBe(200);
+    expect(res.body.totals.sentToday).toBe(1);
+    expect(res.body.totals.lastMinute).toBe(1);
+
+    const row = (res.body.branches as { branch: { id: number }; lastMinute: number; sent: number }[])
+      .find((r) => r.branch.id === cn1)!;
+    expect(row).toMatchObject({ sent: 1, lastMinute: 1 });
+  });
+
+  it('CASE 5 — a refused resend leaves the flag exactly as it was', async () => {
+    /*
+      The re-stamp must not be a partial write. When a live order already holds
+      this reservation's identity the resend is refused outright — and the
+      withdrawn row must come back untouched, flag included, rather than
+      half-updated.
+
+      The database is still the authority for that: reviving clears `deletedAt`,
+      which moves the row INTO
+      `Booking_one_operational_per_code_branch_checkin` where the live one
+      already sits, so the UPDATE cannot land even if the application check were
+      bypassed.
+    */
+    const identity = {
+      bookingCode: `LMDUP-${Math.random().toString(36).slice(2, 8)}`,
+      branchId: cn1,
+      checkInDate: new Date('2026-08-13T00:00:00.000Z'),
+    };
+    const common = {
+      customerName: 'NGUYEN VAN A',
+      rawText: 'raw',
+      paymentStatus: 'PAY_AFTER' as const,
+      status: 'NEW' as const,
+      sentAt: new Date(NOW.getTime() - 3_600_000),
+      sentByUserId: adminId,
+    };
+
+    const withdrawn = await testPrisma.booking.create({
+      data: {
+        ...identity,
+        ...common,
+        isLastMinute: false,
+        deletedAt: new Date(NOW.getTime() - 60_000),
+        deletedByUserId: adminId,
+      },
+    });
+    const live = await testPrisma.booking.create({ data: { ...identity, ...common, isLastMinute: true } });
+
+    const res = await redispatch(withdrawn.id);
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('DUPLICATE_BOOKING');
+    expect(res.body.error.details.existingBookingId).toBe(live.id);
+
+    const after = await testPrisma.booking.findUniqueOrThrow({ where: { id: withdrawn.id } });
+    expect(after.isLastMinute).toBe(false); // not re-stamped by a refused write
+    expect(after.deletedAt).not.toBeNull(); // still withdrawn
+    expect(after.sentAt).toEqual(common.sentAt); // still the original dispatch
+
+    // Exactly one live order for this reservation, as before.
+    expect(
+      await testPrisma.booking.count({ where: { ...identity, deletedAt: null } }),
+    ).toBe(1);
+  });
+});

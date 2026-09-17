@@ -91,11 +91,31 @@ function detail(id: string, overrides: Record<string, unknown> = {}) {
  * Chooses a PNG file in the inline upload card, names the creator (required)
  * and submits it for review.
  */
+/** The receptionist is checked in, so the shift picker never interrupts. */
+const OPEN_SHIFT = {
+  status: 200,
+  body: {
+    session: {
+      id: 's1',
+      branchId: 1,
+      shiftType: 'A',
+      shiftName: 'Ca A',
+      shiftWindow: '06:00 – 14:00',
+      receptionistName: 'Lễ tân Một',
+      startedAt: '2026-09-16T23:00:00.000Z',
+      nominalEndAt: '2026-09-17T07:00:00.000Z',
+      graceEndAt: '2026-09-17T07:10:00.000Z',
+      closedAt: null,
+      promptDue: false,
+    },
+  },
+};
+
 async function uploadAndSubmit(user: ReturnType<typeof userEvent.setup>) {
   const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'proof.png', { type: 'image/png' });
   const input = document.querySelector('input[type="file"]') as HTMLInputElement;
   await user.upload(input, file);
-  await user.type(screen.getByLabelText('Tên người tạo đơn'), 'Lễ tân Một');
+  // No creator name is typed: the server takes it from the open shift.
   await user.click(screen.getByRole('button', { name: 'Gửi Admin kiểm tra' }));
 }
 
@@ -104,6 +124,7 @@ describe('NewBookingsPage — receptionist master-detail inbox', () => {
     installApiMock({
       'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),
       'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
+      'GET /api/reception/shifts/current': () => OPEN_SHIFT,
       'GET /api/bookings/new?pageSize=100': () => ({
         status: 200,
         body: {
@@ -137,6 +158,7 @@ describe('NewBookingsPage — receptionist master-detail inbox', () => {
     installApiMock({
       'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),
       'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
+      'GET /api/reception/shifts/current': () => OPEN_SHIFT,
       'GET /api/bookings/new?pageSize=100': () => ({
         status: 200,
         body: { bookings: rows, pagination: { page: 1, pageSize: 100, total: 10, totalPages: 1 } },
@@ -155,6 +177,7 @@ describe('NewBookingsPage — receptionist master-detail inbox', () => {
     installApiMock({
       'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),
       'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
+      'GET /api/reception/shifts/current': () => OPEN_SHIFT,
       'GET /api/bookings/new?pageSize=100': () => ({
         status: 200,
         body: {
@@ -191,6 +214,7 @@ describe('NewBookingsPage — receptionist master-detail inbox', () => {
     installApiMock({
       'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),
       'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
+      'GET /api/reception/shifts/current': () => OPEN_SHIFT,
       'GET /api/bookings/new?pageSize=100': () => ({
         status: 200,
         body: {
@@ -224,6 +248,7 @@ describe('NewBookingsPage — receptionist master-detail inbox', () => {
     installApiMock({
       'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),
       'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
+      'GET /api/reception/shifts/current': () => OPEN_SHIFT,
       'GET /api/bookings/new?pageSize=100': () => {
         calls += 1;
         if (calls === 1) {
@@ -261,6 +286,7 @@ describe('NewBookingsPage — receptionist master-detail inbox', () => {
     installApiMock({
       'GET /api/auth/me': () => ({ status: 200, body: { user: RECEPTIONIST_USER } }),
       'GET /api/notifications/unread-count': () => ({ status: 200, body: { count: 0 } }),
+      'GET /api/reception/shifts/current': () => OPEN_SHIFT,
       'GET /api/bookings/new?pageSize=100': () => ({
         status: 200,
         body: {

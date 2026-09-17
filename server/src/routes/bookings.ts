@@ -5,7 +5,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma';
 import { ApiError } from '../lib/errors';
 import { getClock } from '../lib/clock';
-import { requireAuth, requireAdmin, requirePasswordChanged } from '../middleware/auth';
+import { requireAuth, requireAdmin, requirePasswordChanged, requireRole } from '../middleware/auth';
 import { proofUpload } from '../middleware/upload';
 import { parseBooking } from '../booking/parser';
 import { parseAgodaBooking } from '../booking/agoda';
@@ -206,6 +206,16 @@ function actor(user: UserWithBranch, correlationId?: string) {
     correlationId: correlationId ?? null,
   };
 }
+
+/**
+ * WHO WORKS AN ORDER: the Admin who dispatches it and the receptionist who
+ * creates it in the hotel system. An ALLOW-LIST, for the same reason as in
+ * bookingLifecycle.ts — the branch and claim checks downstream are written as
+ * `actor.role === 'RECEPTIONIST' && …`, so a role that is not a receptionist
+ * skips them rather than failing them. Naming the two roles that belong here
+ * means a future department gets nothing by default.
+ */
+const requireBookingOperator = requireRole('ADMIN', 'RECEPTIONIST');
 
 export function createBookingsRouter(): Router {
   const router = Router();
@@ -453,7 +463,7 @@ export function createBookingsRouter(): Router {
    * the same queue; the atomic claim inside `claimBooking` decides which of
    * them owns the creation work, and the loser is told who beat them.
    */
-  router.post('/bookings/:id/claim', requireAuth, requirePasswordChanged, (req, res, next) => {
+  router.post('/bookings/:id/claim', requireAuth, requirePasswordChanged, requireBookingOperator, (req, res, next) => {
     (async () => {
       const user = req.currentUser!;
       const id = req.params.id;
@@ -483,7 +493,7 @@ export function createBookingsRouter(): Router {
    * starts the three minutes. Later CẮTs in the same cycle return the SAME
    * deadline untouched.
    */
-  router.post('/bookings/:id/cut', requireAuth, requirePasswordChanged, (req, res, next) => {
+  router.post('/bookings/:id/cut', requireAuth, requirePasswordChanged, requireBookingOperator, (req, res, next) => {
     (async () => {
       const user = req.currentUser!;
       const id = req.params.id;
@@ -735,6 +745,7 @@ export function createBookingsRouter(): Router {
     '/bookings/:id/proofs',
     requireAuth,
     requirePasswordChanged,
+    requireBookingOperator,
     proofUpload(),
     (req, res, next) => {
       (async () => {

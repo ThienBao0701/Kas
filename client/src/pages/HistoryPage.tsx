@@ -3,18 +3,19 @@ import { useNavigate } from 'react-router-dom';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { History, Search } from 'lucide-react';
 import { useAuth } from '../auth/AuthProvider';
-import { bookingsApi, branchesApi, type BookingStatus } from '../api/bookings';
+import { bookingsApi, branchesApi } from '../api/bookings';
 import { Card } from '../components/Card';
 import { EmptyState } from '../components/EmptyState';
 import { BusinessTypeBadge, LastMinuteBadge, SourceBadge } from '../components/Badges';
-import { FilterChips, MultiSelect, type ActiveFilter } from '../components/FilterChips';
+import { DateRangeField } from '../components/DateRangeField';
+import { FilterChips, type ActiveFilter } from '../components/FilterChips';
 import { RoomSummary } from '../components/RoomSummary';
 import { Pagination } from '../components/Pagination';
 import { PageHeader, QueryState } from '../components/PageState';
 import { SkeletonList } from '../components/Skeleton';
 import { useDebounced } from '../hooks/useDebounced';
 import { usePersistentState } from '../hooks/usePersistentState';
-import { formatDate, formatDateTime, formatMoney, statusLabel } from '../lib/format';
+import { formatDate, formatDateTime, formatMoney } from '../lib/format';
 
 /** Whole VND (or "Chưa xác định" when the booking-level total is unknown). */
 function totalDisplay(amount: number | null, currency: string): string {
@@ -32,10 +33,15 @@ function totalDisplay(amount: number | null, currency: string): string {
 */
 interface Filters {
   search: string;
-  status: BookingStatus[];
   paymentStatus: string;
   isLastMinute: boolean;
-  /** The single "Từ ngày / Đến ngày" range, on the dispatch date. */
+  /**
+   * The one "Khoảng thời gian" range, on the DISPATCH date.
+   *
+   * Two fields because that is the wire contract the API has always had
+   * (`sentFrom`/`sentTo` -> `sentAt`); the operator sees a single control. The
+   * date axis is unchanged — only how it is entered.
+   */
   sentFrom: string;
   sentTo: string;
   branchId: string;
@@ -43,7 +49,6 @@ interface Filters {
 
 const EMPTY: Filters = {
   search: '',
-  status: [],
   paymentStatus: '',
   isLastMinute: false,
   sentFrom: '',
@@ -52,20 +57,24 @@ const EMPTY: Filters = {
 };
 
 /*
-  THE FOUR STAY OUTCOMES, and nothing else.
+  THE STATUS FILTER IS GONE FROM THIS SCREEN.
 
-  History answers "what happened to this reservation", so it lists the states a
-  completed stay can end in. The dispatch states (NEW, RECEIVED, COMPLETED,
-  ARCHIVED) are live-queue concepts with their own screens, and offering them
-  here invited an Admin to filter history by a state history is not about.
+  It offered the four stay outcomes (checked in, checked out, cancelled, no
+  show). Removed on the operator's instruction: the screen is a record of what
+  was dispatched, read by date and by booking code, and the outcome filter was
+  not how anyone arrived at a row.
+
+  WORTH KNOWING IF YOU ARE PUTTING IT BACK: this table has no status column, so
+  with the filter gone the page neither shows nor filters by outcome. That is
+  the intended state, not an oversight — but it means "which of these were
+  cancelled" is now a question History cannot answer, and the answer is to add
+  the column rather than to restore the filter.
 
   NOTHING WAS REMOVED FROM THE SYSTEM. Every BookingStatus value still exists,
-  is still written, and is still filterable through the API — this is the Admin
-  History filter UI narrowing, not a workflow change.
+  is still written, and is still filterable through the API
+  (`historyQuery.status` in `routes/bookings.ts`) — this is the History filter
+  UI narrowing, not a workflow change.
 */
-const STATUS_OPTIONS: { value: BookingStatus; label: string }[] = (
-  ['CHECKED_IN', 'CHECKED_OUT', 'CANCELLED', 'NO_SHOW'] as BookingStatus[]
-).map((s) => ({ value: s, label: statusLabel(s) }));
 
 /*
   ONE DATE RANGE, on the dispatch date.
@@ -101,21 +110,38 @@ export function HistoryPage() {
   const [storedFilters, setFilters] = usePersistentState<Filters>('kas.history.filters', EMPTY);
 
   /*
-    These filters persist in localStorage, so an Admin can arrive carrying a
-    status this screen no longer offers — "NEW", say, chosen before the list was
-    narrowed to the four stay outcomes. Left alone it would filter the table to
-    something the UI cannot show as selected or explain, which reads as history
-    having lost rows. Anything no longer offered is dropped on read.
+    READ FIELD BY FIELD, never by spreading the stored object.
+
+    These filters persist in localStorage, so a browser that used this screen
+    before still holds keys it no longer has controls for — `status` above all,
+    which used to carry the four stay outcomes. Spreading the stored object would
+    carry such a key into the params builder, where it would keep filtering the
+    table from a control that is no longer on screen: rows missing, nothing
+    selected to explain why, and no way to clear it.
+
+    Picking the known fields makes that impossible for this key and for any
+    future one. A stored value of the wrong shape falls back to the empty
+    default rather than reaching the query.
   */
-  const filters = useMemo<Filters>(
-    () => ({
-      ...storedFilters,
-      status: (storedFilters.status ?? []).filter((s) =>
-        STATUS_OPTIONS.some((o) => o.value === s),
-      ),
-    }),
-    [storedFilters],
-  );
+  const filters = useMemo<Filters>(() => {
+    /*
+      `usePersistentState` guards a MISSING key, not a stored literal `null` —
+      JSON.parse('null') is a perfectly good parse that yields null. Reading a
+      field off it throws, React unmounts, and the page is blank with no error
+      and no in-app way back. Cheap to close, and the block above would otherwise
+      be promising a robustness it does not have.
+    */
+    const saved: Partial<Filters> = storedFilters ?? EMPTY;
+    return {
+      search: typeof saved.search === 'string' ? saved.search : EMPTY.search,
+      paymentStatus:
+        typeof saved.paymentStatus === 'string' ? saved.paymentStatus : EMPTY.paymentStatus,
+      isLastMinute: saved.isLastMinute === true,
+      sentFrom: typeof saved.sentFrom === 'string' ? saved.sentFrom : EMPTY.sentFrom,
+      sentTo: typeof saved.sentTo === 'string' ? saved.sentTo : EMPTY.sentTo,
+      branchId: typeof saved.branchId === 'string' ? saved.branchId : EMPTY.branchId,
+    };
+  }, [storedFilters]);
 
   // Only the free-text box waits. The rest are discrete choices — a click is
   // already a deliberate act and does not need settling.
@@ -131,7 +157,6 @@ export function HistoryPage() {
   const params = useMemo(
     () => ({
       search: debouncedSearch.trim() || undefined,
-      status: filters.status.length > 0 ? filters.status.join(',') : undefined,
       paymentStatus: filters.paymentStatus || undefined,
       isLastMinute: filters.isLastMinute ? 'true' : undefined,
       sentFrom: filters.sentFrom || undefined,
@@ -155,7 +180,6 @@ export function HistoryPage() {
   const chips = useMemo<ActiveFilter[]>(() => {
     const out: ActiveFilter[] = [];
     if (filters.search.trim()) out.push({ id: 'search', label: `Từ khoá: ${filters.search.trim()}` });
-    for (const s of filters.status) out.push({ id: `status:${s}`, label: `Trạng thái: ${statusLabel(s)}` });
     if (filters.paymentStatus) {
       out.push({
         id: 'paymentStatus',
@@ -178,8 +202,6 @@ export function HistoryPage() {
   }
 
   function removeChip(id: string) {
-    const [kind, value] = id.split(':');
-    if (kind === 'status') return update({ status: filters.status.filter((s) => s !== value) });
     if (id === 'isLastMinute') return update({ isLastMinute: false });
     // Every remaining chip maps to a string field, cleared by emptying it.
     return update({ [id]: '' } as Partial<Filters>);
@@ -274,45 +296,18 @@ export function HistoryPage() {
             </label>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <MultiSelect
-              legend="Trạng thái"
-              options={STATUS_OPTIONS}
-              selected={filters.status}
-              onChange={(status) => update({ status })}
-              testId="filter-status"
-              // One outcome per row: these labels are full sentences, and
-              // wrapping put two of them side by side at common widths.
-              orientation="stack"
+          {/*
+            ONE range control, always visible — not two boxes and not folded into
+            a details panel. The same field the dashboard uses, so a period means
+            the same thing and behaves the same way on both screens.
+          */}
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <DateRangeField
+              legend="Khoảng thời gian"
+              value={{ from: filters.sentFrom, to: filters.sentTo }}
+              onChange={(next) => update({ sentFrom: next.from, sentTo: next.to })}
+              testId="history-range"
             />
-          </div>
-
-          {/* One range, always visible — not folded into a details panel. */}
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="history-sentFrom">
-                Từ ngày
-              </label>
-              <input
-                id="history-sentFrom"
-                type="date"
-                value={filters.sentFrom}
-                onChange={(e) => update({ sentFrom: e.target.value })}
-                className={`w-full ${controlClass}`}
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="history-sentTo">
-                Đến ngày
-              </label>
-              <input
-                id="history-sentTo"
-                type="date"
-                value={filters.sentTo}
-                onChange={(e) => update({ sentTo: e.target.value })}
-                className={`w-full ${controlClass}`}
-              />
-            </div>
           </div>
         </form>
       </Card>

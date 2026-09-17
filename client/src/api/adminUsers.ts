@@ -15,7 +15,20 @@ export interface ManagedUser {
 }
 
 /** The roles this screen can create. An admin is bootstrapped, never minted here. */
-export type ManageableRole = 'RECEPTIONIST' | 'BOOKING_DEPARTMENT';
+export type ManageableRole = 'RECEPTIONIST' | 'BOOKING_DEPARTMENT' | 'TECHNICAL';
+
+/**
+ * The departments that are GLOBAL — no branch, by definition.
+ *
+ * Derived from a list rather than tested as `!== 'BOOKING_DEPARTMENT'`: that
+ * negative form silently classified any NEW branchless role as a receptionist,
+ * demanded a branch for it, and was then refused by the server.
+ */
+export const GLOBAL_ROLES: readonly ManageableRole[] = ['BOOKING_DEPARTMENT', 'TECHNICAL'];
+
+export function requiresBranch(role: ManageableRole | undefined): boolean {
+  return !GLOBAL_ROLES.includes(role ?? 'RECEPTIONIST');
+}
 
 export interface CreateUserInput {
   username: string;
@@ -23,7 +36,7 @@ export interface CreateUserInput {
   temporaryPassword: string;
   /** Omitted means RECEPTIONIST, as it always did. */
   role?: ManageableRole;
-  /** Required for a receptionist; must be absent for Bộ phận đặt phòng (global). */
+  /** Required for a receptionist; must be absent for a global department. */
   branchId?: number;
 }
 

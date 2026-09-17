@@ -18,6 +18,7 @@ import { ConnectionWarning } from '../components/ConnectionWarning';
 import { SkeletonList } from '../components/Skeleton';
 import { LastMinuteBadge, SourceBadge } from '../components/Badges';
 import { InlineSpinner, PageHeader } from '../components/PageState';
+import { RecreationAccountability } from '../components/RecreationAccountability';
 import { BookingDetailView } from '../components/BookingDetailView';
 import { Toast } from '../components/Toast';
 import { useCut } from '../hooks/useCut';
@@ -158,6 +159,15 @@ function VerificationInbox({ variant }: { variant: Variant }) {
           <ConnectionWarning onRetry={() => void list.refetch()} />
         </div>
       ) : null}
+
+      {/*
+        Accountability, on the "Cần tạo lại" screen and for the Admin only.
+        It sits beside the queue rather than on a page of its own because the
+        question "who keeps having to redo these?" is asked while looking at
+        them. Collapsed by default: the queue is the daily work, the statistics
+        are the periodic review.
+      */}
+      {isAdmin && variant === 'rejected' ? <RecreationAccountability branchId={branchId} /> : null}
 
       {list.isLoading ? (
         <SkeletonList rows={6} />

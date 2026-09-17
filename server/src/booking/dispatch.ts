@@ -393,6 +393,23 @@ export async function redispatchDeletedBooking(
       status: 'NEW',
       sentAt: now,
       sentByUserId: admin.id,
+      /*
+        RE-STAMPED WITH `sentAt`, because it is a fact ABOUT this dispatch.
+
+        "Last minute" means the guest arrives on the day the order reached the
+        branch, so the flag belongs to the moment of sending — and this is a
+        sending. Carrying the old value over made it a statement about a dispatch
+        that had since been withdrawn: an order sent early, taken back, and sent
+        again on its check-in day stayed `false` and vanished from the LAST
+        MINUTE count on the one day it mattered most, while one that was
+        last-minute first time round kept `true` long after its check-in passed.
+
+        `isLastMinute` is the shared helper every other dispatch path already
+        uses (`sendBooking`, `dispatchOtaReview`, `dispatchBookingComReview`), so
+        this is the same definition applied to the path that was missing it — not
+        a second one. It is what the dashboard's LAST MINUTE card reads.
+      */
+      isLastMinute: isLastMinute(before.checkInDate, now),
       // Back to the branch as work to be done: the previous cycle's proof state
       // does not carry over, and the earlier proof rows stay as the record of
       // what happened before the order was withdrawn.

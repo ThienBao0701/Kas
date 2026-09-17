@@ -135,7 +135,7 @@ Scheduled daily via cron (see
 | Task | Where |
 | --- | --- |
 | Create the first Admin | `kdc exec app npm run prod:create-admin` (once) |
-| Create receptionists | Admin UI → **Quản lý tài khoản → Thêm lễ tân** |
+| Create receptionists | Admin UI → **Quản lý tài khoản → Thêm bộ phận** |
 | Lock / unlock a receptionist | Admin UI → **Quản lý tài khoản** |
 | Reset a receptionist password | Admin UI (issues a temporary password) |
 | Add / rename / disable a branch | Admin UI → **Khách sạn & chi nhánh** |

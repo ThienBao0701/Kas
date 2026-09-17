@@ -113,11 +113,30 @@ export const requirePasswordChanged: RequestHandler = (req, _res, next) => {
  * the client on its own — for a receptionist it must equal their own assigned
  * branch. Admins may reach any branch.
  */
+/**
+ * WHO IS NOT BOUND TO ONE BRANCH.
+ *
+ * ADMIN is the dispatch centre and monitors all eight; TECHNICAL is one
+ * maintenance team that works all eight. Both carry `branchId = null`.
+ *
+ * This exists as a named predicate, rather than as `role === 'ADMIN'` repeated
+ * at each site, because a branchless role that falls through a branch check does
+ * NOT get an error — it gets `user.branchId !== branchId` against null, i.e. a
+ * silent denial of every branch, or an empty list with nothing to explain it.
+ *
+ * BOOKING_DEPARTMENT is branchless too but is deliberately NOT here: it picks a
+ * branch per charge document and never reads branch-scoped operational data, so
+ * widening its access would grant something nothing asked for.
+ */
+export function seesAllBranches(role: UserRole): boolean {
+  return role === 'ADMIN' || role === 'TECHNICAL';
+}
+
 export function assertBranchAccess(
   user: UserWithBranch,
   branchId: number | null | undefined,
 ): void {
-  if (user.role === 'ADMIN') return;
+  if (seesAllBranches(user.role)) return;
   if (branchId == null || Number.isNaN(branchId)) {
     throw ApiError.branchAccessDenied();
   }

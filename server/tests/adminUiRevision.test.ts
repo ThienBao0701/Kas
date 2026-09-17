@@ -84,7 +84,7 @@ afterAll(async () => {
 /** A dispatched booking, sent on `day`, optionally already approved on `day`. */
 async function bookingSentOn(
   day: string,
-  over: { approvedOn?: string; checkIn?: string; branchId?: number } = {},
+  over: { approvedOn?: string; checkIn?: string; branchId?: number; lastMinute?: boolean } = {},
 ): Promise<string> {
   const b = await testPrisma.booking.create({
     data: {
@@ -96,6 +96,10 @@ async function bookingSentOn(
       status: 'NEW',
       verificationStatus: over.approvedOn ? 'APPROVED' : 'NOT_SUBMITTED',
       sentAt: during(day),
+      // The flag the dispatch stamps, and the one the LAST MINUTE card reads.
+      // Set explicitly rather than inferred from `checkIn`, because a fixture
+      // that sets only the date describes a row dispatch would never write.
+      isLastMinute: over.lastMinute ?? false,
       ...(over.approvedOn ? { reviewedAt: during(over.approvedOn) } : {}),
       ...(over.checkIn ? { checkInDate: new Date(`${over.checkIn}T00:00:00.000Z`) } : {}),
     },
@@ -132,19 +136,37 @@ describe('dashboard summary is a single-date view', () => {
     expect((await summary(YESTERDAY)).totals.sentToday).toBe(1);
   });
 
-  it('counts approvals REVIEWED on the selected day', async () => {
+  it('counts approvals against the day the order was SENT', async () => {
+    /*
+      CHANGED DELIBERATELY. This used to scope by `reviewedAt`, so one order
+      could be counted on a different day from the dispatch it belongs to and
+      "Đã xác nhận" could exceed "Tổng đơn gửi" on the same screen.
+
+      Both orders below were sent yesterday, so both are yesterday's — whenever
+      the proof happened to be approved. "Của những đơn đã gửi hôm đó, bao nhiêu
+      đã được xác nhận" is the question the card now answers.
+    */
     await bookingSentOn(YESTERDAY, { approvedOn: YESTERDAY });
     await bookingSentOn(YESTERDAY, { approvedOn: TODAY });
 
-    expect((await summary(YESTERDAY)).totals.confirmedToday).toBe(1);
-    expect((await summary(TODAY)).totals.confirmedToday).toBe(1);
+    expect((await summary(YESTERDAY)).totals.confirmedToday).toBe(2);
+    expect((await summary(TODAY)).totals.confirmedToday).toBe(0);
   });
 
-  it('counts LAST MINUTE by check-in on the selected day', async () => {
-    await bookingSentOn(YESTERDAY, { checkIn: TODAY });
+  it('counts LAST MINUTE from the flag stamped at dispatch', async () => {
+    /*
+      CHANGED DELIBERATELY. This used to compare `checkInDate` to the selected
+      day, which answered "who arrives today" rather than "what did I send
+      today", and is meaningless over a range.
 
-    expect((await summary(TODAY)).totals.lastMinute).toBe(1);
-    expect((await summary(YESTERDAY)).totals.lastMinute).toBe(0);
+      `isLastMinute` is written at dispatch when check-in equals the day of
+      dispatch, so the figure belongs to the day the order was sent and cannot
+      drift as the calendar moves past it.
+    */
+    await bookingSentOn(YESTERDAY, { checkIn: TODAY, lastMinute: true });
+
+    expect((await summary(YESTERDAY)).totals.lastMinute).toBe(1);
+    expect((await summary(TODAY)).totals.lastMinute).toBe(0);
   });
 
   it('does not let a future dispatch leak into a past day\'s backlog', async () => {
@@ -156,13 +178,29 @@ describe('dashboard summary is a single-date view', () => {
     expect((await summary(YESTERDAY)).totals.waiting).toBe(0);
   });
 
-  it('keeps TODAY\'s backlog meaning unchanged — older outstanding orders still count', async () => {
-    // The number an Admin watches all day must not have changed shape: an order
-    // dispatched days ago and still not created is still outstanding today.
+  it('scopes the backlog to the orders sent in the period, not to all time', async () => {
+    /*
+      CHANGED DELIBERATELY, and this is the operator-facing change.
+
+      The card was a RUNNING BACKLOG — every undelivered order ever dispatched —
+      which is why it could read far above "Tổng đơn gửi" on the same row of
+      cards and why the branch rows never reconciled with it. It now answers "of
+      what I sent in this period, what is still not created".
+
+      The unbounded queue is not lost: the "Chờ chi nhánh tạo" list itself still
+      shows every outstanding order, which is where a backlog belongs.
+    */
     await bookingSentOn(YESTERDAY);
     await bookingSentOn(TODAY);
 
-    expect((await summary(TODAY)).totals.waiting).toBe(2);
+    expect((await summary(TODAY)).totals.waiting).toBe(1);
+    expect((await summary(YESTERDAY)).totals.waiting).toBe(1);
+    // And a range covering both accounts for both.
+    const res = await adminAgent.get(
+      `/api/admin/dashboard/summary?from=${YESTERDAY}&to=${TODAY}`,
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.totals.waiting).toBe(2);
   });
 
   it('scopes the per-branch breakdown to the same day', async () => {

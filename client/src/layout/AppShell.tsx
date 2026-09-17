@@ -4,6 +4,7 @@ import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
 import { DevToolsBar } from './DevToolsBar';
 import { OfflineIndicator } from '../components/OfflineIndicator';
+import { ShiftGate } from '../components/ShiftGate';
 
 export function AppShell() {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -33,6 +34,12 @@ export function AppShell() {
         <OfflineIndicator />
         <Topbar onOpenMenu={() => setMobileOpen(true)} />
         <DevToolsBar />
+        {/*
+          Shift check-in. Rendered by the SHELL so it follows the receptionist
+          across every page and survives a refresh — the session is read from
+          the server, never held in React state.
+        */}
+        <ShiftGate />
         <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">
           <div className="mx-auto max-w-5xl">
             <Outlet />

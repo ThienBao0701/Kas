@@ -55,6 +55,18 @@ beforeAll(async () => {
     const user = await createReceptionist(branch.id, { username, mustChangePassword: false });
     receptionistIdByCode.set(code, user.id);
     agentByCode.set(code, (await loginAgent(app, username, RECEPTIONIST_PASSWORD)).agent);
+    /*
+      Every receptionist checks in to a shift.
+
+      Submitting a proof IS the receptionist asserting "I created this
+      reservation", so the server now takes the order's creator from the shift
+      they are working and refuses the submission when there is none. That rule
+      is the subject of bookingCreatorAttribution.test.ts; here it is only the
+      precondition these cases need.
+    */
+    await agentByCode.get(code)!
+      .post('/api/reception/shifts/check-in')
+      .send({ shiftType: 'A', receptionistName: 'Lễ tân trực' });
   }
 });
 

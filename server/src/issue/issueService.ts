@@ -1,4 +1,10 @@
-import type { IssueCategory, IssueStatus, Prisma, UserRole } from '@prisma/client';
+import type {
+  IssueAreaCategory,
+  IssueCategory,
+  IssueStatus,
+  Prisma,
+  UserRole,
+} from '@prisma/client';
 import { prisma } from '../db/prisma';
 import { ApiError } from '../lib/errors';
 import { getClock, type Clock } from '../lib/clock';
@@ -7,6 +13,7 @@ import {
   saveIssuePhoto,
   sniffImageMime,
 } from './issueStorage';
+import { AREA_FIELDS, describeLocation, normaliseArea, type AreaInput } from './issueArea';
 
 // The full role enum — see issueSummary.ts. Access is decided at runtime.
 type Actor = { id: number; role: UserRole; branchId: number | null; fullName: string };
@@ -35,7 +42,7 @@ const ISSUE_INCLUDE = {
   branch: true,
   reportedBy: true,
   acceptedBy: true,
-  resolvedBy: true,
+  completedBy: true,
 } satisfies Prisma.HotelIssueInclude;
 
 export type IssueDetail = Prisma.HotelIssueGetPayload<{ include: typeof ISSUE_INCLUDE }>;
@@ -49,7 +56,15 @@ export function issuePhotoUrl(id: string): string {
   return `/api/issues/${id}/photo`;
 }
 
-/** Public, branch-isolation-safe serialization of an issue. */
+/**
+ * Public, branch-isolation-safe serialization of an issue.
+ *
+ * Each "who" is emitted twice on purpose: the live account (`reportedBy`) and
+ * the name recorded at the time (`reportedByName`). The name falls back to the
+ * account's current one only when there is no snapshot — i.e. on rows created
+ * before snapshots existed — so a renamed account never silently rewrites the
+ * history of a job somebody else did.
+ */
 export function serializeIssue(issue: IssueDetail) {
   return {
     id: issue.id,
@@ -57,17 +72,29 @@ export function serializeIssue(issue: IssueDetail) {
     branch: issue.branch
       ? { id: issue.branch.id, code: issue.branch.code, hotelName: issue.branch.hotelName, address: issue.branch.address }
       : null,
+    areaCategory: issue.areaCategory,
     roomNumber: issue.roomNumber,
+    floorNumber: issue.floorNumber,
+    areaSubtype: issue.areaSubtype,
+    locationDetail: issue.locationDetail,
+    /** The place as one line, so every screen says it the same way. */
+    locationLabel: describeLocation(issue),
     category: issue.category,
     description: issue.description,
     photoUrl: issue.photoStoredName ? issuePhotoUrl(issue.id) : null,
     status: issue.status,
     reportedBy: actorView(issue.reportedBy),
+    reportedByName: issue.reportedByNameSnapshot ?? issue.reportedBy?.fullName ?? null,
     acceptedBy: actorView(issue.acceptedBy),
-    resolvedBy: actorView(issue.resolvedBy),
+    acceptedByName: issue.acceptedByNameSnapshot ?? issue.acceptedBy?.fullName ?? null,
+    acceptedAt: issue.acceptedAt ? issue.acceptedAt.toISOString() : null,
+    technicianName: issue.technicianName,
+    technicianPhone: issue.technicianPhone,
+    completedBy: actorView(issue.completedBy),
+    completedByName: issue.completedByNameSnapshot ?? issue.completedBy?.fullName ?? null,
+    completedAt: issue.completedAt ? issue.completedAt.toISOString() : null,
     createdAt: issue.createdAt.toISOString(),
     updatedAt: issue.updatedAt.toISOString(),
-    resolvedAt: issue.resolvedAt ? issue.resolvedAt.toISOString() : null,
   };
 }
 
@@ -77,16 +104,27 @@ async function loadIssue(id: string): Promise<IssueDetail> {
   return issue;
 }
 
+/**
+ * Branch isolation, unchanged for Reception and deliberately absent for the
+ * other two roles: ADMIN watches every branch and TECHNICAL works every branch,
+ * because one maintenance team serves all eight properties.
+ */
 function assertBranchAccess(issue: IssueDetail, actor: Actor): void {
   if (actor.role === 'RECEPTIONIST' && issue.branchId !== actor.branchId) {
     throw ApiError.branchAccessDenied();
   }
 }
 
-export interface CreateIssueInput {
+/** The ONLY role that may move an incident through the workflow. */
+export function assertTechnicalActor(actor: Actor): void {
+  if (actor.role !== 'TECHNICAL') {
+    throw ApiError.forbidden('Chỉ bộ phận kỹ thuật mới xử lý được sự cố.');
+  }
+}
+
+export interface CreateIssueInput extends AreaInput {
   branchId?: number;
-  roomNumber?: string | null;
-  category: IssueCategory;
+  category?: IssueCategory | null;
   description: string;
   photo?: UploadedPhoto;
 }
@@ -105,8 +143,12 @@ export async function createIssue(input: CreateIssueInput, actor: Actor): Promis
   const branch = await prisma.branch.findUnique({ where: { id: branchId } });
   if (!branch) throw ApiError.validation('Chi nhánh không hợp lệ.');
 
+  // Always mandatory, and trimmed FIRST so "   " is rejected like "".
   const description = input.description.trim();
   if (description.length === 0) throw ApiError.validation('Vui lòng nhập mô tả sự cố.');
+
+  // The area decides which location columns are required, and drops the rest.
+  const area = normaliseArea(input);
 
   // Optional single photo: the declared MIME is never trusted — sniff the bytes.
   const mime = input.photo ? sniffImageMime(input.photo.buffer) : null;
@@ -115,11 +157,14 @@ export async function createIssue(input: CreateIssueInput, actor: Actor): Promis
   const issue = await prisma.hotelIssue.create({
     data: {
       branchId,
-      roomNumber: input.roomNumber?.trim() ? input.roomNumber.trim() : null,
-      category: input.category,
+      ...area,
+      // Only some areas ask for a fault type; the rest store none rather than a
+      // default nobody chose.
+      category: AREA_FIELDS[area.areaCategory].category ? input.category ?? null : null,
       description,
       status: 'NEW',
       reportedByUserId: actor.id,
+      reportedByNameSnapshot: actor.fullName,
     },
     include: ISSUE_INCLUDE,
   });
@@ -134,18 +179,31 @@ export async function createIssue(input: CreateIssueInput, actor: Actor): Promis
     });
   }
 
-  await notifyAdminsNewIssue(branch.address, input.category);
-  return loadIssue(issue.id);
+  const created = await loadIssue(issue.id);
+  await notifyNewIssue(branch.address, created);
+  return created;
 }
 
-async function notifyAdminsNewIssue(branchAddress: string, category: IssueCategory): Promise<void> {
-  const admins = await prisma.user.findMany({ where: { role: 'ADMIN', active: true }, select: { id: true } });
-  if (admins.length === 0) return;
+/**
+ * A new incident notifies both the people who need to know: every active Admin
+ * (who monitors) and every active TECHNICAL user (who will do the work). Before
+ * the technical department existed only Admins were told, because only an Admin
+ * could act on it.
+ */
+async function notifyNewIssue(branchAddress: string, issue: IssueDetail): Promise<void> {
+  const recipients = await prisma.user.findMany({
+    where: { role: { in: ['ADMIN', 'TECHNICAL'] }, active: true },
+    select: { id: true },
+  });
+  if (recipients.length === 0) return;
+  // The category can now be absent (a hallway report has none), so the location
+  // is what identifies the incident — it is always present.
+  const what = issue.category ? ISSUE_CATEGORY_LABELS[issue.category] : describeLocation(issue);
   await prisma.notification.createMany({
-    data: admins.map((a) => ({
+    data: recipients.map((a) => ({
       userId: a.id,
       title: 'Có báo cáo sự cố mới',
-      body: `${ISSUE_CATEGORY_LABELS[category]} — ${branchAddress}`,
+      body: `${what} — ${branchAddress}`,
     })),
   });
 }
@@ -178,51 +236,123 @@ export async function updateIssue(id: string, input: UpdateIssueInput, actor: Ac
   return loadIssue(id);
 }
 
-/**
- * Admin transition NEW → IN_PROGRESS (accept) or IN_PROGRESS/NEW → RESOLVED
- * (resolve). Records who accepted/resolved and when, and notifies the reporter.
- */
-export async function setIssueStatus(
-  id: string,
-  next: 'IN_PROGRESS' | 'RESOLVED',
-  admin: Actor,
-  clock: Clock = getClock(),
-): Promise<IssueDetail> {
-  const issue = await loadIssue(id);
-  if (issue.status === next) return issue;
-
-  const data: Prisma.HotelIssueUpdateInput =
-    next === 'IN_PROGRESS'
-      ? { status: 'IN_PROGRESS', acceptedBy: { connect: { id: admin.id } } }
-      : { status: 'RESOLVED', resolvedBy: { connect: { id: admin.id } }, resolvedAt: clock.now() };
-  await prisma.hotelIssue.update({ where: { id }, data });
-
-  await notifyReporterStatus(issue.reportedByUserId, id, next, issue.category);
-  return loadIssue(id);
+export interface AcceptIssueInput {
+  technicianName: string;
+  technicianPhone: string;
 }
 
-async function notifyReporterStatus(
-  reporterId: number,
-  _issueId: string,
-  status: IssueStatus,
-  category: IssueCategory,
-): Promise<void> {
-  const user = await prisma.user.findFirst({ where: { id: reporterId, active: true }, select: { id: true } });
+/**
+ * NEW → IN_PROGRESS. Technical accepts the job and names who is doing it.
+ *
+ * WHY THE WHERE-CLAUSE CARRIES THE EXPECTED STATUS
+ *
+ * `updateMany ... where: { id, status: 'NEW' }` is a conditional write: the
+ * database decides, atomically, whether the transition was legal. Two technicians
+ * pressing "Tiếp nhận" on the same incident at the same moment therefore produce
+ * one winner and one clear 409, instead of the second silently overwriting the
+ * first's technician name. Reading the row and then updating it — which is what
+ * the old `setIssueStatus` did — leaves exactly that race open.
+ */
+export async function acceptIssue(
+  id: string,
+  input: AcceptIssueInput,
+  actor: Actor,
+  clock: Clock = getClock(),
+): Promise<IssueDetail> {
+  assertTechnicalActor(actor);
+
+  const technicianName = input.technicianName.trim();
+  const technicianPhone = input.technicianPhone.trim();
+  if (!technicianName) throw ApiError.validation('Vui lòng nhập họ và tên người sửa.');
+  if (!technicianPhone) throw ApiError.validation('Vui lòng nhập số điện thoại người sửa.');
+
+  const issue = await loadIssue(id);
+  const now = clock.now();
+
+  const { count } = await prisma.hotelIssue.updateMany({
+    where: { id, status: 'NEW' },
+    data: {
+      status: 'IN_PROGRESS',
+      acceptedByUserId: actor.id,
+      acceptedByNameSnapshot: actor.fullName,
+      acceptedAt: now,
+      technicianName,
+      technicianPhone,
+    },
+  });
+  if (count === 0) {
+    throw ApiError.conflict('Sự cố này không còn ở trạng thái chờ tiếp nhận.', { status: issue.status });
+  }
+
+  const updated = await loadIssue(id);
+  await notifyReporterStatus(updated, 'IN_PROGRESS');
+  return updated;
+}
+
+/**
+ * IN_PROGRESS → COMPLETED. Reachable ONLY from IN_PROGRESS, which is what
+ * guarantees a completed incident always names the technician who did the work.
+ */
+export async function completeIssue(
+  id: string,
+  actor: Actor,
+  clock: Clock = getClock(),
+): Promise<IssueDetail> {
+  assertTechnicalActor(actor);
+
+  const issue = await loadIssue(id);
+  const { count } = await prisma.hotelIssue.updateMany({
+    where: { id, status: 'IN_PROGRESS' },
+    data: {
+      status: 'COMPLETED',
+      completedByUserId: actor.id,
+      completedByNameSnapshot: actor.fullName,
+      completedAt: clock.now(),
+    },
+  });
+  if (count === 0) {
+    throw ApiError.conflict(
+      issue.status === 'COMPLETED'
+        ? 'Sự cố này đã hoàn thành trước đó.'
+        : 'Cần tiếp nhận sự cố trước khi hoàn thành.',
+      { status: issue.status },
+    );
+  }
+
+  const updated = await loadIssue(id);
+  await notifyReporterStatus(updated, 'COMPLETED');
+  return updated;
+}
+
+async function notifyReporterStatus(issue: IssueDetail, status: IssueStatus): Promise<void> {
+  const user = await prisma.user.findFirst({
+    where: { id: issue.reportedByUserId, active: true },
+    select: { id: true },
+  });
   if (!user) return;
-  const title = status === 'IN_PROGRESS' ? 'Sự cố đang được xử lý' : 'Sự cố đã được xử lý';
+  const title = status === 'IN_PROGRESS' ? 'Sự cố đang được xử lý' : 'Sự cố đã hoàn thành';
   await prisma.notification.create({
-    data: { userId: reporterId, title, body: ISSUE_CATEGORY_LABELS[category] },
+    data: { userId: issue.reportedByUserId, title, body: describeLocation(issue) },
   });
 }
 
 export interface ListIssuesFilter {
   branchId?: number;
   status?: IssueStatus;
+  areaCategory?: IssueAreaCategory;
   skip: number;
   take: number;
 }
 
-/** Lists issues newest-first, branch-isolated for receptionists. */
+/**
+ * Lists issues newest-first.
+ *
+ * VISIBILITY, BY ROLE:
+ *   RECEPTIONIST  their own branch only, and a client-sent branchId is IGNORED
+ *                 rather than refused — the scope is not theirs to choose.
+ *   TECHNICAL     all eight branches, optionally narrowed by `branchId`.
+ *   ADMIN         all eight branches, optionally narrowed by `branchId`.
+ */
 export async function listIssues(actor: Actor, filter: ListIssuesFilter): Promise<{ issues: IssueDetail[]; total: number }> {
   const where: Prisma.HotelIssueWhereInput = {};
   if (actor.role === 'RECEPTIONIST') {
@@ -231,6 +361,7 @@ export async function listIssues(actor: Actor, filter: ListIssuesFilter): Promis
     where.branchId = filter.branchId;
   }
   if (filter.status) where.status = filter.status;
+  if (filter.areaCategory) where.areaCategory = filter.areaCategory;
 
   const [total, issues] = await prisma.$transaction([
     prisma.hotelIssue.count({ where }),

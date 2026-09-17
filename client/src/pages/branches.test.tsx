@@ -366,7 +366,7 @@ describe('receptionist assignment uses the live active branches', () => {
       { id: 9, code: 'NGUYEN_HUE_12', hotelName: 'Chi nhánh thử nghiệm', address: '12 Nguyễn Huệ', branchNumber: 9 },
     ]);
     const user = userEvent.setup();
-    await user.click(await screen.findByRole('button', { name: /Thêm lễ tân/ }));
+    await user.click(await screen.findByRole('button', { name: /Thêm bộ phận/ }));
 
     const select = screen.getByLabelText(/Chi nhánh/);
     expect(within(select).getByRole('option', { name: 'Chi nhánh 9 — 12 Nguyễn Huệ' })).toBeInTheDocument();
@@ -378,7 +378,7 @@ describe('receptionist assignment uses the live active branches', () => {
     // branch is simply absent from the assignment list.
     renderSettings([{ id: 1, code: 'TRUONG_DINH_05', hotelName: 'H1', address: '05 Trương Định', branchNumber: 1 }]);
     const user = userEvent.setup();
-    await user.click(await screen.findByRole('button', { name: /Thêm lễ tân/ }));
+    await user.click(await screen.findByRole('button', { name: /Thêm bộ phận/ }));
 
     const select = screen.getByLabelText(/Chi nhánh/);
     expect(within(select).queryByRole('option', { name: /12 Nguyễn Huệ/ })).not.toBeInTheDocument();
