@@ -48,6 +48,15 @@ function issue(over: Record<string, unknown> = {}) {
     completedAt: null,
     createdAt: '2026-09-17T02:00:00.000Z',
     updatedAt: '2026-09-17T02:00:00.000Z',
+    // The server ALWAYS sends these; a fixture that omits them describes a
+    // response the API cannot produce.
+    shiftType: null,
+    shiftReceptionistName: null,
+    durationSeconds: null,
+    durationLabel: null,
+    attempts: [],
+    cannotRepairCount: 0,
+    needsRework: false,
     ...over,
   };
 }

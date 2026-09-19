@@ -15,7 +15,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app';
 import { seedBranches } from '../src/db/seed';
-import { resetAll, testPrisma } from './helpers/db';
+import { resetAll, resetIssueData, resetShiftData, testPrisma } from './helpers/db';
 import {
   ADMIN_PASSWORD,
   RECEPTIONIST_PASSWORD,
@@ -73,9 +73,9 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  await testPrisma.hotelIssue.deleteMany();
+  await resetIssueData();
   await testPrisma.notification.deleteMany();
-  await testPrisma.receptionShiftSession.deleteMany();
+  await resetShiftData();
   setClock({ now: () => NOW });
 });
 

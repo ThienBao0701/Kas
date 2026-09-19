@@ -3,7 +3,7 @@ import { resolveBranchIdentity } from '../src/booking/identityResolver';
 import { createApp } from '../src/app';
 import { backfillBranchAliases, seedBranches } from '../src/db/seed';
 import { BRANCHES } from '../src/db/branches';
-import { resetAll, testPrisma, utcDate } from './helpers/db';
+import { resetAll, resetIssueData, testPrisma, utcDate } from './helpers/db';
 import {
   ADMIN_PASSWORD,
   RECEPTIONIST_PASSWORD,
@@ -59,7 +59,7 @@ async function restoreBranches(): Promise<void> {
   await testPrisma.notification.deleteMany({});
   await testPrisma.bookingStatusHistory.deleteMany({});
   await testPrisma.booking.deleteMany({});
-  await testPrisma.hotelIssue.deleteMany({});
+  await resetIssueData();
   await testPrisma.demoDataBatch.deleteMany({});
   await testPrisma.branchChangeLog.deleteMany({});
   await testPrisma.branchSourceAlias.deleteMany({});

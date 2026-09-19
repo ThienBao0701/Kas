@@ -25,7 +25,7 @@ function mockShell(user: unknown, extra: Record<string, () => { status: number; 
 }
 
 describe('role-based shell and routing', () => {
-  it('shows the full admin menu (14 items)', async () => {
+  it('shows the full admin menu (15 items)', async () => {
     mockShell(ADMIN_USER);
     renderApp('/app/new');
 
@@ -40,6 +40,7 @@ describe('role-based shell and routing', () => {
       'Đã xác nhận đúng',
       'Lịch sử',
       'Sự cố khách sạn',
+      'Bàn giao ca',
       'Gửi lại đơn',
       'Chứng từ',
       'Chat box',
@@ -49,7 +50,7 @@ describe('role-based shell and routing', () => {
     ]);
   });
 
-  it('shows only the eight receptionist items', async () => {
+  it('shows only the nine receptionist items', async () => {
     mockShell(RECEPTIONIST_USER);
     renderApp('/app/new');
 
@@ -62,6 +63,7 @@ describe('role-based shell and routing', () => {
       'Đã xác nhận đúng',
       'Lịch sử',
       'Báo cáo sự cố',
+      'Bàn giao ca',
       'Chat box',
       'Nhắc nhở',
     ]);

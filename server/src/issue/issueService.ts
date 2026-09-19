@@ -5,15 +5,21 @@ import type {
   Prisma,
   UserRole,
 } from '@prisma/client';
+import { Prisma as PrismaNS } from '@prisma/client';
 import { prisma } from '../db/prisma';
 import { ApiError } from '../lib/errors';
 import { getClock, type Clock } from '../lib/clock';
+import { durationSeconds, formatDuration } from '../lib/duration';
+import { captureShiftContext } from '../shift/shiftService';
 import {
   generateIssuePhotoName,
   saveIssuePhoto,
   sniffImageMime,
 } from './issueStorage';
 import { AREA_FIELDS, describeLocation, normaliseArea, type AreaInput } from './issueArea';
+
+/** The partial unique index that makes "one open attempt per incident" a fact. */
+const ONE_OPEN_ATTEMPT = 'TechnicalRepairAttempt_one_open_per_issue';
 
 // The full role enum — see issueSummary.ts. Access is decided at runtime.
 type Actor = { id: number; role: UserRole; branchId: number | null; fullName: string };
@@ -38,14 +44,28 @@ export const ISSUE_CATEGORY_LABELS: Record<IssueCategory, string> = {
   OTHER: 'Khác',
 };
 
-const ISSUE_INCLUDE = {
+/**
+ * THE one include for an incident, and the reason it is exported.
+ *
+ * `serializeIssue` and the incident PDF are both typed on this payload, and the
+ * Admin report loads its own rows. A second hand-copied include drifts the
+ * moment a relation is added here — the report then type-checks against a shape
+ * it no longer receives — so `routes/adminReports.ts` imports this one rather
+ * than repeating it.
+ */
+export const ISSUE_INCLUDE = {
   branch: true,
   reportedBy: true,
   acceptedBy: true,
   completedBy: true,
+  /// Oldest first: "Lần 1" really is the first attempt anybody made.
+  attempts: { orderBy: { acceptedAt: 'asc' } },
+  shiftSession: { select: { id: true, shiftType: true, receptionistName: true } },
 } satisfies Prisma.HotelIssueInclude;
 
 export type IssueDetail = Prisma.HotelIssueGetPayload<{ include: typeof ISSUE_INCLUDE }>;
+
+export type RepairAttemptRow = IssueDetail['attempts'][number];
 
 function actorView(user: { id: number; fullName: string } | null) {
   return user ? { id: user.id, fullName: user.fullName } : null;
@@ -65,7 +85,50 @@ export function issuePhotoUrl(id: string): string {
  * before snapshots existed — so a renamed account never silently rewrites the
  * history of a job somebody else did.
  */
-export function serializeIssue(issue: IssueDetail) {
+/**
+ * One attempt, as the timeline and the report say it.
+ *
+ * `durationSeconds` is computed from the two timestamps every time it is read,
+ * never stored — see the model comment. An OPEN attempt is measured against
+ * `now`, so "Đang sửa — 5 phút đã xử lý" counts up on its own as the page polls
+ * rather than freezing at whatever it was when the technician pressed accept.
+ */
+export function serializeAttempt(attempt: RepairAttemptRow, now: Date) {
+  const seconds = durationSeconds(attempt.acceptedAt, attempt.outcomeAt ?? now);
+  return {
+    id: attempt.id,
+    attemptNumber: attempt.attemptNumber,
+    technicianName: attempt.technicianNameSnapshot,
+    technicianPhone: attempt.technicianPhone,
+    acceptedByName: attempt.acceptedByNameSnapshot,
+    acceptedAt: attempt.acceptedAt.toISOString(),
+    /** Null while the technician is still working. */
+    outcome: attempt.outcome,
+    outcomeAt: attempt.outcomeAt ? attempt.outcomeAt.toISOString() : null,
+    reason: attempt.reason,
+    durationSeconds: seconds,
+    /** Formatted HERE so the screen and the exported PDF cannot disagree. */
+    durationLabel: formatDuration(seconds),
+  };
+}
+
+export type SerializedAttempt = ReturnType<typeof serializeAttempt>;
+
+export function serializeIssue(issue: IssueDetail, now: Date = getClock().now()) {
+  /*
+    The CURRENT assignment's elapsed time, from the incident's own columns.
+
+    Deliberately not read off the attempts: incidents worked before the attempt
+    table existed have no rows, and their acceptance and completion live here.
+    Computing it from the columns therefore gives the right answer for both the
+    new incidents and the old ones, without inventing an attempt for the old.
+  */
+  const currentDuration = issue.acceptedAt
+    ? durationSeconds(issue.acceptedAt, issue.completedAt ?? now)
+    : null;
+
+  const cannotRepairCount = issue.attempts.filter((a) => a.outcome === 'CANNOT_REPAIR').length;
+
   return {
     id: issue.id,
     branchId: issue.branchId,
@@ -93,6 +156,31 @@ export function serializeIssue(issue: IssueDetail) {
     completedBy: actorView(issue.completedBy),
     completedByName: issue.completedByNameSnapshot ?? issue.completedBy?.fullName ?? null,
     completedAt: issue.completedAt ? issue.completedAt.toISOString() : null,
+
+    /** Which shift reported it, when the reporter was on one. */
+    shiftType: issue.shiftType,
+    shiftReceptionistName: issue.shiftSession?.receptionistName ?? null,
+
+    /**
+     * How long the CURRENT assignment has taken — running while IN_PROGRESS,
+     * final once completed, null while nobody has accepted it.
+     */
+    durationSeconds: currentDuration,
+    durationLabel: formatDuration(currentDuration),
+
+    /** Every attempt anybody has made, oldest first. Empty on legacy rows. */
+    attempts: issue.attempts.map((a) => serializeAttempt(a, now)),
+    cannotRepairCount,
+    /**
+     * BACK IN THE QUEUE AFTER SOMEBODY TRIED.
+     *
+     * The operational difference between "nobody has looked at this yet" and
+     * "somebody tried and could not fix it" is the whole point of the
+     * "Không sửa được" flow, and `status` alone cannot express it — both are
+     * NEW. This is the flag the queue reads to say "Cần xử lý lại".
+     */
+    needsRework: issue.status === 'NEW' && cannotRepairCount > 0,
+
     createdAt: issue.createdAt.toISOString(),
     updatedAt: issue.updatedAt.toISOString(),
   };
@@ -154,6 +242,21 @@ export async function createIssue(input: CreateIssueInput, actor: Actor): Promis
   const mime = input.photo ? sniffImageMime(input.photo.buffer) : null;
   if (input.photo && !mime) throw ApiError.unsupportedMedia();
 
+  /*
+    WHICH SHIFT REPORTED IT — captured, never required.
+
+    `captureShiftContext` rather than `requireOpenSession`: submitting proof of a
+    created order is an accounting act and is refused without a shift, but a
+    broken door is not. Refusing an incident report because nobody had checked in
+    would leave a real fault unreported in order to protect a statistic.
+
+    `reportedByNameSnapshot` deliberately stays the ACCOUNT's name. It answers
+    "which login filed this", which is what the existing reports and the reporter
+    notification are built on; the person on the desk is a separate question that
+    `shiftSessionId` answers without overwriting the first one.
+  */
+  const shift = await captureShiftContext(actor);
+
   const issue = await prisma.hotelIssue.create({
     data: {
       branchId,
@@ -165,6 +268,8 @@ export async function createIssue(input: CreateIssueInput, actor: Actor): Promis
       status: 'NEW',
       reportedByUserId: actor.id,
       reportedByNameSnapshot: actor.fullName,
+      shiftSessionId: shift.shiftSessionId,
+      shiftType: shift.shiftType,
     },
     include: ISSUE_INCLUDE,
   });
@@ -224,6 +329,19 @@ export async function updateIssue(id: string, input: UpdateIssueInput, actor: Ac
   if (issue.status !== 'NEW') {
     throw ApiError.conflict('Không thể sửa báo cáo sau khi Admin đã tiếp nhận.', { status: issue.status });
   }
+  /*
+    AND NOT AFTER SOMEBODY HAS ALREADY WORKED IT.
+
+    A "Không sửa được" puts the incident back to NEW, which would otherwise
+    re-open the reporter's edit rights on a report a technician has already been
+    to — letting the description be rewritten underneath an attempt that was made
+    against the old one. Once there is history, the report is a record.
+  */
+  if (issue.attempts.length > 0) {
+    throw ApiError.conflict('Không thể sửa báo cáo đã có người tiếp nhận xử lý.', {
+      attempts: issue.attempts.length,
+    });
+  }
   const data: Prisma.HotelIssueUpdateInput = {};
   if (input.roomNumber !== undefined) data.roomNumber = input.roomNumber?.trim() ? input.roomNumber.trim() : null;
   if (input.category !== undefined) data.category = input.category;
@@ -269,19 +387,61 @@ export async function acceptIssue(
   const issue = await loadIssue(id);
   const now = clock.now();
 
-  const { count } = await prisma.hotelIssue.updateMany({
-    where: { id, status: 'NEW' },
-    data: {
-      status: 'IN_PROGRESS',
-      acceptedByUserId: actor.id,
-      acceptedByNameSnapshot: actor.fullName,
-      acceptedAt: now,
-      technicianName,
-      technicianPhone,
-    },
-  });
-  if (count === 0) {
-    throw ApiError.conflict('Sự cố này không còn ở trạng thái chờ tiếp nhận.', { status: issue.status });
+  /*
+    THE ATTEMPT ROW IS WRITTEN IN THE SAME TRANSACTION AS THE TRANSITION.
+
+    Not afterwards, and not derived from the incident's columns later: accepting
+    OVERWRITES `technicianName`, `technicianPhone` and `acceptedAt`, so a second
+    acceptance after a failed first one would destroy exactly the evidence the
+    attempt table exists to keep. Writing the row here means attempt 1 is already
+    permanent before attempt 2 can touch the columns.
+  */
+  try {
+    await prisma.$transaction(async (tx) => {
+      const { count } = await tx.hotelIssue.updateMany({
+        where: { id, status: 'NEW' },
+        data: {
+          status: 'IN_PROGRESS',
+          acceptedByUserId: actor.id,
+          acceptedByNameSnapshot: actor.fullName,
+          acceptedAt: now,
+          technicianName,
+          technicianPhone,
+        },
+      });
+      if (count === 0) {
+        throw ApiError.conflict('Sự cố này không còn ở trạng thái chờ tiếp nhận.', {
+          status: issue.status,
+        });
+      }
+
+      // Counted from what is already stored, inside the transaction, so two
+      // acceptances cannot both decide they are number 2.
+      const previous = await tx.technicalRepairAttempt.count({ where: { issueId: id } });
+      await tx.technicalRepairAttempt.create({
+        data: {
+          issueId: id,
+          attemptNumber: previous + 1,
+          technicianUserId: actor.id,
+          technicianNameSnapshot: technicianName,
+          technicianPhone,
+          acceptedByNameSnapshot: actor.fullName,
+          acceptedAt: now,
+        },
+      });
+    });
+  } catch (error) {
+    // Either unique index refusing a second live attempt — the same race, seen
+    // from the database instead of from the status check.
+    if (
+      error instanceof PrismaNS.PrismaClientKnownRequestError &&
+      error.code === 'P2002' &&
+      (String(error.meta?.target ?? '').includes(ONE_OPEN_ATTEMPT) ||
+        String(error.meta?.target ?? '').includes('attemptNumber'))
+    ) {
+      throw ApiError.conflict('Sự cố này vừa được người khác tiếp nhận.', { status: 'IN_PROGRESS' });
+    }
+    throw error;
   }
 
   const updated = await loadIssue(id);
@@ -301,27 +461,210 @@ export async function completeIssue(
   assertTechnicalActor(actor);
 
   const issue = await loadIssue(id);
-  const { count } = await prisma.hotelIssue.updateMany({
-    where: { id, status: 'IN_PROGRESS' },
-    data: {
-      status: 'COMPLETED',
-      completedByUserId: actor.id,
-      completedByNameSnapshot: actor.fullName,
-      completedAt: clock.now(),
-    },
+  const now = clock.now();
+
+  await prisma.$transaction(async (tx) => {
+    const { count } = await tx.hotelIssue.updateMany({
+      where: { id, status: 'IN_PROGRESS' },
+      data: {
+        status: 'COMPLETED',
+        completedByUserId: actor.id,
+        completedByNameSnapshot: actor.fullName,
+        completedAt: now,
+      },
+    });
+    if (count === 0) {
+      throw ApiError.conflict(
+        issue.status === 'COMPLETED'
+          ? 'Sự cố này đã hoàn thành trước đó.'
+          : 'Cần tiếp nhận sự cố trước khi hoàn thành.',
+        { status: issue.status },
+      );
+    }
+    await recordAttemptOutcome(tx, id, 'COMPLETED', null, now, issue);
   });
-  if (count === 0) {
-    throw ApiError.conflict(
-      issue.status === 'COMPLETED'
-        ? 'Sự cố này đã hoàn thành trước đó.'
-        : 'Cần tiếp nhận sự cố trước khi hoàn thành.',
-      { status: issue.status },
-    );
-  }
 
   const updated = await loadIssue(id);
   await notifyReporterStatus(updated, 'COMPLETED');
   return updated;
+}
+
+/**
+ * Records the outcome of the work that was in progress.
+ *
+ * GUARDED ON `outcomeAt: null`, so the outcome is written exactly once: an
+ * attempt that somebody else has already closed is left exactly as they closed
+ * it rather than being restamped with a second, later outcome.
+ *
+ * WHY IT FALLS BACK TO CREATING A ROW
+ *
+ * Incidents that were already IN_PROGRESS when this table was introduced have no
+ * attempt row — the migration deliberately backfilled none. Their technician,
+ * phone and acceptance time live ONLY on the incident's own columns, and
+ * `cannotRepairIssue` clears exactly those columns. Closing "nothing" and then
+ * clearing them destroyed the only record that the work had ever happened: who
+ * went to the room, how to reach them, and how long they had been on it.
+ *
+ * So when there is no open attempt but the incident says somebody accepted it,
+ * the row is created from those columns and closed in the same write. That is
+ * not inventing history — every value in it was already recorded, by the
+ * acceptance that set them. What the migration refuses to invent is an attempt
+ * for an incident nobody has worked; this is the opposite case.
+ *
+ * `accepted` is passed in rather than re-read, because the caller has already
+ * loaded the incident and the columns are about to change underneath it.
+ */
+async function recordAttemptOutcome(
+  tx: Prisma.TransactionClient,
+  issueId: string,
+  outcome: 'COMPLETED' | 'CANNOT_REPAIR',
+  reason: string | null,
+  at: Date,
+  accepted: {
+    technicianName: string | null;
+    technicianPhone: string | null;
+    acceptedByNameSnapshot: string | null;
+    acceptedByUserId: number | null;
+    acceptedAt: Date | null;
+  },
+): Promise<void> {
+  const { count } = await tx.technicalRepairAttempt.updateMany({
+    where: { issueId, outcomeAt: null },
+    data: { outcome, outcomeAt: at, reason },
+  });
+  if (count > 0) return;
+
+  // Nothing open. Only worth recording if the incident actually names somebody —
+  // otherwise there is genuinely no work to record and no columns to lose.
+  if (!accepted.acceptedAt || !accepted.technicianName) return;
+
+  const previous = await tx.technicalRepairAttempt.count({ where: { issueId } });
+  await tx.technicalRepairAttempt.create({
+    data: {
+      issueId,
+      attemptNumber: previous + 1,
+      technicianUserId: accepted.acceptedByUserId,
+      technicianNameSnapshot: accepted.technicianName,
+      // Phone is NOT NULL on the attempt; an old row could in principle lack it,
+      // and an em dash records "not known" rather than refusing to save the rest.
+      technicianPhone: accepted.technicianPhone ?? '—',
+      acceptedByNameSnapshot: accepted.acceptedByNameSnapshot,
+      acceptedAt: accepted.acceptedAt,
+      outcome,
+      outcomeAt: at,
+      reason,
+    },
+  });
+}
+
+export interface CannotRepairInput {
+  reason: string;
+}
+
+/**
+ * IN_PROGRESS → NEW. "Không sửa được".
+ *
+ * WHAT THIS IS NOT: A CANCELLATION. The incident is still broken and still needs
+ * somebody, so it goes back to the queue rather than to a dead state — and it
+ * goes back carrying a flag (`needsRework`) that distinguishes it from a report
+ * nobody has looked at yet.
+ *
+ * WHY THE INCIDENT'S TECHNICIAN COLUMNS ARE CLEARED
+ *
+ * This looks like erasing the technician, and it is the opposite. Those columns
+ * are the CURRENT assignment: leaving them set would put a named technician and
+ * an acceptance time on an incident whose status says nobody has picked it up —
+ * which reads, on every screen and in the PDF, as "Bảo is working on this" when
+ * Bảo has gone. Worse, the next `acceptIssue` overwrites them anyway, so keeping
+ * them here would preserve the first attempt only until somebody made a second.
+ *
+ * The attempt row written by `acceptIssue` already holds the name, the phone,
+ * the acceptance time, the failure time and the reason, permanently and
+ * immutably. Clearing the columns moves the fact to the place that keeps it.
+ */
+export async function cannotRepairIssue(
+  id: string,
+  input: CannotRepairInput,
+  actor: Actor,
+  clock: Clock = getClock(),
+): Promise<IssueDetail> {
+  assertTechnicalActor(actor);
+
+  // Trimmed BEFORE the check: an incident cannot go back to the queue with a
+  // reason of three spaces.
+  const reason = input.reason.trim();
+  if (!reason) throw ApiError.validation('Vui lòng nhập lý do không sửa được.');
+
+  const issue = await loadIssue(id);
+  const now = clock.now();
+
+  await prisma.$transaction(async (tx) => {
+    /*
+      THE INCIDENT IS UPDATED FIRST, AND THE ATTEMPT SECOND — THE SAME ORDER AS
+      `completeIssue`.
+
+      It used to be the other way round, so that the attempt could be closed
+      while the incident's columns still held the assignment. That created an
+      AB-BA deadlock: two technicians acting on one incident at the same instant,
+      one pressing "Hoàn thành" and the other "Không sửa được", took the two row
+      locks in opposite orders. PostgreSQL aborts one with 40P01, which is not a
+      P2002 and is handled nowhere — so the loser got a 500 instead of the 409
+      the guard is there to produce.
+
+      The values the attempt needs come from `issue`, loaded before the
+      transaction, so taking the locks in this order costs nothing.
+    */
+    const { count } = await tx.hotelIssue.updateMany({
+      where: { id, status: 'IN_PROGRESS' },
+      data: {
+        status: 'NEW',
+        acceptedByUserId: null,
+        acceptedByNameSnapshot: null,
+        acceptedAt: null,
+        technicianName: null,
+        technicianPhone: null,
+      },
+    });
+    if (count === 0) {
+      throw ApiError.conflict(
+        issue.status === 'COMPLETED'
+          ? 'Sự cố này đã hoàn thành, không thể trả lại hàng đợi.'
+          : 'Cần tiếp nhận sự cố trước khi báo không sửa được.',
+        { status: issue.status },
+      );
+    }
+
+    // Written from the snapshot taken before the columns were cleared, so an
+    // incident accepted before this table existed keeps its technician.
+    await recordAttemptOutcome(tx, id, 'CANNOT_REPAIR', reason, now, issue);
+  });
+
+  const updated = await loadIssue(id);
+  await notifyReporterCannotRepair(updated, reason);
+  return updated;
+}
+
+/**
+ * The reporter is told their incident came BACK, and why.
+ *
+ * Deliberately not folded into `notifyReporterStatus`: that function names a
+ * status, and "your incident is NEW again" is not a status the reporter can act
+ * on. What they need is that somebody went, could not fix it, and it is queued
+ * again — so this says that instead.
+ */
+async function notifyReporterCannotRepair(issue: IssueDetail, reason: string): Promise<void> {
+  const user = await prisma.user.findFirst({
+    where: { id: issue.reportedByUserId, active: true },
+    select: { id: true },
+  });
+  if (!user) return;
+  await prisma.notification.create({
+    data: {
+      userId: issue.reportedByUserId,
+      title: 'Sự cố chưa sửa được, đang chờ xử lý lại',
+      body: `${describeLocation(issue)} — ${reason}`,
+    },
+  });
 }
 
 async function notifyReporterStatus(issue: IssueDetail, status: IssueStatus): Promise<void> {
@@ -340,6 +683,24 @@ export interface ListIssuesFilter {
   branchId?: number;
   status?: IssueStatus;
   areaCategory?: IssueAreaCategory;
+  /**
+   * Half-open [from, to) over `createdAt` — the instant the incident was
+   * REPORTED. Not an acceptance or completion date: "how many incidents came up
+   * between the 17th and the 20th" is a question about when they happened, and
+   * counting by completion would move an incident into the period somebody
+   * happened to finish it in.
+   */
+  from?: Date;
+  to?: Date;
+  /**
+   * "Tồn đọng hiện tại" — everything not finished, whenever it was reported.
+   *
+   * DELIBERATELY IGNORES THE DATE RANGE, and that is the whole point of it: the
+   * question it answers is "what still needs doing right now?", and an incident
+   * reported three weeks ago and still open is the most important answer to it —
+   * exactly the one a report scoped to this week would hide.
+   */
+  outstanding?: boolean;
   skip: number;
   take: number;
 }
@@ -362,6 +723,18 @@ export async function listIssues(actor: Actor, filter: ListIssuesFilter): Promis
   }
   if (filter.status) where.status = filter.status;
   if (filter.areaCategory) where.areaCategory = filter.areaCategory;
+
+  if (filter.outstanding) {
+    // Overrides an explicit status rather than intersecting with it: "tồn đọng"
+    // IS a status set, and `outstanding + status=COMPLETED` is a contradiction
+    // that would silently return nothing.
+    where.status = { in: ['NEW', 'IN_PROGRESS'] };
+  } else if (filter.from || filter.to) {
+    where.createdAt = {
+      ...(filter.from ? { gte: filter.from } : {}),
+      ...(filter.to ? { lt: filter.to } : {}),
+    };
+  }
 
   const [total, issues] = await prisma.$transaction([
     prisma.hotelIssue.count({ where }),

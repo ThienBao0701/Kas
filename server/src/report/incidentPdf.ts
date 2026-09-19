@@ -9,11 +9,15 @@
  * report can already see it on screen.
  */
 import type { IssueStatus } from '@prisma/client';
+import { durationSeconds, formatDuration } from '../lib/duration';
+import type { IncidentRangeSummary } from '../issue/issueSummary';
+import { shiftDefinition } from '../shift/shiftTypes';
 import { describeLocation, ISSUE_AREA_LABELS } from '../issue/issueArea';
 import { ISSUE_CATEGORY_LABELS, type IssueDetail } from '../issue/issueService';
 import { hcmDateTime, periodLabel, rankedTotals } from './format';
 import {
   addPageNumbers,
+  assertFitsLandscape,
   createReportDocument,
   drawTable,
   drawTotals,
@@ -30,21 +34,118 @@ export const ISSUE_STATUS_LABELS: Record<IssueStatus, string> = {
   COMPLETED: 'Đã hoàn thành',
 };
 
-/** Sums to 777pt — the usable width of A4 landscape at a 32pt margin. */
-const COLUMNS: Column<IssueDetail>[] = [
-  { header: 'Chi nhánh', width: 74, value: (i) => i.branch?.code ?? '—' },
-  { header: 'Khu vực', width: 78, value: (i) => (i.areaCategory ? ISSUE_AREA_LABELS[i.areaCategory] : '—') },
-  { header: 'Phòng / Tầng', width: 88, value: (i) => describeLocation(i) },
-  { header: 'Loại sự cố', width: 66, value: (i) => (i.category ? ISSUE_CATEGORY_LABELS[i.category] : '—') },
-  { header: 'Mô tả', width: 118, value: (i) => i.description },
-  { header: 'Người báo', width: 72, value: (i) => i.reportedByNameSnapshot ?? i.reportedBy?.fullName ?? '—' },
-  { header: 'Thời gian báo', width: 72, value: (i) => hcmDateTime(i.createdAt) },
-  { header: 'Người sửa', width: 70, value: (i) => i.technicianName ?? '—' },
-  { header: 'SĐT', width: 58, value: (i) => i.technicianPhone ?? '—' },
-  { header: 'Tiếp nhận', width: 72, value: (i) => hcmDateTime(i.acceptedAt) },
-  { header: 'Hoàn thành', width: 72, value: (i) => hcmDateTime(i.completedAt) },
-  { header: 'Trạng thái', width: 66, value: (i) => ISSUE_STATUS_LABELS[i.status] },
-];
+/**
+ * The incident table: 774pt against 777.89pt of usable width.
+ *
+ * IT USED TO SUM TO 906. Twelve columns were budgeted against a comment that
+ * said 777 and never checked, so "Tiếp nhận", "Hoàn thành" and "Trạng thái" were
+ * drawn past the right edge of the paper and had never once appeared in an
+ * exported report. `assertFitsLandscape` now refuses that at import time.
+ *
+ * "Khu vực" is gone as a column because it was never separate information:
+ * `describeLocation` already begins with the area name, so the old report
+ * printed "Khu Vực Sảnh" beside "Khu Vực Sảnh · Sofa". "SĐT" moved to the
+ * attempts table, where the phone belongs next to the person it reaches.
+ */
+const COLUMNS: Column<IssueDetail>[] = assertFitsLandscape('incident report', [
+  { header: 'Chi nhánh', width: 68, value: (i) => i.branch?.code ?? '—' },
+  { header: 'Vị trí', width: 100, value: (i) => describeLocation(i) },
+  { header: 'Loại sự cố', width: 52, value: (i) => (i.category ? ISSUE_CATEGORY_LABELS[i.category] : '—') },
+  { header: 'Mô tả', width: 100, value: (i) => i.description },
+  { header: 'Người báo', width: 56, value: (i) => i.reportedByNameSnapshot ?? i.reportedBy?.fullName ?? '—' },
+  { header: 'Ca', width: 28, value: (i) => (i.shiftType ? shiftDefinition(i.shiftType).name : '—') },
+  { header: 'Thời gian báo', width: 66, value: (i) => hcmDateTime(i.createdAt) },
+  { header: 'Người sửa', width: 62, value: (i) => i.technicianName ?? '—' },
+  { header: 'Tiếp nhận', width: 66, value: (i) => hcmDateTime(i.acceptedAt) },
+  { header: 'Hoàn thành', width: 66, value: (i) => hcmDateTime(i.completedAt) },
+  {
+    header: 'Xử lý',
+    width: 48,
+    // Only for a FINISHED assignment. A running repair's elapsed time is a live
+    // number, and printing it into a document that will be read next week would
+    // freeze "12 phút" onto a job that took four hours.
+    value: (i) => formatDuration(durationSeconds(i.acceptedAt, i.completedAt)) ?? '—',
+  },
+  { header: 'Trạng thái', width: 62, value: (i) => statusLabel(i) },
+]);
+
+/**
+ * The status as an operator reads it — with "Cần xử lý lại" distinguished from a
+ * report nobody has touched.
+ *
+ * Both are NEW in the database, and printing both as "Sự cố khách sạn" would
+ * hide the single most actionable fact in the report: that somebody already went
+ * and could not fix it.
+ */
+function statusLabel(issue: IssueDetail): string {
+  const failed = issue.attempts.some((a) => a.outcome === 'CANNOT_REPAIR');
+  if (issue.status === 'NEW' && failed) return 'Cần xử lý lại';
+  return ISSUE_STATUS_LABELS[issue.status];
+}
+
+/**
+ * Every repair attempt, across every incident in the period.
+ *
+ * A SECOND TABLE RATHER THAN MORE COLUMNS. An incident has zero, one or five
+ * attempts, and a row-per-incident table can only ever show one of them — which
+ * in practice means the last, so the technician who spent forty minutes failing
+ * disappears behind the one who succeeded in five. One row per attempt is the
+ * only shape that can show both.
+ */
+const ATTEMPT_COLUMNS: Column<AttemptLine>[] = assertFitsLandscape('incident attempts', [
+  { header: 'Chi nhánh', width: 68, value: (a) => a.branchCode },
+  { header: 'Vị trí', width: 110, value: (a) => a.location },
+  { header: 'Lần', width: 32, value: (a) => String(a.attemptNumber) },
+  { header: 'Người sửa', width: 90, value: (a) => a.technicianName },
+  { header: 'SĐT', width: 70, value: (a) => a.technicianPhone },
+  { header: 'Tiếp nhận', width: 76, value: (a) => hcmDateTime(a.acceptedAt) },
+  { header: 'Kết thúc', width: 76, value: (a) => hcmDateTime(a.outcomeAt) },
+  { header: 'Kết quả', width: 76, value: (a) => a.outcomeLabel },
+  { header: 'Thời gian', width: 58, value: (a) => a.duration },
+  { header: 'Lý do', width: 120, value: (a) => a.reason },
+]);
+
+interface AttemptLine {
+  branchCode: string;
+  location: string;
+  attemptNumber: number;
+  technicianName: string;
+  technicianPhone: string;
+  acceptedAt: Date;
+  outcomeAt: Date | null;
+  outcomeLabel: string;
+  duration: string;
+  reason: string;
+}
+
+const OUTCOME_LABELS = {
+  COMPLETED: 'Hoàn thành',
+  CANNOT_REPAIR: 'Không sửa được',
+} as const;
+
+function attemptLines(issues: IssueDetail[]): AttemptLine[] {
+  const lines: AttemptLine[] = [];
+  for (const issue of issues) {
+    for (const attempt of issue.attempts) {
+      lines.push({
+        branchCode: issue.branch?.code ?? '—',
+        location: describeLocation(issue),
+        attemptNumber: attempt.attemptNumber,
+        technicianName: attempt.technicianNameSnapshot,
+        technicianPhone: attempt.technicianPhone,
+        acceptedAt: attempt.acceptedAt,
+        outcomeAt: attempt.outcomeAt,
+        // An attempt with no outcome is one a technician is working on RIGHT
+        // NOW; it is listed rather than hidden, because "somebody is on it" is
+        // exactly what a reader of an incident report wants to know.
+        outcomeLabel: attempt.outcome ? OUTCOME_LABELS[attempt.outcome] : 'Đang sửa',
+        duration: formatDuration(durationSeconds(attempt.acceptedAt, attempt.outcomeAt)) ?? '—',
+        reason: attempt.reason ?? '—',
+      });
+    }
+  }
+  return lines;
+}
 
 export interface IncidentReportInput {
   from: string;
@@ -52,6 +153,18 @@ export interface IncidentReportInput {
   scope: string;
   issues: IssueDetail[];
   generatedAt: Date;
+  /**
+   * The SAME counts the Admin screen shows, computed by the same query.
+   *
+   * Not derived from `issues` here. The rows in this report are the incidents
+   * REPORTED in the period, and counting failed attempts across them answers a
+   * different question from "how many attempts failed in the period" — an
+   * incident reported on the 17th whose attempt failed on the 20th belongs to
+   * one number and not the other. Both files claimed the screen and the file
+   * could not disagree; computing the figure twice, from two different sets, is
+   * exactly how they did.
+   */
+  summary: IncidentRangeSummary;
 }
 
 export async function buildIncidentReportPdf(input: IncidentReportInput): Promise<Buffer> {
@@ -70,19 +183,50 @@ export async function buildIncidentReportPdf(input: IncidentReportInput): Promis
 
   drawTable(doc, COLUMNS, input.issues);
 
+  /*
+    The attempt detail, on its own page.
+
+    `addPage` rather than letting it flow: the two tables have different columns,
+    and a reader who scrolls past the boundary mid-page has no way to tell which
+    header the row under their eye belongs to.
+  */
+  const attempts = attemptLines(input.issues);
+  if (attempts.length > 0) {
+    doc.addPage();
+    sectionTitle(doc, 'CHI TIẾT XỬ LÝ');
+    drawTable(doc, ATTEMPT_COLUMNS, attempts);
+  }
+
   const byBranch = new Map<string, number>();
   const byStatus = new Map<string, number>();
   const byArea = new Map<string, number>();
   const bump = (m: Map<string, number>, k: string): void => void m.set(k, (m.get(k) ?? 0) + 1);
   for (const issue of input.issues) {
     bump(byBranch, issue.branch ? `${issue.branch.code} — ${issue.branch.address}` : 'Không rõ');
-    bump(byStatus, ISSUE_STATUS_LABELS[issue.status]);
+    bump(byStatus, statusLabel(issue));
     bump(byArea, issue.areaCategory ? ISSUE_AREA_LABELS[issue.areaCategory] : 'Không rõ');
   }
 
   doc.moveDown(0.8);
   sectionTitle(doc, 'TỔNG HỢP');
   doc.text(`Tổng số sự cố: ${input.issues.length}`);
+
+  /*
+    TWO NUMBERS THAT LOOK LIKE ONE, REPORTED SEPARATELY ON PURPOSE.
+
+    "Lượt không sửa được" counts EVENTS in the period — one incident three
+    technicians failed on contributes three. "Sự cố cần xử lý lại" counts
+    INCIDENTS currently waiting to be picked up again — that same incident
+    contributes one, and contributes none at all once somebody accepts it.
+    Printing either alone, or adding them together, produces a number nobody can
+    interpret.
+
+    Both come from `input.summary`, i.e. from the same query the screen reads,
+    so the file and the table it was printed from cannot differ.
+  */
+  doc.text(`Lượt không sửa được: ${input.summary.cannotRepairAttempts}`);
+  doc.text(`Sự cố cần xử lý lại: ${input.summary.needsReworkIssues}`);
+  doc.text(`Chưa hoàn thành trên toàn hệ thống: ${input.summary.outstandingTotal}`);
 
   drawTotals(doc, 'Theo chi nhánh', rankedTotals(byBranch));
   drawTotals(doc, 'Theo trạng thái', rankedTotals(byStatus));

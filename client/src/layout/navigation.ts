@@ -2,6 +2,7 @@ import {
   BellRing,
   Building2,
   CheckCircle2,
+  ClipboardList,
   ClipboardPaste,
   FileText,
   Hammer,
@@ -34,6 +35,7 @@ export const ADMIN_NAV: NavItem[] = [
   { to: '/app/completed', label: 'Đã xác nhận đúng', icon: CheckCircle2 },
   { to: '/app/history', label: 'Lịch sử', icon: History },
   { to: '/app/issues', label: 'Sự cố khách sạn', icon: Wrench },
+  { to: '/app/handover', label: 'Bàn giao ca', icon: ClipboardList },
   { to: '/app/resend-orders', label: 'Gửi lại đơn', icon: Send },
   { to: '/app/charge-documents', label: 'Chứng từ', icon: FileText },
   { to: '/app/chat', label: 'Chat box', icon: MessagesSquare },
@@ -65,6 +67,7 @@ export const RECEPTIONIST_NAV: NavItem[] = [
   { to: '/app/completed', label: 'Đã xác nhận đúng', icon: CheckCircle2 },
   { to: '/app/history', label: 'Lịch sử', icon: History },
   { to: '/app/issues', label: 'Báo cáo sự cố', icon: Wrench },
+  { to: '/app/handover', label: 'Bàn giao ca', icon: ClipboardList },
   { to: '/app/chat', label: 'Chat box', icon: MessagesSquare },
   { to: '/app/reminders', label: 'Nhắc nhở', icon: BellRing },
 ];

@@ -16,7 +16,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app';
 import { seedBranches } from '../src/db/seed';
-import { resetAll, resetBookingData, testPrisma, utcDate } from './helpers/db';
+import { resetAll, resetBookingData, resetShiftData, testPrisma, utcDate } from './helpers/db';
 import { ADMIN_PASSWORD, RECEPTIONIST_PASSWORD, createAdmin, createReceptionist, loginAgent } from './helpers/auth';
 import { resetClock, setClock } from '../src/lib/clock';
 
@@ -61,7 +61,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await resetBookingData();
-  await testPrisma.receptionShiftSession.deleteMany();
+  await resetShiftData();
   setClock({ now: () => NOW });
 });
 
@@ -71,7 +71,7 @@ afterAll(async () => {
 });
 
 /** A dispatched order, claimed by the receptionist so they may submit a proof. */
-async function dispatchedBooking(code = 'ATTR-1'): Promise<string> {
+async function dispatchedBooking(code = 'ATTR-1', at: Date = NOW): Promise<string> {
   const booking = await testPrisma.booking.create({
     data: {
       bookingCode: code,
@@ -84,12 +84,12 @@ async function dispatchedBooking(code = 'ATTR-1'): Promise<string> {
       checkInDate: utcDate('2026-09-20'),
       checkOutDate: utcDate('2026-09-22'),
       status: 'NEW',
-      sentAt: NOW,
+      sentAt: at,
       sentByUserId: adminId,
       verificationStatus: 'NOT_SUBMITTED',
       claimedByUserId: letanId,
-      claimedAt: NOW,
-      claimExpiresAt: new Date(NOW.getTime() + 3 * 60 * 1000),
+      claimedAt: at,
+      claimExpiresAt: new Date(at.getTime() + 3 * 60 * 1000),
       claimCycle: 1,
     },
   });
@@ -288,5 +288,83 @@ describe('a re-creation never overwrites the original creator', () => {
       shiftType: 'B',
       status: 'PENDING_REVIEW',
     });
+  });
+});
+
+/* ================================================================== */
+/* Attribution across an early handover ("Đổi ca")                     */
+/* ================================================================== */
+
+/**
+ * THE BOUNDARY IS THE HANDOVER INSTANT, AND IT ONLY EVER MOVES FORWARD.
+ *
+ * This is the claim the whole "Đổi ca" feature rests on: an order created at
+ * 13:14 belongs to the receptionist who was on the desk at 13:14, for ever, even
+ * though somebody else was on it at 13:16. If a handover could re-attribute work
+ * already submitted, the accountability report would credit — or blame — the
+ * wrong person for every order near a shift change.
+ */
+describe('a shift handover moves attribution forward and never backwards', () => {
+  async function handover(reason: string, name: string, shiftType: string): Promise<void> {
+    const res = await letan
+      .post('/api/reception/shifts/handover')
+      .send({ reason, incomingName: name, incomingShiftType: shiftType });
+    expect(res.status).toBe(201);
+  }
+
+  it('keeps the outgoing receptionist on work submitted before, and the incoming one after', async () => {
+    await checkIn('A', 'Nguyễn Văn A');
+
+    // Submitted BEFORE the handover.
+    const before = await dispatchedBooking('ATTR-BEFORE');
+    expect(
+      (await letan.post(`/api/bookings/${before}/proofs`).attach('image', PNG, 'proof.png')).status,
+    ).toBe(201);
+
+    // 13:15 — A leaves, B takes over Ca B.
+    const at = new Date(NOW.getTime() + 60 * 60 * 1000);
+    setClock({ now: () => at });
+    await handover('Có việc cá nhân', 'Nguyễn Văn B', 'B');
+
+    // Submitted AFTER the handover.
+    // Claimed at the CURRENT clock — a three-minute claim stamped an hour ago
+    // has expired, and the proof would be refused for that reason instead.
+    const after = await dispatchedBooking('ATTR-AFTER', at);
+    expect(
+      (await letan.post(`/api/bookings/${after}/proofs`).attach('image', PNG, 'proof.png')).status,
+    ).toBe(201);
+
+    const first = await testPrisma.bookingCreationProof.findFirstOrThrow({
+      where: { bookingId: before },
+    });
+    const second = await testPrisma.bookingCreationProof.findFirstOrThrow({
+      where: { bookingId: after },
+    });
+
+    expect(first).toMatchObject({ receptionistNameSnapshot: 'Nguyễn Văn A', shiftType: 'A' });
+    expect(second).toMatchObject({ receptionistNameSnapshot: 'Nguyễn Văn B', shiftType: 'B' });
+    // Two different sessions, so the report can group by either.
+    expect(first.shiftSessionId).not.toBe(second.shiftSessionId);
+  });
+
+  it('does not rewrite an attempt already stored when the handover happens', async () => {
+    await checkIn('A', 'Nguyễn Văn A');
+    const id = await dispatchedBooking('ATTR-FROZEN');
+    await letan.post(`/api/bookings/${id}/proofs`).attach('image', PNG, 'proof.png');
+
+    const beforeRow = await testPrisma.bookingCreationProof.findFirstOrThrow({
+      where: { bookingId: id },
+    });
+
+    setClock({ now: () => new Date(NOW.getTime() + 60 * 60 * 1000) });
+    await handover('Có việc cá nhân', 'Nguyễn Văn B', 'B');
+
+    const afterRow = await testPrisma.bookingCreationProof.findFirstOrThrow({
+      where: { bookingId: id },
+    });
+    // Byte for byte the same attribution — the handover touched nothing.
+    expect(afterRow.receptionistNameSnapshot).toBe(beforeRow.receptionistNameSnapshot);
+    expect(afterRow.shiftType).toBe(beforeRow.shiftType);
+    expect(afterRow.shiftSessionId).toBe(beforeRow.shiftSessionId);
   });
 });

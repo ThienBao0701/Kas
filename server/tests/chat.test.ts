@@ -40,18 +40,28 @@ let letanA: Awaited<ReturnType<typeof loginAgent>>['agent'];
 let letanB: Awaited<ReturnType<typeof loginAgent>>['agent'];
 let cn1: number;
 
-const SUBJECT = 'Khách đòi đổi phòng lúc nửa đêm';
+const CATEGORY = 'ROOM';
+const CATEGORY_LABEL = 'Phòng';
 const BODY = 'Khách đòi đổi phòng lúc nửa đêm, em xử lý sao ạ?';
 
-/** Opens a thread as receptionist A and returns its id. */
+/**
+ * Opens a thread as receptionist A and returns its id.
+ *
+ * The thread is identified by a CATEGORY now, not a typed title — so what used
+ * to be a different subject per test is a different BODY per test, and the
+ * distinguishing text lives where free text is still allowed.
+ */
 async function openThread(
   agent = letanA,
-  subject = SUBJECT,
+  body = BODY,
+  opts: { category?: string; anonymous?: boolean } = {},
 ): Promise<string> {
-  const res = await agent
+  const req = agent
     .post('/api/chat/conversations')
-    .field('subject', subject)
-    .field('body', BODY);
+    .field('category', opts.category ?? CATEGORY)
+    .field('body', body);
+  if (opts.anonymous) req.field('anonymous', 'true');
+  const res = await req;
   expect(res.status).toBe(201);
   return res.body.conversation.id as string;
 }
@@ -119,8 +129,10 @@ describe('authorization', () => {
       (await deptAgent.post(`/api/chat/conversations/${id}/messages`).field('body', 'hi')).status,
     ).toBe(403);
     expect(
-      (await deptAgent.post('/api/chat/conversations').field('subject', 'x').field('body', 'y'))
-        .status,
+      (await deptAgent
+        .post('/api/chat/conversations')
+        .field('category', CATEGORY)
+        .field('body', 'y')).status,
     ).toBe(403);
     expect((await deptAgent.post(`/api/chat/conversations/${id}/close`)).status).toBe(403);
   });
@@ -133,7 +145,7 @@ describe('authorization', () => {
   it('refuses an ADMIN trying to OPEN a conversation — reception asks', async () => {
     const res = await adminAgent
       .post('/api/chat/conversations')
-      .field('subject', SUBJECT)
+      .field('category', CATEGORY)
       .field('body', BODY);
     expect(res.status).toBe(403);
   });
@@ -176,7 +188,10 @@ describe('a receptionist sees only their own conversations', () => {
     const id = await openThread(letanB, 'Câu hỏi của lễ tân B');
     const res = await letanB.get(`/api/chat/conversations/${id}`);
     expect(res.status).toBe(200);
-    expect(res.body.conversation.subject).toBe('Câu hỏi của lễ tân B');
+    // `title` is the category's label, built by the server so the list, the
+    // thread and the PDF cannot name the same category three different ways.
+    expect(res.body.conversation.title).toBe(CATEGORY_LABEL);
+    expect(res.body.conversation.category).toBe(CATEGORY);
   });
 
   it('lets an ADMIN see every thread', async () => {
@@ -185,9 +200,11 @@ describe('a receptionist sees only their own conversations', () => {
 
     const res = await adminAgent.get('/api/chat/conversations');
     expect(res.status).toBe(200);
-    const subjects = (res.body.conversations as { subject: string }[]).map((c) => c.subject);
-    expect(subjects).toContain('A hỏi');
-    expect(subjects).toContain('B hỏi');
+    const previews = (res.body.conversations as { lastMessagePreview: string }[]).map(
+      (c) => c.lastMessagePreview,
+    );
+    expect(previews).toContain('A hỏi');
+    expect(previews).toContain('B hỏi');
   });
 });
 
@@ -246,8 +263,10 @@ describe('an ADMIN can open and answer ANY receptionist conversation', () => {
     // cannot open a conversation".
     const id = await openThread(letanA);
     expect(
-      (await adminAgent.post('/api/chat/conversations').field('subject', 'x').field('body', 'y'))
-        .status,
+      (await adminAgent
+        .post('/api/chat/conversations')
+        .field('category', CATEGORY)
+        .field('body', 'y')).status,
     ).toBe(403);
     // Everything else on that same thread is open to them.
     expect((await adminAgent.get(`/api/chat/conversations/${id}`)).status).toBe(200);
@@ -267,7 +286,11 @@ describe('creating a conversation', () => {
     const id = await openThread();
 
     const conv = await testPrisma.chatConversation.findUniqueOrThrow({ where: { id } });
-    expect(conv.subject).toBe(SUBJECT);
+    // The column that replaced the typed title. `subject` stays null on every
+    // thread created from here on — it is only ever read on legacy rows.
+    expect(conv.category).toBe(CATEGORY);
+    expect(conv.subject).toBeNull();
+    expect(conv.anonymous).toBe(false);
     expect(conv.status).toBe('WAITING_ADMIN');
     // The branch is a server-side snapshot of the ASKER's branch, never taken
     // from the request body.
@@ -283,7 +306,7 @@ describe('creating a conversation', () => {
     const other = await testPrisma.branch.findFirstOrThrow({ orderBy: { id: 'desc' } });
     const res = await letanA
       .post('/api/chat/conversations')
-      .field('subject', SUBJECT)
+      .field('category', CATEGORY)
       .field('body', BODY)
       .field('branchId', String(other.id));
     expect(res.status).toBe(201);
@@ -294,29 +317,61 @@ describe('creating a conversation', () => {
     expect(conv.branchId).toBe(cn1);
   });
 
-  it('rejects a blank subject', async () => {
+  it('rejects a missing category', async () => {
+    const res = await letanA.post('/api/chat/conversations').field('body', BODY);
+    expect(res.status).toBe(422); // KAS maps validation errors to 422
+    expect(await testPrisma.chatConversation.count()).toBe(0);
+  });
+
+  /**
+   * THE POINT OF A CLOSED LIST. An arbitrary string is not a category, and a
+   * request that skipped the form is refused exactly as the form refuses it.
+   * This is what the old "rejects a blank subject" test could never check:
+   * free text has no wrong answer.
+   */
+  it('rejects a category outside the three choices', async () => {
     const res = await letanA
       .post('/api/chat/conversations')
-      .field('subject', '   ')
+      .field('category', 'ANYTHING_ELSE')
       .field('body', BODY);
-    expect(res.status).toBe(422); // KAS maps validation errors to 422
+    expect(res.status).toBe(422);
     expect(await testPrisma.chatConversation.count()).toBe(0);
   });
 
-  it('rejects a message with neither text nor image', async () => {
+  /** A typed title is no longer something the API will take from anyone. */
+  it('ignores a client-supplied subject', async () => {
     const res = await letanA
       .post('/api/chat/conversations')
-      .field('subject', SUBJECT)
-      .field('body', '   ');
-    expect(res.status).toBe(422); // KAS maps validation errors to 422
+      .field('category', CATEGORY)
+      .field('body', BODY)
+      .field('subject', 'Tiêu đề tự gõ');
+    expect(res.status).toBe(201);
+    const conv = await testPrisma.chatConversation.findUniqueOrThrow({
+      where: { id: res.body.conversation.id },
+    });
+    expect(conv.subject).toBeNull();
+  });
+
+  /**
+   * Stricter than a REPLY, on purpose: a photo with no words is a clear thing to
+   * send into a thread already under way, and a useless thing to open one with —
+   * the Admin receives a category and a picture and nothing to act on.
+   */
+  it('rejects a first message with no text, even with an image', async () => {
+    const res = await letanA
+      .post('/api/chat/conversations')
+      .field('category', CATEGORY)
+      .field('body', '   ')
+      .attach('images', pngBuffer(), 'anh.png');
+    expect(res.status).toBe(422);
     expect(await testPrisma.chatConversation.count()).toBe(0);
   });
 
-  it('accepts an image-only first message', async () => {
+  it('accepts text with an image', async () => {
     const res = await letanA
       .post('/api/chat/conversations')
-      .field('subject', SUBJECT)
-      .field('body', '')
+      .field('category', CATEGORY)
+      .field('body', BODY)
       .attach('images', pngBuffer(), 'anh.png');
     expect(res.status).toBe(201);
     expect(await testPrisma.chatAttachment.count()).toBe(1);

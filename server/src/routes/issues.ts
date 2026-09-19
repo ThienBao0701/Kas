@@ -4,9 +4,11 @@ import { getClock } from '../lib/clock';
 import { requireAuth, requirePasswordChanged, requireRole } from '../middleware/auth';
 import { proofUpload } from '../middleware/upload';
 import { readIssuePhoto } from '../issue/issueStorage';
+import { hcmRange } from '../booking/recreationReport';
 import {
   acceptIssue,
   authorizeIssuePhoto,
+  cannotRepairIssue,
   completeIssue,
   createIssue,
   getIssue,
@@ -60,13 +62,42 @@ const updateSchema = z
   })
   .refine((v) => Object.keys(v).length > 0, { message: 'Cần ít nhất một trường để cập nhật.' });
 
-const listSchema = z.object({
-  branchId: z.coerce.number().int().positive().optional(),
-  status: STATUS.optional(),
-  areaCategory: AREA.optional(),
-  page: z.coerce.number().int().positive().default(1),
-  pageSize: z.coerce.number().int().positive().max(100).default(50),
-});
+const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ngày phải theo định dạng YYYY-MM-DD.');
+
+/**
+ * `from`/`to` are OPTIONAL and, when absent, nothing is filtered by date.
+ *
+ * The Admin monitor's job is "what is going on across the eight properties", and
+ * defaulting it to today would hide every unresolved incident older than this
+ * morning — the ones that most need looking at. A period is something the Admin
+ * asks for, and asking for it changes nothing else about the screen.
+ *
+ * They are refused as a PAIR rather than accepted singly: a half-open range
+ * expressed as "from the 17th" silently means "for ever after the 17th", which
+ * reads on screen exactly like a range that was applied.
+ */
+const listSchema = z
+  .object({
+    branchId: z.coerce.number().int().positive().optional(),
+    status: STATUS.optional(),
+    areaCategory: AREA.optional(),
+    from: isoDay.optional(),
+    to: isoDay.optional(),
+    outstanding: z
+      .enum(['true', 'false'])
+      .optional()
+      .transform((v) => v === 'true'),
+    page: z.coerce.number().int().positive().default(1),
+    pageSize: z.coerce.number().int().positive().max(100).default(50),
+  })
+  .refine((q) => (q.from === undefined) === (q.to === undefined), {
+    message: 'Cần chọn cả ngày bắt đầu và ngày kết thúc.',
+    path: ['to'],
+  })
+  .refine((q) => q.from === undefined || q.to === undefined || q.from <= q.to, {
+    message: 'Ngày bắt đầu phải trước hoặc bằng ngày kết thúc.',
+    path: ['from'],
+  });
 
 const countsSchema = z.object({
   branchId: z.coerce.number().int().positive().optional(),
@@ -76,6 +107,17 @@ const countsSchema = z.object({
 const acceptSchema = z.object({
   technicianName: z.string().trim().min(1, 'Vui lòng nhập họ và tên người sửa.').max(200),
   technicianPhone: z.string().trim().min(1, 'Vui lòng nhập số điện thoại người sửa.').max(30),
+});
+
+/**
+ * An incident only goes back to the queue WITH a reason.
+ *
+ * Trimmed by zod before `min(1)`, so a reason of spaces is refused rather than
+ * stored — the next technician to pick this up reads this line to decide whether
+ * they can succeed where the last one could not, and "   " tells them nothing.
+ */
+const cannotRepairSchema = z.object({
+  reason: z.string().trim().min(1, 'Vui lòng nhập lý do không sửa được.').max(1000),
 });
 
 function actor(user: UserWithBranch) {
@@ -106,15 +148,23 @@ export function createIssuesRouter(): Router {
     (async () => {
       const user = req.currentUser!;
       const q = listSchema.parse(req.query);
+      // Half-open [from, to) in Asia/Ho_Chi_Minh, using the SAME helper the
+      // dashboard and the accountability report use — one definition of what a
+      // Vietnamese calendar day is, for every screen that asks for one.
+      const range = q.from && q.to ? hcmRange(q.from, q.to) : null;
+      const now = getClock().now();
       const { issues, total } = await listIssues(actor(user), {
         branchId: q.branchId,
         status: q.status,
         areaCategory: q.areaCategory,
+        from: range?.start,
+        to: range?.end,
+        outstanding: q.outstanding,
         skip: (q.page - 1) * q.pageSize,
         take: q.pageSize,
       });
       res.json({
-        issues: issues.map(serializeIssue),
+        issues: issues.map((issue) => serializeIssue(issue, now)),
         pagination: { page: q.page, pageSize: q.pageSize, total, totalPages: Math.max(1, Math.ceil(total / q.pageSize)) },
       });
     })().catch(next);
@@ -193,6 +243,25 @@ export function createIssuesRouter(): Router {
     (async () => {
       const user = req.currentUser!;
       const issue = await completeIssue(req.params.id!, actor(user), getClock());
+      res.json({ issue: serializeIssue(issue) });
+    })().catch(next);
+  });
+
+  /*
+    POST /api/issues/:id/cannot-repair — "Không sửa được": IN_PROGRESS → NEW.
+
+    A SEPARATE ENDPOINT, not a parameter on /complete. The two are opposite
+    outcomes with different consequences — one closes the incident, the other
+    puts it back in front of somebody else — and folding them into one route
+    with an `outcome` field would make "finish this job" and "give this job up"
+    the same request with a different word in the body. It also keeps
+    /complete's contract exactly as it was.
+  */
+  router.post('/issues/:id/cannot-repair', requireAuth, requirePasswordChanged, requireTechnical, (req, res, next) => {
+    (async () => {
+      const user = req.currentUser!;
+      const input = cannotRepairSchema.parse(req.body ?? {});
+      const issue = await cannotRepairIssue(req.params.id!, input, actor(user), getClock());
       res.json({ issue: serializeIssue(issue) });
     })().catch(next);
   });

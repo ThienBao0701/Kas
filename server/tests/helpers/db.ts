@@ -38,6 +38,35 @@ export async function resetBookingData(): Promise<void> {
   await testPrisma.booking.deleteMany();
 }
 
+/**
+ * Clears the incident tables, attempts first.
+ *
+ * Exported because several suites clear incidents BETWEEN tests, not just
+ * around them, and the order is not obvious: a repair attempt points at the
+ * incident it belongs to, so deleting incidents first relies on a cascade that
+ * may be relaxed later. Calling this instead of `hotelIssue.deleteMany()`
+ * directly keeps that ordering knowledge in one place.
+ */
+export async function resetIssueData(): Promise<void> {
+  await testPrisma.technicalRepairAttempt.deleteMany();
+  await testPrisma.hotelIssue.deleteMany();
+}
+
+/**
+ * Clears the shift tables, and does so in the ONLY order that works.
+ *
+ * ShiftHandover holds REQUIRED references to two ReceptionShiftSession rows —
+ * the one that ended and the one that began — so Prisma defaults both to
+ * RESTRICT and `receptionShiftSession.deleteMany()` throws P2003 the moment a
+ * single handover exists. The notes go first because a note may point at a
+ * handover.
+ */
+export async function resetShiftData(): Promise<void> {
+  await testPrisma.shiftHandoverNote.deleteMany();
+  await testPrisma.shiftHandover.deleteMany();
+  await testPrisma.receptionShiftSession.deleteMany();
+}
+
 export async function resetAll(): Promise<void> {
   await resetBookingData();
   // ChargeDocument holds RESTRICT FKs to Branch and User (a charge document is
@@ -47,8 +76,9 @@ export async function resetAll(): Promise<void> {
   await testPrisma.chargeDocumentAudit.deleteMany();
   await testPrisma.chargeDocumentAttachment.deleteMany();
   await testPrisma.chargeDocument.deleteMany();
-  // HotelIssue holds RESTRICT FKs to User/Branch, so it must be cleared first.
-  await testPrisma.hotelIssue.deleteMany();
+  // HotelIssue holds RESTRICT FKs to User/Branch, so it must be cleared first —
+  // and its repair attempts before it.
+  await resetIssueData();
   // Chat box holds a RESTRICT FK from ChatConversation.createdByUserId and
   // ChatMessage.senderUserId to User — a thread must not vanish because an
   // account was removed. Children first, then the thread.
@@ -70,10 +100,11 @@ export async function resetAll(): Promise<void> {
   await testPrisma.branchSourceAlias.deleteMany();
   // ReceptionShiftSession holds RESTRICT FKs to BOTH User and Branch — a shift
   // is an audit record of who was on the desk, so an account being removed must
-  // not silently take it with it. Cleared here, before either. The proofs that
-  // point at a session are already gone with their bookings, and that FK is
-  // SET NULL anyway.
-  await testPrisma.receptionShiftSession.deleteMany();
+  // not silently take it with it. Cleared here, before either, together with the
+  // handovers and notes that hold RESTRICT references to the sessions
+  // themselves. The proofs that point at a session are already gone with their
+  // bookings, and that FK is SET NULL anyway.
+  await resetShiftData();
   await testPrisma.session.deleteMany();
   await testPrisma.user.deleteMany();
   await testPrisma.branch.deleteMany();

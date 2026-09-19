@@ -26,6 +26,7 @@ import { ErrorAlert } from '../components/ErrorAlert';
 import { PageHeader, QueryState } from '../components/PageState';
 import { Toast } from '../components/Toast';
 import { DateRangeField, type DateRangeValue } from '../components/DateRangeField';
+import { reportsApi } from '../api/reports';
 import { IssueStatusBadge, IssueThumb, IssueWorkTrail } from '../components/IssueViews';
 import { formatDateTime, hcmToday } from '../lib/format';
 import { useIssueSummary } from '../hooks/useIssueSummary';
@@ -88,7 +89,13 @@ function ReceptionistIssues() {
                         {issue.category ? (
                           <span className="text-sm text-slate-500">{issueCategoryLabel(issue)}</span>
                         ) : null}
-                        <IssueStatusBadge status={issue.status} />
+                        {/*
+                          The reporter sees "Cần xử lý lại" too. They are the one
+                          the guest will ask again, so "somebody went and could
+                          not fix it" is information they need before the guest
+                          tells them.
+                        */}
+                        <IssueStatusBadge status={issue.status} needsRework={issue.needsRework} />
                       </div>
                       <p className="mt-1 whitespace-pre-wrap break-words text-sm text-slate-700">
                         {issue.description}
@@ -393,22 +400,61 @@ function AdminIssues() {
   const [statusFilter, setStatusFilter] = useState<IssueStatus | ''>('');
   const [branchFilter, setBranchFilter] = useState<number | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  /**
+   * NO DATE RANGE UNTIL THE ADMIN ASKS FOR ONE.
+   *
+   * Defaulting to today would hide every unresolved incident older than this
+   * morning — which are precisely the ones that most need looking at, and are
+   * exactly what "Tồn đọng hiện tại" exists to surface. A period is a question
+   * somebody asks, not the shape of the screen.
+   */
+  const [range, setRange] = useState<DateRangeValue>({ from: '', to: '' });
+  const [outstanding, setOutstanding] = useState(false);
+
+  const hasRange = range.from !== '' && range.to !== '';
 
   const summary = useIssueSummary();
   const branches = summary.data?.summary.byBranch ?? [];
   const activeBranch = branches.find((b) => b.branchId === branchFilter) ?? null;
 
   const list = useQuery({
-    queryKey: ['issues', { admin: true, status: statusFilter, branchId: branchFilter }],
+    queryKey: [
+      'issues',
+      { admin: true, status: statusFilter, branchId: branchFilter, range, outstanding },
+    ],
     queryFn: () =>
       issuesApi.list({
-        status: statusFilter || undefined,
+        // Not sent at all while the outstanding view is on: the server would
+        // override it anyway, and sending a filter that is going to be ignored
+        // is how a request and a screen come to disagree.
+        status: outstanding ? undefined : statusFilter || undefined,
         branchId: branchFilter ?? undefined,
+        // Sent as a PAIR or not at all — the server refuses a half-open range,
+        // because "from the 17th" silently means "for ever after the 17th" and
+        // reads on screen exactly like a range that was applied.
+        from: hasRange ? range.from : undefined,
+        to: hasRange ? range.to : undefined,
+        outstanding: outstanding || undefined,
         pageSize: 100,
       }),
     refetchInterval: POLL_MS,
   });
   const issues = list.data?.issues ?? [];
+  const total = list.data?.pagination.total ?? 0;
+
+  /**
+   * Picks "today" in Asia/Ho_Chi_Minh, and clears the outstanding view.
+   *
+   * The two are mutually exclusive ON THE SERVER — "tồn đọng" is a status set,
+   * so combining it with a period would silently answer a different question
+   * than the one the controls appear to be asking. Making them clear each other
+   * here is the UI agreeing with that rather than hiding it.
+   */
+  function pickToday(): void {
+    const today = hcmToday();
+    setRange({ from: today, to: today });
+    setOutstanding(false);
+  }
 
   return (
     <div>
@@ -416,12 +462,24 @@ function AdminIssues() {
         title="Sự cố khách sạn"
         description="Theo dõi sự cố từ mọi chi nhánh. Bộ phận kỹ thuật là nơi tiếp nhận và xử lý."
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {/*
+              DISABLED WHILE "Tồn đọng hiện tại" IS ON, because the server
+              overrides it.
+
+              "Tồn đọng" IS a status set — NEW plus IN_PROGRESS — so `listIssues`
+              replaces any chosen status with it. Left enabled, the dropdown
+              could read "Đã hoàn thành" while the table showed the incidents
+              that filter excludes, with nothing on screen admitting the filter
+              had been dropped. Clearing and disabling it makes the override
+              visible instead of silent.
+            */}
             <select
-              value={statusFilter}
+              value={outstanding ? '' : statusFilter}
+              disabled={outstanding}
               onChange={(e) => setStatusFilter(e.target.value as IssueStatus | '')}
               aria-label="Lọc theo trạng thái"
-              className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+              className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
             >
               <option value="">Tất cả trạng thái</option>
               <option value="NEW">Sự cố khách sạn</option>
@@ -444,6 +502,57 @@ function AdminIssues() {
           </div>
         }
       />
+
+      <div className="mb-4 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-3">
+        <DateRangeField
+          legend="Ngày báo sự cố"
+          value={range}
+          onChange={(next) => {
+            setRange(next);
+            if (next.from && next.to) setOutstanding(false);
+          }}
+          max={hcmToday()}
+          testId="issue-range"
+        />
+        <Button variant="secondary" onClick={pickToday} data-testid="issue-range-today">
+          Hôm nay
+        </Button>
+        {hasRange ? (
+          <Button
+            variant="secondary"
+            onClick={() => setRange({ from: '', to: '' })}
+            data-testid="issue-range-clear"
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+            Bỏ lọc ngày
+          </Button>
+        ) : null}
+        <label className="flex items-center gap-2 text-sm text-slate-600">
+          <input
+            type="checkbox"
+            checked={outstanding}
+            data-testid="issue-outstanding"
+            onChange={(e) => {
+              setOutstanding(e.target.checked);
+              // Clearing the range makes the scope change visible rather than
+              // leaving two dates on screen that are no longer being applied.
+              if (e.target.checked) setRange({ from: '', to: '' });
+            }}
+          />
+          Tồn đọng hiện tại
+        </label>
+        <p className="ml-auto text-xs text-slate-500" data-testid="issue-scope-note">
+          {outstanding
+            ? 'Đang xem mọi sự cố chưa hoàn thành, không giới hạn ngày báo.'
+            : hasRange
+              ? 'Đang xem sự cố báo trong khoảng đã chọn.'
+              : 'Đang xem toàn bộ sự cố.'}
+        </p>
+      </div>
+
+      {hasRange ? (
+        <IncidentRangeSummary from={range.from} to={range.to} branchId={branchFilter} />
+      ) : null}
 
       <BranchIssueCards
         branches={branches}
@@ -491,6 +600,7 @@ function AdminIssues() {
                     <th className="px-4 py-3">Thời gian báo</th>
                     <th className="px-4 py-3">Tiếp nhận</th>
                     <th className="px-4 py-3">Hoàn thành</th>
+                    <th className="px-4 py-3">Thời gian xử lý</th>
                     <th className="px-4 py-3">Trạng thái</th>
                   </tr>
                 </thead>
@@ -505,7 +615,80 @@ function AdminIssues() {
         )}
       </QueryState>
 
-      {exportOpen ? <IncidentExportModal onClose={() => setExportOpen(false)} branchId={branchFilter} /> : null}
+      {issues.length > 0 && total > issues.length ? (
+        <p className="mt-3 text-xs text-slate-500" data-testid="issue-truncated">
+          Đang hiển thị {issues.length} trên tổng số {total} sự cố. Thu hẹp khoảng thời gian hoặc
+          xuất báo cáo PDF để xem đầy đủ.
+        </p>
+      ) : null}
+
+      {exportOpen ? (
+        <IncidentExportModal
+          onClose={() => setExportOpen(false)}
+          branchId={branchFilter}
+          // The export starts from the period already on screen, so the file and
+          // the table cannot silently describe two different weeks.
+          initialRange={hasRange ? range : null}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The counts for the chosen period.
+ *
+ * RENDERED AS CARDS, NOT A TABLE. There is exactly one `<table>` on this screen
+ * and it is the incident list; a second one would make "the table" ambiguous to
+ * anybody — a screen reader, a test, or a person — trying to refer to it.
+ *
+ * "Lượt không sửa được" and "Cần xử lý lại" sit side by side on purpose. They are
+ * different numbers that sound like the same one: the first counts EVENTS (an
+ * incident three technicians failed on contributes three), the second counts
+ * INCIDENTS currently waiting to be picked up again (that same incident
+ * contributes one, and none at all once somebody accepts it).
+ */
+function IncidentRangeSummary({
+  from,
+  to,
+  branchId,
+}: {
+  from: string;
+  to: string;
+  branchId: number | null;
+}) {
+  const summary = useQuery({
+    queryKey: ['incident-range-summary', { from, to, branchId }],
+    queryFn: () => reportsApi.incidentSummary({ from, to, branchId: branchId ?? undefined }),
+  });
+
+  if (!summary.data) return null;
+  const s = summary.data.summary;
+
+  const cells: { label: string; value: number; tone?: string }[] = [
+    { label: 'Tổng sự cố phát sinh', value: s.total },
+    { label: 'Sự cố khách sạn', value: s.newCount },
+    { label: 'Đang sửa', value: s.inProgressCount },
+    { label: 'Đã hoàn thành', value: s.completedCount },
+    { label: 'Lượt không sửa được', value: s.cannotRepairAttempts, tone: 'text-rose-700' },
+    { label: 'Cần xử lý lại', value: s.needsReworkIssues, tone: 'text-rose-700' },
+  ];
+
+  return (
+    <div className="mb-4" data-testid="incident-range-summary">
+      <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
+        {cells.map((c) => (
+          <div key={c.label} className="rounded-xl border border-slate-200 bg-white p-3">
+            <p className="text-[11px] uppercase tracking-wide text-slate-400">{c.label}</p>
+            <p className={`text-lg font-semibold ${c.tone ?? 'text-slate-900'}`}>{c.value}</p>
+          </div>
+        ))}
+      </div>
+      <p className="mt-2 text-xs text-slate-500">
+        Ngoài khoảng thời gian này, hiện còn{' '}
+        <strong className="text-slate-700">{s.outstandingTotal}</strong> sự cố chưa hoàn thành trên
+        toàn hệ thống.
+      </p>
     </div>
   );
 }
@@ -583,8 +766,15 @@ function IssueMonitorRow({ issue }: { issue: Issue }) {
       <td className="px-4 py-3 text-slate-500">{formatDateTime(issue.createdAt)}</td>
       <td className="px-4 py-3 text-slate-500">{issue.acceptedAt ? formatDateTime(issue.acceptedAt) : '—'}</td>
       <td className="px-4 py-3 text-slate-500">{issue.completedAt ? formatDateTime(issue.completedAt) : '—'}</td>
+      {/* Computed by the server, so this cell and the exported PDF agree. */}
+      <td className="px-4 py-3 text-slate-600">{issue.durationLabel ?? '—'}</td>
       <td className="px-4 py-3">
-        <IssueStatusBadge status={issue.status} />
+        <IssueStatusBadge status={issue.status} needsRework={issue.needsRework} />
+        {issue.cannotRepairCount > 0 ? (
+          <span className="mt-1 block text-[11px] text-rose-600">
+            {issue.cannotRepairCount} lần không sửa được
+          </span>
+        ) : null}
       </td>
     </tr>
   );
@@ -597,9 +787,18 @@ function IssueMonitorRow({ issue }: { issue: Issue }) {
  * request carries the session cookie, the browser handles the download, and the
  * file never has to be turned into a blob URL the page must then revoke.
  */
-function IncidentExportModal({ onClose, branchId }: { onClose: () => void; branchId: number | null }) {
+function IncidentExportModal({
+  onClose,
+  branchId,
+  initialRange,
+}: {
+  onClose: () => void;
+  branchId: number | null;
+  /** The period already on screen, when one is applied. */
+  initialRange: DateRangeValue | null;
+}) {
   const today = hcmToday();
-  const [range, setRange] = useState<DateRangeValue>({ from: today, to: today });
+  const [range, setRange] = useState<DateRangeValue>(initialRange ?? { from: today, to: today });
 
   const ready = range.from !== '' && range.to !== '';
 
@@ -633,6 +832,9 @@ function IncidentExportModal({ onClose, branchId }: { onClose: () => void; branc
           {branchId == null
             ? 'Báo cáo gồm tất cả chi nhánh.'
             : 'Báo cáo chỉ gồm chi nhánh đang lọc. Bỏ lọc để xuất tất cả.'}
+        </p>
+        <p className="text-xs text-slate-500">
+          Báo cáo gồm cả lịch sử xử lý từng lần, kể cả những lần không sửa được.
         </p>
       </div>
     </Modal>

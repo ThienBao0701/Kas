@@ -13,7 +13,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app';
 import { seedBranches } from '../src/db/seed';
-import { resetAll, testPrisma } from './helpers/db';
+import { resetAll, resetShiftData, testPrisma } from './helpers/db';
 import {
   ADMIN_PASSWORD,
   RECEPTIONIST_PASSWORD,
@@ -80,7 +80,7 @@ beforeAll(async () => {
 
 /** The only per-test state is the shifts themselves, and the clock. */
 async function setup(now: Date): Promise<void> {
-  await testPrisma.receptionShiftSession.deleteMany();
+  await resetShiftData();
   setClock({ now: () => now });
 }
 

@@ -13,6 +13,27 @@ import { api } from './client';
 
 export type ChatConversationStatus = 'WAITING_ADMIN' | 'ANSWERED' | 'CLOSED';
 
+/**
+ * What a submission is about. A CLOSED LIST that replaced the typed title.
+ *
+ * The labels are duplicated from the server for rendering only; the server
+ * refuses anything outside this set, so the form cannot widen it.
+ */
+export type ChatCategory = 'ROOM' | 'WORK_ENVIRONMENT' | 'INTERNAL';
+
+export const CHAT_CATEGORIES: { value: ChatCategory; label: string }[] = [
+  { value: 'ROOM', label: 'Phòng' },
+  { value: 'WORK_ENVIRONMENT', label: 'Môi trường làm việc' },
+  { value: 'INTERNAL', label: 'Các vấn đề nội bộ' },
+];
+
+export const CHAT_CATEGORY_LABEL: Record<ChatCategory, string> = Object.fromEntries(
+  CHAT_CATEGORIES.map((c) => [c.value, c.label]),
+) as Record<ChatCategory, string>;
+
+/** What an anonymous author is called, to everyone who can see the thread. */
+export const ANONYMOUS_LABEL = 'Ẩn danh';
+
 export const CHAT_STATUS_LABEL: Record<ChatConversationStatus, string> = {
   WAITING_ADMIN: 'Chờ Admin trả lời',
   ANSWERED: 'Đã trả lời',
@@ -47,18 +68,32 @@ export interface ChatMessageView {
   id: string;
   conversationId: string;
   body: string;
-  senderRole: 'ADMIN' | 'RECEPTIONIST' | 'BOOKING_DEPARTMENT';
+  senderRole: 'ADMIN' | 'RECEPTIONIST' | 'BOOKING_DEPARTMENT' | 'TECHNICAL';
+  /** Null on an anonymous author's messages — the account never reaches here. */
   sender: { id: number; fullName: string } | null;
+  /** What to PRINT: the sender's name, or "Ẩn danh". Decided by the server. */
+  senderLabel: string;
   createdAt: string;
   attachments: ChatAttachmentView[];
 }
 
 export interface ChatConversationView {
   id: string;
-  subject: string;
+  /** The typed title, on threads that predate the category selector. */
+  subject: string | null;
+  category: ChatCategory | null;
+  /** The heading to render, whichever of the two the thread has. */
+  title: string;
   status: ChatConversationStatus;
   branch: { id: number; code: string; hotelName: string } | null;
+  /** Null on an anonymous thread. Render `senderLabel` instead. */
   createdBy: { id: number; fullName: string; role: string } | null;
+  senderLabel: string;
+  anonymous: boolean;
+  shiftType: string | null;
+  handledBy: { id: number; fullName: string } | null;
+  handledAt: string | null;
+  adminNote: string | null;
   createdAt: string;
   updatedAt: string;
   lastMessageAt: string;
@@ -81,10 +116,21 @@ export const chatApi = {
   messages: (id: string) =>
     api.get<{ messages: ChatMessageView[] }>(`/chat/conversations/${id}/messages`),
 
-  createConversation: (subject: string, body: string, images: File[]) => {
+  /**
+   * Opens a thread. `anonymous` is sent as the literal string 'true'/'false'
+   * because this is multipart — the server compares against 'true' rather than
+   * coercing, since `Boolean('false')` is `true`.
+   */
+  createConversation: (
+    category: ChatCategory,
+    body: string,
+    images: File[],
+    anonymous = false,
+  ) => {
     const form = new FormData();
-    form.append('subject', subject);
+    form.append('category', category);
     form.append('body', body);
+    form.append('anonymous', anonymous ? 'true' : 'false');
     for (const image of images) form.append('images', image);
     return api.postForm<{ conversation: ChatConversationView; message: ChatMessageView }>(
       '/chat/conversations',
@@ -102,6 +148,9 @@ export const chatApi = {
     );
   },
 
-  close: (id: string) =>
-    api.post<{ conversation: ChatConversationView }>(`/chat/conversations/${id}/close`),
+  /** Admin: mark handled. The note is recorded BESIDE the thread, never in it. */
+  close: (id: string, adminNote?: string) =>
+    api.post<{ conversation: ChatConversationView }>(`/chat/conversations/${id}/close`, {
+      adminNote,
+    }),
 };

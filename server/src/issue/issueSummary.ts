@@ -129,3 +129,128 @@ export async function computeTechnicalCounts(
     completedCount: of('COMPLETED'),
   };
 }
+
+export interface IncidentRangeSummary {
+  /** Incidents REPORTED inside the period, whatever state they are in now. */
+  total: number;
+  newCount: number;
+  inProgressCount: number;
+  completedCount: number;
+  /**
+   * How many "Không sửa được" ATTEMPTS ended inside the period.
+   *
+   * AN EVENT COUNT. One incident that three technicians failed on contributes
+   * three, because three separate visits happened and three separate reasons
+   * were recorded. That is what makes it useful — it measures work spent, not
+   * incidents remaining.
+   */
+  cannotRepairAttempts: number;
+  /**
+   * How many incidents are RIGHT NOW waiting to be picked up again after a
+   * failed attempt.
+   *
+   * A STATE COUNT, and deliberately a different number from the one above. The
+   * same incident is counted at most once here however many times it has come
+   * back, and it stops being counted the moment somebody accepts it again. The
+   * two are reported side by side rather than merged precisely so that neither
+   * can be mistaken for the other: "Không sửa được 5 lần" and "Cần xử lý lại 2
+   * sự cố" are both true at once and answer different questions.
+   *
+   * Scoped to the period like the rest — by when the incident was REPORTED, so
+   * it cannot disagree with the total it sits under.
+   */
+  needsReworkIssues: number;
+  /**
+   * Everything not finished, at any age, ignoring the period entirely.
+   *
+   * Reported alongside the period so an Admin reviewing this week can still see
+   * that something from a fortnight ago is open — which a period-scoped report
+   * structurally cannot tell them.
+   */
+  outstandingTotal: number;
+}
+
+export interface IncidentRangeFilter {
+  /** Half-open [start, end) over the reported-at instant. */
+  start: Date;
+  end: Date;
+  branchId?: number;
+}
+
+/**
+ * The Admin's date-range incident summary.
+ *
+ * COUNTED IN THE DATABASE, one indexed query per number, over
+ * `@@index([branchId, createdAt])`. The alternative — fetching the period's
+ * incidents and counting them in JavaScript — is capped by the list's page size,
+ * so a month across eight properties would report the size of a page.
+ *
+ * Deliberately NOT folded into `computeTechnicalCounts`, which feeds the
+ * Technical tabs: that answers "how big is each queue right now" and has no
+ * period at all. One function serving both is how a tab badge starts disagreeing
+ * with the report beside it.
+ */
+export async function computeIncidentRangeSummary(
+  filter: IncidentRangeFilter,
+): Promise<IncidentRangeSummary> {
+  const branch = filter.branchId !== undefined ? { branchId: filter.branchId } : {};
+  const reportedInRange: Prisma.HotelIssueWhereInput = {
+    ...branch,
+    createdAt: { gte: filter.start, lt: filter.end },
+  };
+
+  /*
+    An INTERACTIVE transaction, so every number is one consistent snapshot: a
+    summary whose total was counted before an incident was completed and whose
+    per-status counts were taken after would not add up, and a report that does
+    not add up is worse than a slightly stale one.
+  */
+  const { groups, cannotRepairAttempts, needsReworkIssues, outstandingTotal } =
+    await prisma.$transaction(async (tx) => ({
+      groups: await tx.hotelIssue.groupBy({
+        by: ['status'],
+        where: reportedInRange,
+        _count: { _all: true },
+      }),
+      // The ATTEMPTS that failed in the period, by when they failed — an attempt
+      // is an event, so it belongs to the period it happened in, not to the
+      // period its incident was reported in.
+      cannotRepairAttempts: await tx.technicalRepairAttempt.count({
+        where: {
+          outcome: 'CANNOT_REPAIR',
+          outcomeAt: { gte: filter.start, lt: filter.end },
+          ...(filter.branchId !== undefined ? { issue: { branchId: filter.branchId } } : {}),
+        },
+      }),
+      // DISTINCT incidents, because this counts rows of HotelIssue and not of
+      // TechnicalRepairAttempt — `some` is an existence test, so three failed
+      // attempts on one incident still match exactly one row.
+      needsReworkIssues: await tx.hotelIssue.count({
+        where: {
+          ...reportedInRange,
+          status: 'NEW',
+          attempts: { some: { outcome: 'CANNOT_REPAIR' } },
+        },
+      }),
+      outstandingTotal: await tx.hotelIssue.count({
+        where: { ...branch, status: { in: ['NEW', 'IN_PROGRESS'] } },
+      }),
+    }));
+
+  const of = (status: string): number =>
+    groups.find((g) => g.status === status)?._count._all ?? 0;
+
+  const newCount = of('NEW');
+  const inProgressCount = of('IN_PROGRESS');
+  const completedCount = of('COMPLETED');
+
+  return {
+    total: newCount + inProgressCount + completedCount,
+    newCount,
+    inProgressCount,
+    completedCount,
+    cannotRepairAttempts,
+    needsReworkIssues,
+    outstandingTotal,
+  };
+}

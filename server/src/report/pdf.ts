@@ -74,6 +74,33 @@ export interface Column<T> {
   value: (row: T) => string;
 }
 
+/** A4 landscape is 841.89pt wide; `createReportDocument` uses a 32pt margin. */
+export const LANDSCAPE_CONTENT_WIDTH = 841.89 - 32 * 2;
+
+/**
+ * Refuses a column set that does not fit the page, AT IMPORT TIME.
+ *
+ * `drawTable` places each cell at a running x offset and never checks it, so an
+ * over-wide table does not fail — it draws the last columns off the edge of the
+ * paper, where they are simply absent from the printed report and from the PDF
+ * anybody opens. That is the worst possible failure for an audit document:
+ * silent, invisible, and only discovered by somebody who already needed the
+ * missing number.
+ *
+ * The incident report shipped in exactly that state — twelve columns summing to
+ * 906pt against 777.89pt of usable width — for as long as it has existed. This
+ * makes the same mistake a startup crash instead.
+ */
+export function assertFitsLandscape<T>(label: string, columns: Column<T>[]): Column<T>[] {
+  const total = columns.reduce((sum, c) => sum + c.width, 0);
+  if (total > LANDSCAPE_CONTENT_WIDTH) {
+    throw new Error(
+      `${label}: columns total ${total}pt but only ${LANDSCAPE_CONTENT_WIDTH.toFixed(2)}pt fit on A4 landscape.`,
+    );
+  }
+  return columns;
+}
+
 /**
  * Landscape A4 by default: the incident and accountability tables are wide, and
  * portrait would force either a microscopic type size or wrapped columns.

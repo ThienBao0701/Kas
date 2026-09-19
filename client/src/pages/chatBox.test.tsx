@@ -33,6 +33,14 @@ function conversation(over: Record<string, unknown> = {}) {
   return {
     id: 'conv1',
     subject: 'Khách đòi đổi phòng lúc nửa đêm',
+    category: null,
+    title: 'Khách đòi đổi phòng lúc nửa đêm',
+    senderLabel: 'Lễ tân Một',
+    anonymous: false,
+    shiftType: null,
+    handledBy: null,
+    handledAt: null,
+    adminNote: null,
     status: 'WAITING_ADMIN',
     branch: BRANCH,
     createdBy: { id: RECEPTIONIST_USER.id, fullName: 'Lễ tân Một', role: 'RECEPTIONIST' },
@@ -138,7 +146,7 @@ describe('the conversation list', () => {
         body: {
           conversations: [
             conversation(),
-            conversation({ id: 'conv2', subject: 'Đã xong', status: 'ANSWERED' }),
+            conversation({ id: 'conv2', subject: null, title: 'Đã xong', status: 'ANSWERED' }),
           ],
         },
       }),
@@ -173,7 +181,7 @@ describe('the conversation list', () => {
 /* ================================================================== */
 
 describe('a receptionist opens a conversation', () => {
-  it('posts the subject, body and images as multipart', async () => {
+  it('posts the category, body and images as multipart', async () => {
     const fetchMock = mountChat(RECEPTIONIST_USER, {
       'POST /api/chat/conversations': () => ({
         status: 201,
@@ -184,7 +192,7 @@ describe('a receptionist opens a conversation', () => {
     renderApp('/app/chat');
 
     await user.click(await screen.findByTestId('chat-new'));
-    await user.type(screen.getByLabelText('Tiêu đề'), 'Hỏi về đổi phòng');
+    await user.selectOptions(screen.getByLabelText('Loại vấn đề'), 'ROOM');
     await user.type(screen.getByLabelText('Nội dung'), 'Khách muốn đổi phòng');
     await user.upload(
       screen.getByLabelText(/Ảnh đính kèm/),
@@ -193,7 +201,7 @@ describe('a receptionist opens a conversation', () => {
         new File(['b'], 'two.png', { type: 'image/png' }),
       ],
     );
-    await user.click(screen.getByRole('button', { name: /Gửi câu hỏi/ }));
+    await user.click(screen.getByTestId('chat-send'));
 
     await waitFor(() => {
       const post = fetchMock.mock.calls.find(
@@ -203,23 +211,24 @@ describe('a receptionist opens a conversation', () => {
       );
       expect(post).toBeDefined();
       const form = (post![1] as RequestInit).body as FormData;
-      expect(form.get('subject')).toBe('Hỏi về đổi phòng');
+      expect(form.get('category')).toBe('ROOM');
+      expect(form.get('subject')).toBeNull();
       expect(form.get('body')).toBe('Khách muốn đổi phòng');
       // MULTIPLE IMAGES PER MESSAGE: both must survive to the request.
       expect(form.getAll('images')).toHaveLength(2);
     });
   });
 
-  it('refuses to send without a subject', async () => {
+  it('refuses to send without a category', async () => {
     const fetchMock = mountChat(RECEPTIONIST_USER);
     const user = userEvent.setup();
     renderApp('/app/chat');
 
     await user.click(await screen.findByTestId('chat-new'));
     await user.type(screen.getByLabelText('Nội dung'), 'Thiếu tiêu đề');
-    await user.click(screen.getByRole('button', { name: /Gửi câu hỏi/ }));
+    await user.click(screen.getByTestId('chat-send'));
 
-    expect(await screen.findByText('Vui lòng nhập tiêu đề.')).toBeInTheDocument();
+    expect(await screen.findByText('Vui lòng chọn loại vấn đề.')).toBeInTheDocument();
     const posts = fetchMock.mock.calls.filter(
       ([u, init]) =>
         String(u) === '/api/chat/conversations' &&
@@ -228,17 +237,18 @@ describe('a receptionist opens a conversation', () => {
     expect(posts).toHaveLength(0);
   });
 
-  it('refuses a message with neither text nor image', async () => {
+  /** A first message must carry TEXT now: a category plus a photo is nothing an Admin can act on. */
+  it('refuses a first message with no text', async () => {
     const fetchMock = mountChat(RECEPTIONIST_USER);
     const user = userEvent.setup();
     renderApp('/app/chat');
 
     await user.click(await screen.findByTestId('chat-new'));
-    await user.type(screen.getByLabelText('Tiêu đề'), 'Chỉ có tiêu đề');
-    await user.click(screen.getByRole('button', { name: /Gửi câu hỏi/ }));
+    await user.selectOptions(screen.getByLabelText('Loại vấn đề'), 'ROOM');
+    await user.click(screen.getByTestId('chat-send'));
 
     expect(
-      await screen.findByText('Vui lòng nhập nội dung hoặc đính kèm ảnh.'),
+      await screen.findByText('Vui lòng nhập nội dung.'),
     ).toBeInTheDocument();
     expect(
       fetchMock.mock.calls.filter(
@@ -351,17 +361,17 @@ describe('the conversation thread', () => {
     expect(await screen.findByText(/Không tìm thấy cuộc trò chuyện/)).toBeInTheDocument();
   });
 
-  it('offers "Đóng" to an Admin', async () => {
+  it('offers "Đã xử lý" to an Admin', async () => {
     mountChat(ADMIN_USER);
     renderApp('/app/chat/conv1');
     await screen.findByTestId('chat-thread');
-    expect(screen.getByRole('button', { name: /Đóng/ })).toBeInTheDocument();
+    expect(screen.getByTestId('chat-close')).toBeInTheDocument();
   });
 
-  it('does not offer "Đóng" to a receptionist', async () => {
+  it('does not offer "Đã xử lý" to a receptionist', async () => {
     mountChat(RECEPTIONIST_USER);
     renderApp('/app/chat/conv1');
     await screen.findByTestId('chat-thread');
-    expect(screen.queryByRole('button', { name: /Đóng/ })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('chat-close')).not.toBeInTheDocument();
   });
 });

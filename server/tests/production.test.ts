@@ -466,6 +466,32 @@ describe('production database bootstrap', () => {
     expect(operationalBooking).toMatch(/NEW/);
     expect(operationalBooking).toMatch(/COMPLETED/);
     expect(operationalBooking).toMatch(/ARCHIVED/);
+
+    /*
+      ONE OPEN SHIFT PER RECEPTIONIST.
+
+      Invisible to schema.prisma — Prisma's schema language cannot express a
+      partial unique index — so a migration regenerated from the schema would
+      silently drop it and let two open sessions exist for one person. Every
+      shift handover depends on there being exactly one.
+    */
+    const openShift = byName.get('ReceptionShiftSession_one_open_per_user');
+    expect(openShift, 'one-open-shift-per-user index is missing').toBeTruthy();
+    expect(openShift).toMatch(/UNIQUE/i);
+    expect(openShift).toMatch(/"?closedAt"?\s+IS\s+NULL/i);
+
+    /*
+      ONE LIVE REPAIR ATTEMPT PER INCIDENT.
+
+      Two technicians pressing "Tiếp nhận" at the same instant both pass an
+      application-level "is it still NEW?" check; this is what makes one of them
+      lose, instead of the incident quietly acquiring two live attempts with two
+      different technicians.
+    */
+    const openAttempt = byName.get('TechnicalRepairAttempt_one_open_per_issue');
+    expect(openAttempt, 'one-open-repair-attempt-per-issue index is missing').toBeTruthy();
+    expect(openAttempt).toMatch(/UNIQUE/i);
+    expect(openAttempt).toMatch(/"?outcomeAt"?\s+IS\s+NULL/i);
   });
 
   it('11. the production bootstrap is idempotent', async () => {

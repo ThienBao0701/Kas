@@ -202,3 +202,45 @@ export async function requireOpenSession(
   }
   return session;
 }
+
+/**
+ * The shift a receptionist action HAPPENED IN, for the things that record it but
+ * do not depend on it.
+ *
+ * WHY THIS IS SEPARATE FROM `requireOpenSession`
+ *
+ * Submitting proof of a created order is an ACCOUNTING act: the whole point is
+ * to say who created it, so without a shift there is nothing to record and the
+ * request is refused. Reporting a broken door is not. Refusing an incident
+ * report because nobody had checked in would leave a real fault unreported to
+ * protect a statistic — so these callers CAPTURE the shift when there is one and
+ * carry nulls when there is not.
+ *
+ * Null all the way through for anyone who does not work shifts, which is what
+ * lets an Admin file a report without the concept leaking into their record.
+ */
+export interface ShiftContext {
+  shiftSessionId: string | null;
+  shiftType: ShiftType | null;
+  receptionistName: string | null;
+}
+
+export const NO_SHIFT_CONTEXT: ShiftContext = {
+  shiftSessionId: null,
+  shiftType: null,
+  receptionistName: null,
+};
+
+export async function captureShiftContext(
+  actor: ShiftActor,
+  client: PrismaClient | Prisma.TransactionClient = prisma,
+): Promise<ShiftContext> {
+  if (!isShiftRole(actor.role)) return NO_SHIFT_CONTEXT;
+  const session = await findOpenSession(actor.id, client);
+  if (!session) return NO_SHIFT_CONTEXT;
+  return {
+    shiftSessionId: session.id,
+    shiftType: session.shiftType,
+    receptionistName: session.receptionistName,
+  };
+}

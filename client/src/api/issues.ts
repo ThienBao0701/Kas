@@ -128,6 +128,36 @@ export function requiresLocationDetail(
   return area === 'OTHER_AREA' || (area === 'LOBBY' && subtype === 'OTHER');
 }
 
+/** How one technician's attempt at an incident ended. Null while it is open. */
+export type RepairOutcome = 'COMPLETED' | 'CANNOT_REPAIR';
+
+export const REPAIR_OUTCOME_LABEL: Record<RepairOutcome, string> = {
+  COMPLETED: 'Hoàn thành',
+  CANNOT_REPAIR: 'Không sửa được',
+};
+
+/**
+ * One attempt at an incident — the audit trail the "Không sửa được" flow exists
+ * to keep.
+ *
+ * `durationLabel` is built by the SERVER, not here: the same number has to read
+ * identically on this card, on the Admin monitor and in the exported PDF, and
+ * the PDF is built server-side.
+ */
+export interface RepairAttempt {
+  id: string;
+  attemptNumber: number;
+  technicianName: string;
+  technicianPhone: string;
+  acceptedByName: string | null;
+  acceptedAt: string;
+  outcome: RepairOutcome | null;
+  outcomeAt: string | null;
+  reason: string | null;
+  durationSeconds: number | null;
+  durationLabel: string | null;
+}
+
 export interface Issue {
   id: string;
   branchId: number;
@@ -153,6 +183,23 @@ export interface Issue {
   completedBy: Actor | null;
   completedByName: string | null;
   completedAt: string | null;
+  /** Which shift reported it, when the reporter was on one. */
+  shiftType: string | null;
+  shiftReceptionistName: string | null;
+  /** The CURRENT assignment's elapsed time — running while it is being worked. */
+  durationSeconds: number | null;
+  durationLabel: string | null;
+  /** Every attempt anybody has made. Empty on incidents worked before attempts existed. */
+  attempts: RepairAttempt[];
+  cannotRepairCount: number;
+  /**
+   * Back in the queue after somebody tried and could not fix it.
+   *
+   * `status` alone cannot say this — a fresh report and a returned one are both
+   * NEW — so the server derives the difference and the queue renders it as
+   * "Cần xử lý lại".
+   */
+  needsRework: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -219,15 +266,28 @@ export interface AcceptIssueInput {
 }
 
 export const issuesApi = {
+  /**
+   * `from`/`to` and `outstanding` are OMITTED unless the caller asks for them,
+   * and `query()` drops undefined keys — so the default request is byte for byte
+   * the one this endpoint has always received.
+   */
   list: (
     params: {
       branchId?: number;
       status?: IssueStatus;
       areaCategory?: IssueAreaCategory;
+      from?: string;
+      to?: string;
+      outstanding?: boolean;
       page?: number;
       pageSize?: number;
     } = {},
-  ) => api.get<IssueListResponse>(`/issues${query(params)}`),
+  ) => {
+    const { outstanding, ...rest } = params;
+    return api.get<IssueListResponse>(
+      `/issues${query({ ...rest, outstanding: outstanding ? 'true' : undefined })}`,
+    );
+  },
 
   detail: (id: string) => api.get<{ issue: Issue }>(`/issues/${id}`),
 
@@ -250,6 +310,10 @@ export const issuesApi = {
     api.post<{ issue: Issue }>(`/issues/${id}/accept`, input),
 
   complete: (id: string) => api.post<{ issue: Issue }>(`/issues/${id}/complete`, {}),
+
+  /** "Không sửa được" — back to the queue, with a reason that is required. */
+  cannotRepair: (id: string, input: { reason: string }) =>
+    api.post<{ issue: Issue }>(`/issues/${id}/cannot-repair`, input),
 
   summary: () => api.get<{ summary: IssueSummary }>('/issues/summary'),
 

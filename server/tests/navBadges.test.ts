@@ -224,7 +224,7 @@ describe('nav badge counts', () => {
     // A receptionist asking puts the thread on Admin's side of the count.
     await letan
       .post('/api/chat/conversations')
-      .field('subject', 'Hỏi đơn')
+      .field('category', 'ROOM')
       .field('body', 'Cho em hỏi');
 
     expect((await counts(adminAgent)).chat).toBe(1);
@@ -234,7 +234,7 @@ describe('nav badge counts', () => {
   it('an Admin reply moves the chat count to the receptionist', async () => {
     await letan
       .post('/api/chat/conversations')
-      .field('subject', 'Hỏi đơn')
+      .field('category', 'ROOM')
       .field('body', 'Cho em hỏi');
     const list = await adminAgent.get('/api/chat/conversations');
     const conversationId = (list.body.conversations as { id: string }[])[0]!.id;
@@ -254,7 +254,7 @@ describe('nav badge counts', () => {
     await adminAgent.post('/api/reminders').send({ recipientUserId: letanId, body: 'Chỉ cho A' });
     await letan
       .post('/api/chat/conversations')
-      .field('subject', 'Của A')
+      .field('category', 'ROOM')
       .field('body', 'Riêng A');
     const threads = await adminAgent.get('/api/chat/conversations');
     const conversationId = (threads.body.conversations as { id: string }[])[0]!.id;

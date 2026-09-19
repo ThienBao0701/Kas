@@ -12,7 +12,18 @@ import {
 import { buildRecreationReportPdf, recreationReportFileName } from '../report/recreationPdf';
 import { buildIncidentReportPdf, incidentReportFileName } from '../report/incidentPdf';
 import { contentDisposition } from '../report/format';
-import { serializeIssue } from '../issue/issueService';
+import { buildHandoverReportPdf, handoverReportFileName } from '../report/handoverPdf';
+import { buildChatReportPdf, chatReportFileName } from '../report/chatPdf';
+import { ISSUE_INCLUDE, serializeIssue } from '../issue/issueService';
+import { computeIncidentRangeSummary } from '../issue/issueSummary';
+import { countHandovers, listHandovers, serializeHandover } from '../shift/handoverService';
+import {
+  countHandoverNotes,
+  listHandoverNotes,
+  serializeHandoverNote,
+} from '../shift/handoverNoteService';
+import { listConversations } from '../chat/chatService';
+import type { Response } from 'express';
 
 const isoDay = z
   .string()
@@ -44,12 +55,97 @@ const recreationQuery = rangeQuery.and(
   }),
 );
 
-const ISSUE_REPORT_INCLUDE = {
-  branch: true,
-  reportedBy: true,
-  acceptedBy: true,
-  completedBy: true,
-} satisfies Prisma.HotelIssueInclude;
+/*
+  The incident report reads the SAME payload the incident screens do.
+
+  This used to be a second, hand-copied include. The two were identical the day
+  it was written and silently diverged the moment a relation was added to one of
+  them — the report then type-checked against a shape the database no longer
+  returned it, and lost the repair history without failing.
+*/
+
+/** The chat audit view narrows by what a category and a submission mode are. */
+const chatQuery = rangeQuery.and(
+  z.object({
+    category: z.enum(['ROOM', 'WORK_ENVIRONMENT', 'INTERNAL']).optional(),
+    anonymous: z.enum(['true', 'false']).optional(),
+  }),
+);
+
+/**
+ * The four PDF headers, written once.
+ *
+ * `no-store` because these files name people and say what they did; `nosniff`
+ * so a stored report cannot be coerced into executing as something else.
+ */
+function sendPdf(res: Response, pdf: Buffer, fileName: string): void {
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', contentDisposition(fileName));
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.send(pdf);
+}
+
+/**
+ * The period's handovers and notes, WITH the true totals beside them.
+ *
+ * The lists are capped at 1000 rows, and the cap used to be invisible: the
+ * report printed `rows.length` as the period's total, so a quarterly audit said
+ * "Tổng số bàn giao: 1000" while omitting everything older than the thousandth
+ * newest row. The counts come from their own queries so the figure is right even
+ * when the listing is not the whole story, and `truncated` lets the report say
+ * so out loud rather than pretending.
+ */
+const REPORT_ROW_CAP = 1000;
+
+async function loadHandovers(q: { from: string; to: string; branchId?: number }) {
+  const { start, end } = hcmRange(q.from, q.to);
+  // An Admin actor, so the branch filter is the query's rather than an
+  // account's — this router is admin-gated on its prefix.
+  const adminActor = { id: 0, role: 'ADMIN' as const, branchId: null, fullName: '' };
+  const range = { start, end, branchId: q.branchId };
+  const [handovers, notes, handoverTotal, noteTotal] = await Promise.all([
+    listHandovers({ ...range, take: REPORT_ROW_CAP }),
+    listHandoverNotes(adminActor, { ...range, take: REPORT_ROW_CAP }),
+    countHandovers(range),
+    countHandoverNotes(adminActor, range),
+  ]);
+  return {
+    handovers,
+    notes,
+    handoverTotal,
+    noteTotal,
+    truncated: handoverTotal > handovers.length || noteTotal > notes.length,
+  };
+}
+
+/**
+ * Chat threads in the period, filtered in JavaScript over the SERIALIZED views.
+ *
+ * Deliberately not a database filter on the raw rows: `listConversations` is
+ * what applies the anonymity rule, and going around it to build a report would
+ * be exactly the second read path that rule cannot afford. The Admin's list is
+ * a few hundred threads at most, so the cost of filtering after serialization is
+ * nothing next to the cost of a report that forgot to suppress a name.
+ */
+async function loadChat(q: {
+  from: string;
+  to: string;
+  branchId?: number;
+  category?: string;
+  anonymous?: string;
+}) {
+  const { start, end } = hcmRange(q.from, q.to);
+  const all = await listConversations({ id: 0, role: 'ADMIN', branchId: null });
+  return all.filter((c) => {
+    const at = Date.parse(c.createdAt);
+    if (at < start.getTime() || at >= end.getTime()) return false;
+    if (q.branchId !== undefined && c.branch?.id !== q.branchId) return false;
+    if (q.category && c.category !== q.category) return false;
+    if (q.anonymous !== undefined && c.anonymous !== (q.anonymous === 'true')) return false;
+    return true;
+  });
+}
 
 async function scopeLabel(branchId: number | undefined): Promise<string> {
   if (branchId === undefined) return 'Tất cả chi nhánh';
@@ -98,11 +194,7 @@ export function createAdminReportsRouter(): Router {
         await scopeLabel(q.branchId),
         getClock().now(),
       );
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', contentDisposition(recreationReportFileName(q.from, q.to)));
-      res.setHeader('Cache-Control', 'private, no-store');
-      res.setHeader('X-Content-Type-Options', 'nosniff');
-      res.send(pdf);
+      sendPdf(res, pdf, recreationReportFileName(q.from, q.to));
     })().catch(next);
   });
 
@@ -111,7 +203,86 @@ export function createAdminReportsRouter(): Router {
     (async () => {
       const q = rangeQuery.parse(req.query);
       const issues = await loadIssues(q);
-      res.json({ range: { from: q.from, to: q.to }, issues: issues.map(serializeIssue) });
+      res.json({ range: { from: q.from, to: q.to }, issues: issues.map((issue) => serializeIssue(issue)) });
+    })().catch(next);
+  });
+
+  /*
+    GET /api/admin/reports/incidents/summary — the counts behind the screen.
+
+    A SEPARATE ENDPOINT from /issues/counts, which feeds the Technical tabs. That
+    one answers "how big is each queue right now" and has no period at all; this
+    one answers "what happened between these two dates". One function serving
+    both is how a tab badge starts disagreeing with the report beside it.
+
+    Declared before "/incidents.pdf" is irrelevant — the paths do not overlap —
+    but it is grouped with the incident routes so the three are read together.
+  */
+  router.get('/admin/reports/incidents/summary', (req, res, next) => {
+    (async () => {
+      const q = rangeQuery.parse(req.query);
+      const { start, end } = hcmRange(q.from, q.to);
+      const summary = await computeIncidentRangeSummary({ start, end, branchId: q.branchId });
+      res.json({ range: { from: q.from, to: q.to }, summary });
+    })().catch(next);
+  });
+
+  // GET /api/admin/reports/handovers — shift changes and handover notes.
+  router.get('/admin/reports/handovers', (req, res, next) => {
+    (async () => {
+      const q = rangeQuery.parse(req.query);
+      const loaded = await loadHandovers(q);
+      res.json({
+        range: { from: q.from, to: q.to },
+        handovers: loaded.handovers.map(serializeHandover),
+        notes: loaded.notes.map(serializeHandoverNote),
+        // The period's real sizes, which the arrays above may not reach.
+        totals: { handovers: loaded.handoverTotal, notes: loaded.noteTotal },
+        truncated: loaded.truncated,
+      });
+    })().catch(next);
+  });
+
+  // GET /api/admin/reports/handovers.pdf — the same data, as a file.
+  router.get('/admin/reports/handovers.pdf', (req, res, next) => {
+    (async () => {
+      const q = rangeQuery.parse(req.query);
+      const loaded = await loadHandovers(q);
+      const pdf = await buildHandoverReportPdf({
+        from: q.from,
+        to: q.to,
+        scope: await scopeLabel(q.branchId),
+        handovers: loaded.handovers,
+        notes: loaded.notes,
+        handoverTotal: loaded.handoverTotal,
+        noteTotal: loaded.noteTotal,
+        truncated: loaded.truncated,
+        generatedAt: getClock().now(),
+      });
+      sendPdf(res, pdf, handoverReportFileName(q.from, q.to));
+    })().catch(next);
+  });
+
+  // GET /api/admin/reports/chat — internal reports, anonymous ones included.
+  router.get('/admin/reports/chat', (req, res, next) => {
+    (async () => {
+      const q = chatQuery.parse(req.query);
+      res.json({ range: { from: q.from, to: q.to }, conversations: await loadChat(q) });
+    })().catch(next);
+  });
+
+  // GET /api/admin/reports/chat.pdf — the same data, as a file.
+  router.get('/admin/reports/chat.pdf', (req, res, next) => {
+    (async () => {
+      const q = chatQuery.parse(req.query);
+      const pdf = await buildChatReportPdf({
+        from: q.from,
+        to: q.to,
+        scope: await scopeLabel(q.branchId),
+        conversations: await loadChat(q),
+        generatedAt: getClock().now(),
+      });
+      sendPdf(res, pdf, chatReportFileName(q.from, q.to));
     })().catch(next);
   });
 
@@ -120,18 +291,18 @@ export function createAdminReportsRouter(): Router {
     (async () => {
       const q = rangeQuery.parse(req.query);
       const issues = await loadIssues(q);
+      const { start, end } = hcmRange(q.from, q.to);
       const pdf = await buildIncidentReportPdf({
         from: q.from,
         to: q.to,
         scope: await scopeLabel(q.branchId),
         issues,
         generatedAt: getClock().now(),
+        // The same query the screen's summary cards read, so the file and the
+        // table it was printed from cannot report different figures.
+        summary: await computeIncidentRangeSummary({ start, end, branchId: q.branchId }),
       });
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', contentDisposition(incidentReportFileName(q.from, q.to)));
-      res.setHeader('Cache-Control', 'private, no-store');
-      res.setHeader('X-Content-Type-Options', 'nosniff');
-      res.send(pdf);
+      sendPdf(res, pdf, incidentReportFileName(q.from, q.to));
     })().catch(next);
   });
 
@@ -149,7 +320,7 @@ async function loadIssues(q: { from: string; to: string; branchId?: number }) {
   if (q.branchId !== undefined) where.branchId = q.branchId;
   return prisma.hotelIssue.findMany({
     where,
-    include: ISSUE_REPORT_INCLUDE,
+    include: ISSUE_INCLUDE,
     orderBy: [{ branchId: 'asc' }, { createdAt: 'asc' }],
   });
 }

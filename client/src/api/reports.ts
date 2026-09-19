@@ -74,7 +74,77 @@ export function incidentReportPdfUrl(params: { from: string; to: string; branchI
   return `/api/admin/reports/incidents.pdf${query(params)}`;
 }
 
+/**
+ * The counts behind the Admin's incident period.
+ *
+ * `cannotRepairAttempts` and `needsReworkIssues` are DIFFERENT NUMBERS that
+ * sound alike: the first counts failed attempts (events), the second counts
+ * incidents currently waiting to be picked up again (a state). They are carried
+ * separately all the way from the database so neither can be mistaken for the
+ * other on the way to the screen.
+ */
+export interface IncidentRangeSummary {
+  total: number;
+  newCount: number;
+  inProgressCount: number;
+  completedCount: number;
+  cannotRepairAttempts: number;
+  needsReworkIssues: number;
+  /** Everything unfinished at any age — deliberately outside the period. */
+  outstandingTotal: number;
+}
+
+export interface HandoverReportRow {
+  id: string;
+  branch: { id: number; code: string; hotelName: string; address: string } | null;
+  outgoing: { name: string; shiftName: string; shiftWindow: string };
+  incoming: { name: string; shiftName: string; shiftWindow: string; userId: number | null };
+  actualHandoverAt: string;
+  reason: string;
+}
+
+export interface HandoverNoteReportRow {
+  id: string;
+  branch: { id: number; code: string; hotelName: string; address: string } | null;
+  outgoingName: string;
+  outgoingShiftName: string;
+  incomingName: string | null;
+  content: string;
+  priority: 'NORMAL' | 'HIGH';
+  createdAt: string;
+}
+
+export function incidentSummaryUrl(p: { from: string; to: string; branchId?: number }): string {
+  return `/admin/reports/incidents/summary${query(p)}`;
+}
+
+export function handoverReportPdfUrl(p: { from: string; to: string; branchId?: number }): string {
+  return `/api/admin/reports/handovers.pdf${query(p)}`;
+}
+
+export function chatReportPdfUrl(p: {
+  from: string;
+  to: string;
+  branchId?: number;
+  category?: string;
+  anonymous?: string;
+}): string {
+  return `/api/admin/reports/chat.pdf${query(p)}`;
+}
+
 export const reportsApi = {
   recreations: (filter: RecreationFilter) =>
     api.get<RecreationReport>(`/admin/reports/recreations${query({ ...filter })}`),
+
+  incidentSummary: (p: { from: string; to: string; branchId?: number }) =>
+    api.get<{ range: { from: string; to: string }; summary: IncidentRangeSummary }>(
+      incidentSummaryUrl(p),
+    ),
+
+  handovers: (p: { from: string; to: string; branchId?: number }) =>
+    api.get<{
+      range: { from: string; to: string };
+      handovers: HandoverReportRow[];
+      notes: HandoverNoteReportRow[];
+    }>(`/admin/reports/handovers${query(p)}`),
 };

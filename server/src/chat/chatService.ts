@@ -21,9 +21,30 @@
  * stated role in reception↔Admin correspondence, so it gets no access rather
  * than an assumed one.
  */
-import type { PrismaClient, UserRole } from '@prisma/client';
+import type { ChatCategory, Prisma, PrismaClient, ShiftType, UserRole } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db/prisma';
 import { ApiError } from '../lib/errors';
+import { captureShiftContext, type ShiftActor } from '../shift/shiftService';
+
+/**
+ * What a submission is about. The closed list that replaced the typed title.
+ *
+ * The labels live HERE and are served to the client, rather than being written
+ * out again in React: a category whose name differs between the form and the
+ * Admin's report is a category nobody can count.
+ */
+export const CHAT_CATEGORY_LABELS: Record<ChatCategory, string> = {
+  ROOM: 'Phòng',
+  WORK_ENVIRONMENT: 'Môi trường làm việc',
+  INTERNAL: 'Các vấn đề nội bộ',
+};
+
+export const CHAT_CATEGORIES: { value: ChatCategory; label: string }[] = (
+  Object.keys(CHAT_CATEGORY_LABELS) as ChatCategory[]
+).map((value) => ({ value, label: CHAT_CATEGORY_LABELS[value] }));
+
+/** What an anonymous author is called, everywhere, to everyone. */
+export const ANONYMOUS_LABEL = 'Ẩn danh';
 
 /** Who is acting. Mirrors the shape the rest of the app already passes around. */
 export interface ChatActor {
@@ -50,9 +71,24 @@ export function assertChatAccess(actor: ChatActor): void {
  * compare" version leaks existence through timing and through the difference
  * between 403 and 404; this simply cannot return another user's row.
  */
-export function visibilityWhere(actor: ChatActor): { createdByUserId?: number } {
+export function visibilityWhere(actor: ChatActor): Prisma.ChatConversationWhereInput {
   if (actor.role === 'ADMIN') return {};
-  return { createdByUserId: actor.id };
+  /*
+    `anonymous: false` IS THE WHOLE OF THE ANONYMITY RULE.
+
+    Because every read — the list, the detail, the messages, the attachment
+    download and the sidebar badge — runs through this one predicate, adding the
+    clause here removes an anonymous thread from all five at once. The
+    alternative, filtering at each of those five sites, is five places to
+    remember and one of them eventually forgotten.
+
+    THE AUTHOR LOSES SIGHT OF IT TOO, and that is the specified behaviour rather
+    than an oversight: an anonymous report that its author can still open is a
+    report whose author can be identified by watching who opens it. The
+    consequence — that an Admin reply cannot reach them — is real, and is why the
+    Admin's verdict is recorded in `adminNote` on the thread instead.
+  */
+  return { createdByUserId: actor.id, anonymous: false };
 }
 
 const MESSAGE_INCLUDE = {
@@ -72,6 +108,7 @@ const MESSAGE_INCLUDE = {
 const CONVERSATION_INCLUDE = {
   branch: { select: { id: true, code: true, hotelName: true } },
   createdBy: { select: { id: true, fullName: true, role: true } },
+  handledBy: { select: { id: true, fullName: true } },
 } as const;
 
 export interface ChatAttachmentView {
@@ -87,17 +124,32 @@ export interface ChatMessageView {
   conversationId: string;
   body: string;
   senderRole: UserRole;
+  /** Null on an anonymous author's messages, so the account never reaches a UI. */
   sender: { id: number; fullName: string } | null;
+  /** What to PRINT for the sender — "Ẩn danh" when the author is anonymous. */
+  senderLabel: string;
   createdAt: string;
   attachments: ChatAttachmentView[];
 }
 
 export interface ChatConversationView {
   id: string;
-  subject: string;
+  /** The typed title, on threads that predate the category selector. */
+  subject: string | null;
+  category: ChatCategory | null;
+  /** What to PRINT as the thread's heading, whichever of the two it has. */
+  title: string;
   status: 'WAITING_ADMIN' | 'ANSWERED' | 'CLOSED';
   branch: { id: number; code: string; hotelName: string } | null;
+  /** Null on an anonymous thread. Use `senderLabel` to display. */
   createdBy: { id: number; fullName: string; role: UserRole } | null;
+  senderLabel: string;
+  anonymous: boolean;
+  /** Which shift raised it, for the Admin's audit view. */
+  shiftType: ShiftType | null;
+  handledBy: { id: number; fullName: string } | null;
+  handledAt: string | null;
+  adminNote: string | null;
   createdAt: string;
   updatedAt: string;
   lastMessageAt: string;
@@ -110,13 +162,35 @@ export interface ChatConversationView {
 /* Validation                                                          */
 /* ------------------------------------------------------------------ */
 
-const MAX_SUBJECT = 200;
 const MAX_BODY = 5000;
 
-export function assertSubject(subject: string): string {
-  const trimmed = subject.trim();
-  if (trimmed.length === 0) throw ApiError.validation('Vui lòng nhập tiêu đề.');
-  if (trimmed.length > MAX_SUBJECT) throw ApiError.validation('Tiêu đề quá dài.');
+/**
+ * A submission must name one of the three categories.
+ *
+ * REPLACES `assertSubject`, which validated free text. That is the point of the
+ * change: a typed title could not be wrong, so it could not be validated, and
+ * "Máy lạnh hỏng" / "may lanh phong 302" / "AC broken" were three unaskable
+ * questions instead of one countable one.
+ */
+export function assertCategory(category: unknown): ChatCategory {
+  if (typeof category === 'string' && category in CHAT_CATEGORY_LABELS) {
+    return category as ChatCategory;
+  }
+  throw ApiError.validation('Vui lòng chọn loại vấn đề.');
+}
+
+/**
+ * The first message of a thread must carry TEXT.
+ *
+ * Deliberately stricter than `assertBody`, which a reply uses: a reply of one
+ * photo in an open thread is a perfectly clear thing to send, but a brand new
+ * submission whose entire content is an unexplained image gives an Admin a
+ * category and a picture and nothing to act on.
+ */
+export function assertInitialBody(body: string): string {
+  const trimmed = body.trim();
+  if (trimmed.length === 0) throw ApiError.validation('Vui lòng nhập nội dung.');
+  if (trimmed.length > MAX_BODY) throw ApiError.validation('Nội dung quá dài.');
   return trimmed;
 }
 
@@ -140,25 +214,63 @@ export function assertBody(body: string, attachmentCount: number): string {
 
 type ConversationRow = {
   id: string;
-  subject: string;
+  subject: string | null;
+  category: ChatCategory | null;
+  anonymous: boolean;
+  shiftType: ShiftType | null;
+  senderNameSnapshot: string | null;
+  handledAt: Date | null;
+  adminNote: string | null;
   status: 'WAITING_ADMIN' | 'ANSWERED' | 'CLOSED';
   createdAt: Date;
   updatedAt: Date;
   lastMessageAt: Date;
   branch: { id: number; code: string; hotelName: string } | null;
   createdBy: { id: number; fullName: string; role: UserRole } | null;
+  handledBy: { id: number; fullName: string } | null;
 };
 
+/**
+ * WHERE ANONYMITY IS ACTUALLY ENFORCED FOR A READER.
+ *
+ * `visibilityWhere` decides WHO may open the thread; this decides what they see
+ * once they have. Only an Admin ever gets here for an anonymous thread, and the
+ * account behind it is dropped before the object leaves the server — there is no
+ * hidden field for a client to find, and no flag a UI has to remember to respect.
+ *
+ * BRANCH AND SHIFT ARE KEPT, as the audit view specifies. Be clear-eyed about
+ * what that costs: a branch has a handful of receptionists and a shift narrows
+ * it further, so an Admin who wants to work out who wrote an anonymous report
+ * usually can. The anonymity here is a rule about what the product displays, not
+ * a cryptographic guarantee — and it is worth having anyway, because it removes
+ * the name from every ordinary screen where it would otherwise be read by
+ * accident.
+ */
 function serializeConversation(
   row: ConversationRow,
   extra: { lastMessagePreview: string | null; messageCount: number },
 ): ChatConversationView {
+  const anonymous = row.anonymous;
   return {
     id: row.id,
     subject: row.subject,
+    category: row.category,
+    // Built on the server so the list, the thread and the PDF say it the same
+    // way, and so a legacy thread still has a heading.
+    title: row.category
+      ? CHAT_CATEGORY_LABELS[row.category]
+      : row.subject ?? 'Cuộc trò chuyện',
     status: row.status,
     branch: row.branch,
-    createdBy: row.createdBy,
+    createdBy: anonymous ? null : row.createdBy,
+    senderLabel: anonymous
+      ? ANONYMOUS_LABEL
+      : row.senderNameSnapshot ?? row.createdBy?.fullName ?? '—',
+    anonymous,
+    shiftType: row.shiftType,
+    handledBy: row.handledBy,
+    handledAt: row.handledAt ? row.handledAt.toISOString() : null,
+    adminNote: row.adminNote,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     lastMessageAt: row.lastMessageAt.toISOString(),
@@ -183,17 +295,35 @@ type MessageRow = {
   }[];
 };
 
-function serializeMessage(row: MessageRow): ChatMessageView {
+/**
+ * ONLY THE ANONYMOUS AUTHOR'S OWN MESSAGES LOSE THEIR IDENTITY.
+ *
+ * An Admin replying inside an anonymous thread is not anonymous, and nulling
+ * their sender too would break the thread view in a way that looks like a bug
+ * rather than a privacy rule: the view decides which side a bubble belongs on by
+ * comparing `sender.id` to the reader's own, so an Admin with no sender would
+ * see their own replies left-aligned and labelled as somebody else's.
+ *
+ * `originalFileName` goes with the name. It is the author's own file name, and
+ * "bang-luong-thang-8-cua-Lan.png" identifies a person just as precisely as the
+ * field this function is careful to drop.
+ */
+function serializeMessage(
+  row: MessageRow,
+  opts: { anonymous: boolean } = { anonymous: false },
+): ChatMessageView {
+  const hide = opts.anonymous && row.senderRole !== 'ADMIN';
   return {
     id: row.id,
     conversationId: row.conversationId,
     body: row.body,
     senderRole: row.senderRole,
-    sender: row.sender ? { id: row.sender.id, fullName: row.sender.fullName } : null,
+    sender: hide || !row.sender ? null : { id: row.sender.id, fullName: row.sender.fullName },
+    senderLabel: hide ? ANONYMOUS_LABEL : row.sender?.fullName ?? '—',
     createdAt: row.createdAt.toISOString(),
-    attachments: row.attachments.map((a) => ({
+    attachments: row.attachments.map((a, index) => ({
       id: a.id,
-      originalFileName: a.originalFileName,
+      originalFileName: hide ? `Tệp đính kèm ${index + 1}` : a.originalFileName,
       mimeType: a.mimeType,
       fileSize: a.fileSize,
       createdAt: a.createdAt.toISOString(),
@@ -290,15 +420,23 @@ export async function listMessages(
   actor: ChatActor,
   client: PrismaClient = defaultPrisma,
 ): Promise<ChatMessageView[]> {
-  // Re-uses the visibility check rather than trusting the id.
-  await getConversation(conversationId, actor, client);
+  // Re-uses the visibility check rather than trusting the id. The result is kept
+  // rather than discarded: it is also what tells the serializer whether the
+  // thread is anonymous.
+  const conversation = await getConversation(conversationId, actor, client);
 
   const rows = await client.chatMessage.findMany({
-    where: { conversationId },
+    // The conversation filter is restated HERE as well, rather than relying on
+    // the visibility check above having run. It is redundant today and it is
+    // meant to be: a future read that forgets line one would otherwise return
+    // every message in the table, and `where` is the cheaper habit.
+    where: { conversationId, conversation: visibilityWhere(actor) },
     orderBy: { createdAt: 'asc' },
     include: MESSAGE_INCLUDE,
   });
-  return (rows as unknown as MessageRow[]).map(serializeMessage);
+  return (rows as unknown as MessageRow[]).map((row) =>
+    serializeMessage(row, { anonymous: conversation.anonymous }),
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -325,7 +463,13 @@ export interface NewAttachment {
  * label their question with someone else's location.
  */
 export async function createConversation(
-  input: { subject: string; body: string; attachments: NewAttachment[] },
+  input: {
+    category: unknown;
+    body: string;
+    attachments: NewAttachment[];
+    /** "Gửi ẩn danh" rather than "Gửi". */
+    anonymous?: boolean;
+  },
   actor: ChatActor,
   client: PrismaClient = defaultPrisma,
   now: Date = new Date(),
@@ -335,14 +479,36 @@ export async function createConversation(
     throw ApiError.forbidden('Chỉ lễ tân mới mở được cuộc trò chuyện mới.');
   }
 
-  const subject = assertSubject(input.subject);
-  const body = assertBody(input.body, input.attachments.length);
+  const category = assertCategory(input.category);
+  const body = assertInitialBody(input.body);
+  const anonymous = input.anonymous === true;
+
+  /*
+    THE AUTHOR IS RECORDED EVEN WHEN THE SUBMISSION IS ANONYMOUS.
+
+    `createdByUserId` is written exactly as it always was. Anonymity is enforced
+    on the way OUT — `visibilityWhere` hides the thread from reception and
+    `serializeConversation` drops the account before the object leaves the
+    server — never by declining to write it down. An anonymous channel with no
+    record behind it cannot be acted on if it ever reports something that
+    requires action against a named person, and cannot be defended if somebody
+    abuses it.
+
+    The shift is captured for the same reason it is captured on an incident: so
+    the Admin can see which shift raised what. It is null when nobody had checked
+    in, rather than blocking the submission.
+  */
+  const shift = await captureShiftContext(actor as ShiftActor, client);
 
   const created = await client.chatConversation.create({
     data: {
-      subject,
+      category,
+      anonymous,
       branchId: actor.branchId,
       createdByUserId: actor.id,
+      shiftSessionId: shift.shiftSessionId,
+      shiftType: shift.shiftType,
+      senderNameSnapshot: shift.receptionistName,
       status: 'WAITING_ADMIN',
       lastMessageAt: now,
       messages: {
@@ -368,7 +534,7 @@ export async function createConversation(
       lastMessagePreview: message.body.trim().length > 0 ? message.body.trim() : '[Hình ảnh]',
       messageCount: created._count.messages,
     }),
-    message: serializeMessage(message),
+    message: serializeMessage(message, { anonymous }),
   };
 }
 
@@ -393,7 +559,7 @@ export async function addMessage(
   now: Date = new Date(),
 ): Promise<ChatMessageView> {
   // Visibility first: this throws 404 for a thread the actor may not see.
-  await getConversation(conversationId, actor, client);
+  const conversation = await getConversation(conversationId, actor, client);
 
   const body = assertBody(input.body, input.attachments.length);
 
@@ -417,23 +583,44 @@ export async function addMessage(
     },
   });
 
-  return serializeMessage(message as unknown as MessageRow);
+  return serializeMessage(message as unknown as MessageRow, {
+    anonymous: conversation.anonymous,
+  });
 }
 
-/** Admin-only: close a thread that needs no further reply. */
+/**
+ * Admin-only: mark a thread handled.
+ *
+ * THE ORIGINAL IS NEVER TOUCHED. The verdict is written to its own columns
+ * beside the conversation — who closed it, when, and an optional note — rather
+ * than into the message the receptionist wrote. There is no endpoint anywhere in
+ * this module that edits a message body, and there must not be: the value of an
+ * internal report is that it still says what it said, and an anonymous report
+ * that a reviewer could rewrite is worth nothing at all.
+ */
 export async function closeConversation(
   conversationId: string,
   actor: ChatActor,
+  input: { adminNote?: string } = {},
   client: PrismaClient = defaultPrisma,
+  now: Date = new Date(),
 ): Promise<ChatConversationView> {
   assertChatAccess(actor);
   if (actor.role !== 'ADMIN') {
     throw ApiError.forbidden('Chỉ Admin mới đóng được cuộc trò chuyện.');
   }
   await getConversation(conversationId, actor, client);
+  const adminNote = input.adminNote?.trim();
   await client.chatConversation.update({
     where: { id: conversationId },
-    data: { status: 'CLOSED' },
+    data: {
+      status: 'CLOSED',
+      handledByUserId: actor.id,
+      handledAt: now,
+      // Left alone when nothing was typed, so re-closing never blanks a note
+      // somebody wrote the first time.
+      ...(adminNote ? { adminNote } : {}),
+    },
   });
   return getConversation(conversationId, actor, client);
 }

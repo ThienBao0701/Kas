@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { getClock } from '../lib/clock';
+import { ApiError } from '../lib/errors';
 import { requireAuth, requirePasswordChanged, requireRole } from '../middleware/auth';
 import {
   checkInShift,
@@ -8,6 +9,13 @@ import {
   findOpenSession,
   serializeShiftSession,
 } from '../shift/shiftService';
+import { handoverShift, serializeHandoverResult } from '../shift/handoverService';
+import {
+  createHandoverNote,
+  listHandoverNotes,
+  pendingWork,
+  serializeHandoverNote,
+} from '../shift/handoverNoteService';
 import { SHIFT_DEFINITIONS } from '../shift/shiftTypes';
 import type { UserWithBranch } from '../auth/serialize';
 
@@ -20,6 +28,41 @@ const checkInSchema = z.object({
    * than stored. The service trims again — it is reachable without this router.
    */
   receptionistName: z.string().trim().min(1, 'Vui lòng nhập họ tên lễ tân.').max(200),
+});
+
+/**
+ * "Đổi ca". Every field is required except the account binding.
+ *
+ * `incomingShiftType` is asked for EXPLICITLY and never inferred. Ca A and Ca A4
+ * both start at 06:00 and Ca C and Ca C4 both end at 06:00, so at a handover the
+ * clock genuinely cannot tell which shift is being taken on — and a wrong guess
+ * would be accepted silently and would decide when the next prompt appears.
+ *
+ * There is NO `handoverAt` field, on purpose. The instant is the server's.
+ */
+const handoverSchema = z.object({
+  reason: z.string().trim().min(1, 'Vui lòng nhập lý do đổi ca.').max(1000),
+  incomingName: z.string().trim().min(1, 'Vui lòng nhập họ tên người nhận ca.').max(200),
+  incomingShiftType: SHIFT,
+  incomingUserId: z.coerce.number().int().positive().optional(),
+  note: z
+    .object({
+      content: z.string().trim().min(1, 'Vui lòng nhập nội dung bàn giao.').max(5000),
+      priority: z.enum(['NORMAL', 'HIGH']).optional(),
+    })
+    .optional(),
+});
+
+/** A standalone "Bàn giao ca" note, written without changing shift. */
+const noteSchema = z.object({
+  content: z.string().trim().min(1, 'Vui lòng nhập nội dung bàn giao.').max(5000),
+  priority: z.enum(['NORMAL', 'HIGH']).optional(),
+  incomingName: z.string().trim().max(200).optional(),
+  incomingShiftType: SHIFT.optional(),
+});
+
+const noteListSchema = z.object({
+  branchId: z.coerce.number().int().positive().optional(),
 });
 
 function actor(user: UserWithBranch) {
@@ -77,6 +120,82 @@ export function createReceptionShiftsRouter(): Router {
       const user = req.currentUser!;
       const closed = await closeOpenSession(actor(user), getClock());
       res.json({ closed });
+    })().catch(next);
+  });
+
+  /*
+    POST /api/reception/shifts/handover — "Đổi ca".
+
+    DELIBERATELY NOT A FLAG ON check-in. Check-in already closes a previous
+    session and opens a new one, which is the right behaviour for a receptionist
+    arriving at the start of their own shift, and it takes exactly two fields.
+    A handover is a different event with a different record — it names who is
+    taking over and why the shift ended early — and folding the two together
+    would put four optional fields on the request every receptionist makes at
+    06:00 every morning, three of which would be meaningless to them.
+
+    It is the OUTGOING receptionist who calls this, from their own session. That
+    is what makes closing the outgoing session possible at all: no endpoint
+    anywhere closes somebody else's shift.
+  */
+  router.post('/reception/shifts/handover', requireAuth, requirePasswordChanged, requireReception, (req, res, next) => {
+    (async () => {
+      const user = req.currentUser!;
+      const input = handoverSchema.parse(req.body ?? {});
+      const clock = getClock();
+      const result = await handoverShift(input, actor(user), clock);
+      res.status(201).json(serializeHandoverResult(result, clock.now()));
+    })().catch(next);
+  });
+
+  /*
+    GET /api/reception/handover-notes — this branch's notes, newest first.
+
+    GATED TO RECEPTION AND ADMIN, EXPLICITLY.
+
+    This route shipped for a few hours with only `requireAuth`, which was a real
+    hole rather than a stylistic slip: `listHandoverNotes` narrows by branch only
+    for a RECEPTIONIST, so TECHNICAL and BOOKING_DEPARTMENT fell past both arms
+    of that check with an empty `where` — and read every branch's notes, plus any
+    branch they named in the query string. Handover notes carry guest callbacks,
+    room details and staff names.
+
+    The gate names both roles rather than relying on the service, and the service
+    now refuses a cross-branch read from anyone who is not an Admin as well.
+  */
+  router.get('/reception/handover-notes', requireAuth, requirePasswordChanged, requireRole('ADMIN', 'RECEPTIONIST'), (req, res, next) => {
+    (async () => {
+      const user = req.currentUser!;
+      const q = noteListSchema.parse(req.query);
+      const notes = await listHandoverNotes(actor(user), { branchId: q.branchId });
+      res.json({ notes: notes.map(serializeHandoverNote) });
+    })().catch(next);
+  });
+
+  /*
+    GET /api/reception/handover-notes/context — "việc đang tồn" for the form.
+
+    Declared BEFORE nothing, but named as a sub-path of the collection rather
+    than a sibling because it is the same subject; there is no ":id" route under
+    handover-notes for it to be mistaken for.
+  */
+  router.get('/reception/handover-notes/context', requireAuth, requirePasswordChanged, requireReception, (req, res, next) => {
+    (async () => {
+      const user = req.currentUser!;
+      if (user.branchId == null) {
+        throw ApiError.branchAccessDenied('Tài khoản chưa được gán chi nhánh.');
+      }
+      res.json({ pending: await pendingWork(user.branchId) });
+    })().catch(next);
+  });
+
+  // POST /api/reception/handover-notes — leave a note for the next shift.
+  router.post('/reception/handover-notes', requireAuth, requirePasswordChanged, requireReception, (req, res, next) => {
+    (async () => {
+      const user = req.currentUser!;
+      const input = noteSchema.parse(req.body ?? {});
+      const note = await createHandoverNote(input, actor(user), getClock());
+      res.status(201).json({ note: serializeHandoverNote(note) });
     })().catch(next);
   });
 

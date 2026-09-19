@@ -17,7 +17,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { NavLink, useParams } from 'react-router-dom';
-import { CheckCircle2, RefreshCw, Wrench } from 'lucide-react';
+import { CheckCircle2, RefreshCw, Wrench, XCircle } from 'lucide-react';
 import { issueCategoryLabel, issuesApi, type Issue, type IssueStatus } from '../api/issues';
 // The plain branches endpoint, not the admin one: Bộ phận kỹ thuật is not an
 // admin, and the server returns all eight branches to it because one
@@ -58,6 +58,7 @@ export function TechnicalPage() {
   const queryClient = useQueryClient();
   const [branchFilter, setBranchFilter] = useState<number | null>(null);
   const [accepting, setAccepting] = useState<Issue | null>(null);
+  const [failing, setFailing] = useState<Issue | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
   const branches = useQuery({ queryKey: ['branches'], queryFn: () => branchesApi.list() });
@@ -160,7 +161,8 @@ export function TechnicalPage() {
               <li key={issue.id}>
                 <Card className="p-4">
                   <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
+                      {/* WHERE — branch, place, state. The first question. */}
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700">
                           {issue.branch?.address ?? '—'}
@@ -169,14 +171,22 @@ export function TechnicalPage() {
                         {issue.category ? (
                           <span className="text-sm text-slate-500">{issueCategoryLabel(issue)}</span>
                         ) : null}
-                        <IssueStatusBadge status={issue.status} />
+                        <IssueStatusBadge status={issue.status} needsRework={issue.needsRework} />
                       </div>
-                      <p className="mt-1 whitespace-pre-wrap break-words text-sm text-slate-700">
+
+                      {/* WHAT */}
+                      <p className="mt-1.5 whitespace-pre-wrap break-words text-sm text-slate-700">
                         {issue.description}
                       </p>
-                      <p className="mt-1 text-xs text-slate-500">
-                        Người báo: {issue.reportedByName ?? '—'} · {formatDateTime(issue.createdAt)}
+
+                      {/* REPORTED */}
+                      <p className="mt-1.5 text-xs text-slate-500">
+                        Người báo: {issue.reportedByName ?? '—'}
+                        {issue.shiftReceptionistName ? ` (${issue.shiftReceptionistName})` : ''} ·{' '}
+                        {formatDateTime(issue.createdAt)}
                       </p>
+
+                      {/* ASSIGNED + OUTCOME + the attempt history. */}
                       <IssueWorkTrail issue={issue} />
                     </div>
                     <div className="flex shrink-0 flex-col items-end gap-2">
@@ -186,15 +196,36 @@ export function TechnicalPage() {
                         </Button>
                       ) : null}
                       {issue.status === 'IN_PROGRESS' ? (
-                        <Button
-                          onClick={() => complete.mutate(issue.id)}
-                          loading={complete.isPending && complete.variables === issue.id}
-                          disabled={complete.isPending}
-                          data-testid={`complete-${issue.id}`}
-                        >
-                          <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-                          Hoàn thành
-                        </Button>
+                        <>
+                          {/*
+                            "Hoàn thành" stays a DIRECT action — it needs nothing
+                            from the technician beyond the press, and a
+                            confirmation dialog on the happy path is friction on
+                            the case that happens most.
+
+                            "Không sửa được" opens one, because it cannot be
+                            recorded without a reason: the next person to pick
+                            this up reads that line to decide whether they can
+                            succeed where this attempt did not.
+                          */}
+                          <Button
+                            onClick={() => complete.mutate(issue.id)}
+                            loading={complete.isPending && complete.variables === issue.id}
+                            disabled={complete.isPending}
+                            data-testid={`complete-${issue.id}`}
+                          >
+                            <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+                            Hoàn thành
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            onClick={() => setFailing(issue)}
+                            data-testid={`cannot-repair-${issue.id}`}
+                          >
+                            <XCircle className="h-4 w-4" aria-hidden="true" />
+                            Không sửa được
+                          </Button>
+                        </>
                       ) : null}
                     </div>
                   </div>
@@ -216,8 +247,138 @@ export function TechnicalPage() {
           }}
         />
       ) : null}
+      {failing ? (
+        <CannotRepairModal
+          issue={failing}
+          onClose={() => setFailing(null)}
+          onDone={() => {
+            setFailing(null);
+            setToast('Đã trả sự cố về hàng đợi.');
+          }}
+        />
+      ) : null}
       <Toast message={toast} onDone={() => setToast(null)} />
     </div>
+  );
+}
+
+/** The reasons a repair usually cannot be finished, as technicians say them. */
+const CANNOT_REPAIR_REASONS = [
+  'Không có linh kiện',
+  'Không đủ thiết bị',
+  'Cần đơn vị bên ngoài',
+  'Hư hỏng vượt khả năng xử lý',
+];
+
+/**
+ * "Không sửa được" — the incident goes back to the queue, with a reason.
+ *
+ * THE PRESET REASONS ARE A SHORTCUT, NOT A CLOSED LIST. Four of the five cases
+ * are the same four every time, and typing them out is friction that leads to
+ * "khong sua duoc" being typed instead. "Khác" exists because the fifth case
+ * always turns up, and every preset can still be extended with details — so the
+ * field is never reduced to a category when it needs to be a sentence.
+ *
+ * NOTHING IS DELETED BY THIS ACTION. The attempt keeps the technician's name,
+ * phone, acceptance time, failure time and this reason, permanently.
+ */
+function CannotRepairModal({
+  issue,
+  onClose,
+  onDone,
+}: {
+  issue: Issue;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [preset, setPreset] = useState<string>(CANNOT_REPAIR_REASONS[0]!);
+  const [detail, setDetail] = useState('');
+
+  const custom = preset === 'Khác';
+  // "Khác" carries only what was typed; a preset carries the preset, with any
+  // detail appended — so the stored reason always reads as one sentence.
+  const reason = custom ? detail.trim() : [preset, detail.trim()].filter(Boolean).join(' — ');
+
+  const fail = useMutation({
+    mutationFn: () => issuesApi.cannotRepair(issue.id, { reason }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['issues'] });
+      onDone();
+    },
+  });
+
+  const ready = reason.length > 0;
+
+  return (
+    <Modal
+      open
+      title="Không sửa được"
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Hủy
+          </Button>
+          <Button
+            onClick={() => fail.mutate()}
+            disabled={!ready}
+            loading={fail.isPending}
+            data-testid="cannot-repair-confirm"
+          >
+            Xác nhận
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <div className="rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-600">
+          <div className="font-medium text-slate-800">
+            {issue.branch?.address ?? '—'} · {issue.locationLabel}
+          </div>
+          <p className="mt-1 whitespace-pre-wrap break-words">{issue.description}</p>
+        </div>
+
+        <p className="text-sm text-slate-600">
+          Sự cố sẽ quay lại “Sự cố khách sạn” để người khác tiếp nhận. Thông tin người sửa và thời
+          gian đã xử lý vẫn được lưu lại.
+        </p>
+
+        <label className="block text-sm font-medium text-slate-600">
+          Lý do không sửa được
+          <select
+            className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+            value={preset}
+            aria-label="Lý do không sửa được"
+            onChange={(e) => setPreset(e.target.value)}
+            data-testid="cannot-repair-reason"
+          >
+            {CANNOT_REPAIR_REASONS.map((r) => (
+              <option key={r} value={r}>
+                {r}
+              </option>
+            ))}
+            <option value="Khác">Khác</option>
+          </select>
+        </label>
+
+        <label className="block text-sm font-medium text-slate-600">
+          Chi tiết{' '}
+          {custom ? null : <span className="font-normal text-slate-400">(không bắt buộc)</span>}
+          <textarea
+            className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+            rows={2}
+            maxLength={900}
+            value={detail}
+            onChange={(e) => setDetail(e.target.value)}
+            placeholder="Ví dụ: thiếu bơm áp lực, cần đặt hàng"
+            data-testid="cannot-repair-detail"
+          />
+        </label>
+
+        {fail.isError ? <ErrorAlert>{toUserMessage(fail.error)}</ErrorAlert> : null}
+      </div>
+    </Modal>
   );
 }
 

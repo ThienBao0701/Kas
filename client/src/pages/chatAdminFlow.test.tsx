@@ -41,6 +41,14 @@ const OTHER_BRANCH = { id: 2, code: 'LY_TU_TRONG_260', hotelName: 'Elegance Hote
 const CONV_A = {
   id: 'convA',
   subject: 'Khách đòi đổi phòng lúc nửa đêm',
+  category: null,
+  title: 'Khách đòi đổi phòng lúc nửa đêm',
+  senderLabel: 'Lễ tân Một',
+  anonymous: false,
+  shiftType: null,
+  handledBy: null,
+  handledAt: null,
+  adminNote: null,
   status: 'WAITING_ADMIN' as const,
   branch: BRANCH,
   createdBy: { id: 2, fullName: 'Lễ tân Một', role: 'RECEPTIONIST' },
@@ -56,6 +64,14 @@ const CONV_B = {
   ...CONV_A,
   id: 'convB',
   subject: 'Máy lạnh phòng 302 hỏng',
+  category: null,
+  title: 'Máy lạnh phòng 302 hỏng',
+  senderLabel: 'Lễ tân Hai',
+  anonymous: false,
+  shiftType: null,
+  handledBy: null,
+  handledAt: null,
+  adminNote: null,
   branch: OTHER_BRANCH,
   createdBy: { id: 9, fullName: 'Lễ tân Hai', role: 'RECEPTIONIST' },
   lastMessagePreview: 'Gọi thợ chưa ạ?',
@@ -68,6 +84,7 @@ const RECEPTIONIST_MSG = {
   body: 'Khách đòi đổi phòng, em xử lý sao ạ?',
   senderRole: 'RECEPTIONIST' as const,
   sender: { id: 2, fullName: 'Lễ tân Một' },
+  senderLabel: 'Lễ tân Một',
   createdAt: '2026-08-09T02:00:00.000Z',
   attachments: [
     {
@@ -129,10 +146,10 @@ describe('Admin opens a receptionist conversation', () => {
     renderApp('/app/chat');
 
     const list = await screen.findByTestId('chat-conversations');
-    expect(within(list).getByText(CONV_A.subject)).toBeInTheDocument();
-    expect(within(list).getByText(CONV_B.subject)).toBeInTheDocument();
+    expect(within(list).getByText(CONV_A.title)).toBeInTheDocument();
+    expect(within(list).getByText(CONV_B.title)).toBeInTheDocument();
     // Sender identity is legible without opening the thread.
-    expect(within(list).getByText(/Lễ tân Một/)).toBeInTheDocument();
+    expect(within(list).getAllByText(/Lễ tân Một/).length).toBeGreaterThanOrEqual(1);
     expect(within(list).getByText(/Lễ tân Hai/)).toBeInTheDocument();
   });
 
@@ -142,7 +159,7 @@ describe('Admin opens a receptionist conversation', () => {
     renderApp('/app/chat');
 
     const list = await screen.findByTestId('chat-conversations');
-    await user.click(within(list).getByText(CONV_A.subject));
+    await user.click(within(list).getByText(CONV_A.title));
 
     // The thread rendered — this is the step the previous report cast doubt on.
     const thread = await screen.findByTestId('chat-thread');
@@ -162,7 +179,7 @@ describe('Admin opens a receptionist conversation', () => {
     renderApp('/app/chat');
 
     const list = await screen.findByTestId('chat-conversations');
-    await user.click(within(list).getByText(CONV_B.subject));
+    await user.click(within(list).getByText(CONV_B.title));
 
     await screen.findByTestId('chat-thread');
     await waitFor(() =>
@@ -315,7 +332,10 @@ describe('Admin replies in the same conversation', () => {
     renderApp('/app/chat/convA');
 
     await screen.findByTestId('chat-thread');
-    await user.click(screen.getByRole('button', { name: /Đóng/ }));
+    await user.click(screen.getByTestId('chat-close'));
+    // Closing records WHO handled it and an optional note, so it confirms first —
+    // the verdict is stored beside the thread, never inside the message.
+    await user.click(await screen.findByTestId('chat-close-confirm'));
 
     await waitFor(() =>
       expect(urlsOf(fetchMock)).toContain('/api/chat/conversations/convA/close'),
@@ -356,8 +376,8 @@ describe('the ownership boundary', () => {
     renderApp('/app/chat');
 
     const list = await screen.findByTestId('chat-conversations');
-    expect(within(list).getByText(CONV_A.subject)).toBeInTheDocument();
-    expect(within(list).queryByText(CONV_B.subject)).not.toBeInTheDocument();
+    expect(within(list).getByText(CONV_A.title)).toBeInTheDocument();
+    expect(within(list).queryByText(CONV_B.title)).not.toBeInTheDocument();
   });
 
   it('Bộ phận đặt phòng cannot reach the conversation detail by URL', async () => {

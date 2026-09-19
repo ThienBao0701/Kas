@@ -464,6 +464,25 @@ enum IssueStatus {
   COMPLETED
 }
 
+/// How one technician's attempt at an incident ENDED.
+///
+/// An attempt is open while the technician is working — `outcome` is null then,
+/// and the partial unique index `TechnicalRepairAttempt_one_open_per_issue`
+/// guarantees there is at most one such row per incident. It is set exactly once
+/// and never changed.
+///
+/// CANNOT_REPAIR is NOT a failure of the incident: it returns the incident to
+/// NEW so somebody else can pick it up, while keeping the attempt itself as
+/// permanent evidence that the work WAS done and what stopped it. That is the
+/// whole reason attempts are a separate table rather than more columns on
+/// HotelIssue — columns get overwritten by attempt 2, rows do not.
+enum RepairOutcome {
+  /// "Hoàn thành" — the incident is fixed and closed.
+  COMPLETED
+  /// "Không sửa được" — the incident went back to the queue with a reason.
+  CANNOT_REPAIR
+}
+
 /// Application user: one administrator plus receptionists bound to a branch.
 model User {
   id                 Int       @id @default(autoincrement())
@@ -513,9 +532,14 @@ model User {
   chargeAuditEvents      ChargeDocumentAudit[]
   chatConversations      ChatConversation[]         @relation("ChatConversationCreatedBy")
   chatMessages           ChatMessage[]              @relation("ChatMessageSender")
+  chatConversationsHandled ChatConversation[]       @relation("ChatConversationHandledBy")
   bookingsClaimed        Booking[]                  @relation("BookingClaimedBy")
   remindersSent          Reminder[]                 @relation("ReminderSender")
   remindersReceived      Reminder[]                 @relation("ReminderRecipient")
+  handoversGiven         ShiftHandover[]            @relation("HandoverOutgoingUser")
+  handoversReceived      ShiftHandover[]            @relation("HandoverIncomingUser")
+  handoverNotesWritten   ShiftHandoverNote[]        @relation("HandoverNoteAuthor")
+  repairAttempts         TechnicalRepairAttempt[]   @relation("AttemptTechnician")
 
   @@index([branchId])
   @@index([role])
@@ -605,6 +629,8 @@ model Branch {
   roomClasses         BranchRoomClass[]
   chargeDocuments     ChargeDocument[]
   chatConversations   ChatConversation[]
+  shiftHandovers      ShiftHandover[]
+  handoverNotes       ShiftHandoverNote[]
 }
 
 /// A charge document ("Chứng từ"): evidence that a guest was, or was not,
@@ -1705,6 +1731,15 @@ model HotelIssue {
   completedByNameSnapshot String?
   completedAt             DateTime?
 
+  /// The reporter's shift AT THE MOMENT OF REPORTING, when there was one.
+  ///
+  /// Captured, never required: reporting a broken door is not an accounting
+  /// action the way creating an order is, so an incident is accepted from a
+  /// receptionist who has not checked in — it simply carries no shift. Null on
+  /// every row predating shifts, and on reports filed by an Admin.
+  shiftSessionId String?
+  shiftType      ShiftType?
+
   /// Development demo marker (dev-test tools only). Real issues are always false.
   isDemo      Boolean @default(false)
   demoBatchId String?
@@ -1716,6 +1751,11 @@ model HotelIssue {
   reportedBy  User   @relation("IssueReportedBy", fields: [reportedByUserId], references: [id])
   acceptedBy  User?  @relation("IssueAcceptedBy", fields: [acceptedByUserId], references: [id])
   completedBy User?  @relation("IssueCompletedBy", fields: [completedByUserId], references: [id])
+  /// SET NULL, not RESTRICT: an incident outlives the shift it was reported in,
+  /// and the shift's own name is already snapshotted on the attempt rows.
+  shiftSession ReceptionShiftSession? @relation("IssueShiftSession", fields: [shiftSessionId], references: [id], onDelete: SetNull)
+  /// Every attempt anyone has made at this incident, oldest first when read.
+  attempts     TechnicalRepairAttempt[] @relation("AttemptIssue")
 
   @@index([branchId, status])
   @@index([status])
@@ -1730,6 +1770,37 @@ model HotelIssue {
   @@index([branchId, createdAt])
   @@index([areaCategory])
   @@index([completedAt])
+  @@index([shiftSessionId])
+}
+
+/// What a Chat box submission is ABOUT.
+///
+/// A CLOSED LIST, not free text. The title used to be typed, which made the
+/// Admin's list a pile of one-off phrases that could not be counted, filtered or
+/// compared across branches — "Máy lạnh hỏng", "may lanh phong 302", "AC broken"
+/// are one category written three ways. Three stable values make the question
+/// "what do reception actually keep raising?" answerable.
+///
+/// Rows created before the selector existed have `category = NULL` and keep
+/// their original `subject`. Guessing a category for them from that free text
+/// would be inventing a classification nobody made.
+enum ChatCategory {
+  /// Phòng
+  ROOM
+  /// Môi trường làm việc
+  WORK_ENVIRONMENT
+  /// Các vấn đề nội bộ
+  INTERNAL
+}
+
+/// How urgent a shift handover note is for the receptionist taking over.
+///
+/// Two values, not five. The note is read once at the start of a shift; a scale
+/// finer than "read this first" and "read this" would be a decision the writer
+/// has to make and the reader has to interpret, for no operational difference.
+enum HandoverPriority {
+  NORMAL
+  HIGH
 }
 
 /// Where a Chat box conversation stands, from the ADMIN's point of view.
@@ -1761,12 +1832,46 @@ enum ChatConversationStatus {
 /// one branch asking the Admin separate questions must not read each other's.
 model ChatConversation {
   id      String @id @default(cuid())
-  /// Short title the receptionist gives the thread, so a long list stays usable.
-  subject String
+  /// The free-text title threads carried BEFORE the category selector existed.
+  ///
+  /// Nullable, and never written again. New threads are identified by
+  /// `category`; the old ones keep the words their author typed, because
+  /// deriving a category from them would be a guess recorded as a fact.
+  subject String?
+  /// What the thread is about — the closed list that replaced the typed title.
+  category ChatCategory?
 
   /// The asker's branch AT CREATION. Null for a user with no branch.
   branchId        Int?
   createdByUserId Int
+
+  /// The asker's shift AT CREATION, so the Admin can see which shift raised
+  /// what. Null when the receptionist had not checked in, and on legacy rows.
+  shiftSessionId     String?
+  shiftType          ShiftType?
+  /// The asker's name at the time, taken from the shift session — NOT read back
+  /// off the account, which would rewrite history when somebody is renamed.
+  senderNameSnapshot String?
+
+  /// SUBMITTED ANONYMOUSLY.
+  ///
+  /// `createdByUserId` is STILL recorded, always. Anonymity here is a rule about
+  /// who may READ the identity, not a hole in the audit trail: an anonymous
+  /// report still has to be attributable if it ever describes something that
+  /// requires action against a named person.
+  ///
+  /// The enforcement is one line — `visibilityWhere()` adds `anonymous: false`
+  /// for every non-Admin — which is what makes the thread disappear from
+  /// Reception's list, its detail, its messages, its attachments AND the nav
+  /// badge at once, rather than from four places that must each remember.
+  anonymous Boolean @default(false)
+
+  /// Admin moderation. The original content is NEVER edited; a verdict is
+  /// recorded BESIDE it, so "what was said" and "what we did about it" can never
+  /// be confused for each other.
+  handledByUserId Int?
+  handledAt       DateTime?
+  adminNote       String?
 
   status ChatConversationStatus @default(WAITING_ADMIN)
 
@@ -1775,14 +1880,21 @@ model ChatConversation {
   /// Denormalised so the list sorts and pages without touching ChatMessage.
   lastMessageAt DateTime @default(now())
 
-  branch    Branch?       @relation(fields: [branchId], references: [id])
-  createdBy User          @relation("ChatConversationCreatedBy", fields: [createdByUserId], references: [id])
-  messages  ChatMessage[]
+  branch       Branch?                @relation(fields: [branchId], references: [id])
+  createdBy    User                   @relation("ChatConversationCreatedBy", fields: [createdByUserId], references: [id])
+  handledBy    User?                  @relation("ChatConversationHandledBy", fields: [handledByUserId], references: [id])
+  shiftSession ReceptionShiftSession? @relation("ChatShiftSession", fields: [shiftSessionId], references: [id], onDelete: SetNull)
+  messages     ChatMessage[]
 
   @@index([createdByUserId, lastMessageAt])
   @@index([status, lastMessageAt])
   @@index([lastMessageAt])
   @@index([branchId])
+  /// The Admin audit view: a period, optionally narrowed to one category.
+  @@index([category, createdAt])
+  /// "Show me the anonymous reports" — the one query only an Admin can run.
+  @@index([anonymous, createdAt])
+  @@index([shiftSessionId])
 }
 
 /// One message in a thread.
@@ -1924,6 +2036,15 @@ model ReceptionShiftSession {
   user   User   @relation("ShiftSessionUser", fields: [userId], references: [id])
   /// Every order created during this shift.
   proofs BookingCreationProof[] @relation("ProofShiftSession")
+  /// Incidents reported during this shift, and questions raised during it.
+  issues        HotelIssue[]       @relation("IssueShiftSession")
+  chatThreads   ChatConversation[] @relation("ChatShiftSession")
+  /// The handover that ENDED this session, and the one that STARTED it. At most
+  /// one of each — see the `@unique` on ShiftHandover's two session columns.
+  handedOver    ShiftHandover?     @relation("HandoverOutgoing")
+  receivedFrom  ShiftHandover?     @relation("HandoverIncoming")
+  /// Notes written during this session for whoever takes over.
+  handoverNotes ShiftHandoverNote[] @relation("HandoverNoteSession")
 
   /// "Is this person checked in?" — the query every protected request makes.
   @@index([userId, closedAt])
@@ -1931,4 +2052,192 @@ model ReceptionShiftSession {
   @@index([branchId, startedAt])
   @@index([startedAt])
   @@index([shiftType])
+}
+
+/// ONE EARLY SHIFT CHANGE — "Đổi ca".
+///
+/// WHAT IT RECORDS THAT THE TWO SESSIONS DO NOT
+///
+/// The sessions already say when each one ran: the outgoing session's
+/// `closedAt` IS the actual end, and the incoming session's `startedAt` IS the
+/// actual start, and a handover sets them to the same server instant. What is
+/// missing from them is the LINK and the WHY — that these two sessions are one
+/// event, who received the desk, and the reason the shift ended early. Without
+/// that, an audit can see a shift stopped at 13:15 but not whether it was a
+/// handover, a forgotten logout, or somebody starting a second shift by mistake.
+///
+/// PLANNED TIME IS NOT TOUCHED. The incoming session keeps its shift's nominal
+/// end, so a Ca B handed over at 13:15 is still asked for the next shift at
+/// 22:10 rather than at 21:25. That rule lives in `shiftBoundaries()`, which
+/// derives the end from the shift's clock time and not from the session length;
+/// nothing here overrides it.
+///
+/// IMMUTABLE. There is no update path: a handover is an event that happened, and
+/// the only honest correction to a wrong one is another handover.
+model ShiftHandover {
+  id       String @id @default(cuid())
+  branchId Int
+
+  /// The session that ENDED. `@unique`, so a session can be handed over exactly
+  /// once — two confirmations of the same handover are refused by the database
+  /// rather than by whichever request happens to read first.
+  outgoingShiftSessionId String @unique
+  /// The session that BEGAN. `@unique` for the same reason from the other side.
+  incomingShiftSessionId String @unique
+
+  outgoingUserId       Int
+  outgoingNameSnapshot String
+  outgoingShiftType    ShiftType
+
+  /// The account the incoming shift runs under, WHEN there is a separate one.
+  ///
+  /// Null is the common case and not a gap: a branch runs one login across a
+  /// rotating team, so the desk changes hands without the account changing. The
+  /// person is identified by `incomingNameSnapshot` either way; binding an
+  /// account when one exists is the stronger record, not the required one.
+  incomingUserId       Int?
+  incomingNameSnapshot String
+  incomingShiftType    ShiftType
+
+  /// The SERVER's instant of confirmation. Never a client timestamp — a
+  /// reception PC with a wrong clock would otherwise decide when a shift ended,
+  /// and therefore which receptionist owns the orders around the boundary.
+  actualHandoverAt DateTime
+  /// Why the shift ended early. Required and trimmed: "Đổi ca" with no reason is
+  /// exactly the record that explains nothing when it is read back months later.
+  reason String
+
+  createdAt DateTime @default(now())
+
+  branch          Branch                @relation(fields: [branchId], references: [id])
+  outgoingSession ReceptionShiftSession @relation("HandoverOutgoing", fields: [outgoingShiftSessionId], references: [id])
+  incomingSession ReceptionShiftSession @relation("HandoverIncoming", fields: [incomingShiftSessionId], references: [id])
+  outgoingUser    User                  @relation("HandoverOutgoingUser", fields: [outgoingUserId], references: [id])
+  incomingUser    User?                 @relation("HandoverIncomingUser", fields: [incomingUserId], references: [id])
+  /// The optional "what is still outstanding" note written at the same moment.
+  notes           ShiftHandoverNote[]   @relation("HandoverNoteHandover")
+
+  /// The Admin audit: one branch over a period, newest first.
+  @@index([branchId, actualHandoverAt])
+  @@index([actualHandoverAt])
+  @@index([outgoingUserId])
+  @@index([incomingUserId])
+}
+
+/// ONE TECHNICIAN'S ATTEMPT at one incident.
+///
+/// WHY THIS IS A TABLE AND NOT MORE COLUMNS ON HotelIssue
+///
+/// An incident can be worked more than once: Bảo takes it at 15:54, runs out of
+/// parts and returns it at 15:58; Minh takes it at 16:20 and finishes at 16:35.
+/// On columns, Minh's acceptance OVERWRITES Bảo's — the four minutes somebody
+/// actually spent, and the reason they stopped, are gone, and the report can
+/// only ever show the last person to touch it. As rows they are both permanent.
+///
+/// So HotelIssue's `acceptedAt` / `technicianName` / `technicianPhone` are the
+/// CURRENT assignment — live, overwritable, cleared when an attempt fails — and
+/// these rows are the HISTORY. The information is never lost; it just stops
+/// living in a place that gets overwritten.
+///
+/// AN ATTEMPT IS OPEN WHILE THE WORK IS HAPPENING. `outcome` and `outcomeAt` are
+/// null until the technician says how it went, and the partial unique index
+/// `TechnicalRepairAttempt_one_open_per_issue` makes "at most one open attempt
+/// per incident" a database fact rather than a rule the service must remember.
+///
+/// DURATION IS NOT STORED. It is `outcomeAt - acceptedAt`, computed on read. A
+/// stored copy is a second source of truth that can disagree with the timestamps
+/// it was derived from, and there is no query here that needs to sum or sort by
+/// it in the database.
+///
+/// NO ROWS EXIST FOR INCIDENTS WORKED BEFORE THIS TABLE DID. They were not
+/// backfilled: their acceptance and completion are recorded on HotelIssue, and
+/// manufacturing attempt rows from those columns would put invented history
+/// beside the real kind.
+model TechnicalRepairAttempt {
+  id      String @id @default(cuid())
+  issueId String
+  /// 1-based, unique per incident — "Lần 1", "Lần 2" as the report says them.
+  attemptNumber Int
+
+  /// The TECHNICAL account that accepted the job.
+  technicianUserId       Int?
+  /// The person who actually did the work, and how to reach them, exactly as
+  /// entered at acceptance. Snapshots: renaming an account must not rewrite who
+  /// went to the room.
+  technicianNameSnapshot String
+  technicianPhone        String
+  /// The TECHNICAL account's own name at acceptance, kept separately because the
+  /// person who accepts and the person who repairs are not always the same.
+  acceptedByNameSnapshot String?
+
+  acceptedAt DateTime
+  /// Null while the attempt is open. Set exactly once, with `outcomeAt`.
+  outcome    RepairOutcome?
+  outcomeAt  DateTime?
+  /// Why it could not be repaired. REQUIRED for CANNOT_REPAIR and null
+  /// otherwise — an incident that came back to the queue always says why.
+  reason     String?
+
+  createdAt DateTime @default(now())
+
+  issue          HotelIssue @relation("AttemptIssue", fields: [issueId], references: [id], onDelete: Cascade)
+  technicianUser User?      @relation("AttemptTechnician", fields: [technicianUserId], references: [id])
+
+  @@unique([issueId, attemptNumber])
+  @@index([issueId, acceptedAt])
+  /// "How many attempts failed in this period?" — the Admin range summary.
+  @@index([outcome, outcomeAt])
+  @@index([technicianUserId])
+}
+
+/// "BÀN GIAO CA" — what the outgoing shift wants the next one to know.
+///
+/// DELIBERATELY SEPARATE FROM ShiftHandover. That model records that the desk
+/// changed hands and who now has it; this one records the WORK that is still
+/// outstanding. They have different cardinality — one handover per session
+/// transition, but a shift may leave several notes, and may leave a note without
+/// handing over early at all — and different readers. `handoverId` links the two
+/// when a note is written as part of an "Đổi ca", so neither has to duplicate
+/// the other's fields.
+///
+/// THE CONTEXT IS NOT COPIED INTO THE NOTE. Open incidents and unfinished orders
+/// are already in the database and are shown beside the form as it is written;
+/// freezing them into the text would produce a list that is wrong the moment
+/// somebody else resolves one. The note carries what a PERSON needs to say.
+///
+/// IMMUTABLE, like every other handover record: no edit path exists.
+model ShiftHandoverNote {
+  id       String @id @default(cuid())
+  branchId Int
+
+  /// The session that wrote it. SET NULL rather than RESTRICT — the note is
+  /// addressed to the next shift and stands on its own snapshots.
+  shiftSessionId String?
+  handoverId     String?
+
+  outgoingUserId       Int
+  outgoingNameSnapshot String
+  outgoingShiftType    ShiftType
+  /// Who it is FOR, when that is already known. Often it is not: a note written
+  /// mid-shift is for whoever turns up.
+  incomingNameSnapshot String?
+  incomingShiftType    ShiftType?
+
+  /// The note itself. Required and trimmed — an empty handover is not a handover.
+  content  String
+  priority HandoverPriority @default(NORMAL)
+
+  createdAt DateTime @default(now())
+
+  branch       Branch                 @relation(fields: [branchId], references: [id])
+  shiftSession ReceptionShiftSession? @relation("HandoverNoteSession", fields: [shiftSessionId], references: [id], onDelete: SetNull)
+  handover     ShiftHandover?         @relation("HandoverNoteHandover", fields: [handoverId], references: [id], onDelete: SetNull)
+  outgoingUser User                   @relation("HandoverNoteAuthor", fields: [outgoingUserId], references: [id])
+
+  /// What the next shift opens: this branch, newest first.
+  @@index([branchId, createdAt])
+  @@index([createdAt])
+  @@index([shiftSessionId])
+  @@index([handoverId])
+  @@index([outgoingUserId])
 }

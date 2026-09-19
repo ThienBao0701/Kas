@@ -25,6 +25,7 @@ import { chatUpload } from '../middleware/upload';
 import { ApiError } from '../lib/errors';
 import {
   addMessage,
+  CHAT_CATEGORIES,
   closeConversation,
   createConversation,
   getConversation,
@@ -47,10 +48,32 @@ function idOf(raw: string | undefined): string {
   return raw;
 }
 
+/**
+ * A new submission names a CATEGORY, not a title.
+ *
+ * `subject` is not accepted any more — not even optionally. Leaving it open
+ * "for compatibility" would leave the free-text path it replaced quietly
+ * reachable by anything that skips the form, which is precisely the path the
+ * category exists to close.
+ *
+ * `anonymous` arrives as a multipart string, so it is compared to the literal
+ * 'true' rather than coerced: `Boolean('false')` is `true`, and getting that
+ * wrong would make every submission anonymous.
+ */
 const createSchema = z.object({
-  subject: z.string().trim().min(1, 'Vui lòng nhập tiêu đề.').max(200),
-  // May be empty when images are attached; the service decides.
+  category: z.enum(['ROOM', 'WORK_ENVIRONMENT', 'INTERNAL'], {
+    errorMap: () => ({ message: 'Vui lòng chọn loại vấn đề.' }),
+  }),
   body: z.string().max(5000).optional().default(''),
+  anonymous: z
+    .union([z.literal('true'), z.literal('false'), z.boolean()])
+    .optional()
+    .transform((v) => v === true || v === 'true'),
+});
+
+/** The Admin's verdict, recorded beside the thread and never inside it. */
+const closeSchema = z.object({
+  adminNote: z.string().trim().max(2000).optional(),
 });
 
 const messageSchema = z.object({
@@ -120,7 +143,12 @@ export function createChatRouter(): Router {
       // per-request token instead; the id is only ever a readability prefix.
       const attachments = await persistUploads(req, 'new');
       const result = await createConversation(
-        { subject: input.subject, body: input.body, attachments },
+        {
+          category: input.category,
+          body: input.body,
+          attachments,
+          anonymous: input.anonymous,
+        },
         actor,
       );
       res.status(201).json(result);
@@ -156,11 +184,21 @@ export function createChatRouter(): Router {
     })().catch(next);
   });
 
-  // POST /api/chat/conversations/:id/close — Admin only.
+  // POST /api/chat/conversations/:id/close — Admin only. Marks the thread
+  // handled and records who did it; the original content is untouched.
   router.post('/chat/conversations/:id/close', (req, res, next) => {
     (async () => {
-      res.json({ conversation: await closeConversation(idOf(req.params.id), actorOf(req)) });
+      const input = closeSchema.parse(req.body ?? {});
+      res.json({
+        conversation: await closeConversation(idOf(req.params.id), actorOf(req), input),
+      });
     })().catch(next);
+  });
+
+  // GET /api/chat/categories — the three choices, with their Vietnamese labels.
+  // Served rather than hardcoded in the client so the names exist ONCE.
+  router.get('/chat/categories', (_req, res) => {
+    res.json({ categories: CHAT_CATEGORIES });
   });
 
   /**

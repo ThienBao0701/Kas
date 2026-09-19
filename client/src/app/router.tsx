@@ -28,6 +28,7 @@ import { PendingReviewPage, RejectedPage } from '../pages/VerificationBookingsPa
 import { CompletedBookingsPage } from '../pages/CompletedBookingsPage';
 import { HistoryPage } from '../pages/HistoryPage';
 import { IssuesPage } from '../pages/IssuesPage';
+import { HandoverPage } from '../pages/HandoverPage';
 import { TechnicalPage } from '../pages/TechnicalPage';
 import { BookingDetailPage } from '../pages/BookingDetailPage';
 import { SettingsPage } from '../pages/SettingsPage';
@@ -95,6 +96,12 @@ export function AppRoutes() {
           <Route path="booking/:id" element={<RequireRole role={BOOKING_ROLES}><BookingDetailPage /></RequireRole>} />
           {/* Reception reports incidents; Admin monitors them. */}
           <Route path="issues" element={<RequireRole role={BOOKING_ROLES}><IssuesPage /></RequireRole>} />
+          {/*
+            "Bàn giao ca". Reception writes and reads; Admin monitors read-only —
+            the server refuses a write from anyone who is not a receptionist on
+            an open shift, so this gate only decides what renders.
+          */}
+          <Route path="handover" element={<RequireRole role={BOOKING_ROLES}><HandoverPage /></RequireRole>} />
           {/*
             Bộ phận kỹ thuật. `queue` is a real path segment so each workflow
             state has its own address and can be bookmarked or opened alongside.
